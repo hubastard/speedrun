@@ -47,13 +47,19 @@ internal object AgentLog {
 
 /**
  * Wire protocol (big-endian):
- *   request  = u8 op, then op-specific fixed fields
+ *   request  = u8 op, then op-specific fields
  *   response = u32 length, u32 agent_us, body[length - 4]
+ *   str = u16 len + utf8
  *
  *   1 PING                                   -> (empty)
  *   2 TREE                                   -> u32 count, count * node
  *        node = u16 depth, i32 l, i32 t, i32 r, i32 b, u8 flags,
- *               str text, str desc, str id, str class   (str = u16 len + utf8)
+ *               str text, str desc, str id, str class
+ *   6 FIND   str text                        -> u32 count, count * node
+ *        nodes of the active window whose text or content description contains text,
+ *        ignoring case, in document order (depth is 0). The app's own search: one round
+ *        trip instead of TREE's ~40 after a screen change. Text an app sets only through an
+ *        accessibility delegate is not searched; fall back to TREE when FIND finds nothing.
  *   3 TAP    i32 x, i32 y                    -> u32 prep_us, u32 inject_us, u8 inject_path
  *   4 KEY    i32 keycode                     -> u32 prep_us, u32 inject_us, u8 inject_path
  *        prep = active-window lookup + frame-stats clear; inject_path = see InjectPath
@@ -77,6 +83,7 @@ private object Op {
     const val TAP = 3
     const val KEY = 4
     const val SETTLE = 5
+    const val FIND = 6
 }
 
 /**
@@ -152,6 +159,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.TAP -> tap(input.readInt().toFloat(), input.readInt().toFloat())
             Op.KEY -> key(input.readInt())
             Op.SETTLE -> settle(input.readInt(), input.readInt(), input.readInt())
+            Op.FIND -> writeFind(readStr(input))
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -163,13 +171,17 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     // ---- tree -------------------------------------------------------------------------
 
-    private fun writeTree() {
-        var root: AccessibilityNodeInfo? = null
+    /** Root of the active window, waiting up to ~100 ms for one to appear. */
+    private fun activeRoot(): AccessibilityNodeInfo? {
         for (i in 0 until 20) {
-            root = ua.rootInActiveWindow
-            if (root != null) break
+            ua.rootInActiveWindow?.let { return it }
             Thread.sleep(5)
         }
+        return null
+    }
+
+    private fun writeTree() {
+        val root = activeRoot()
         if (root == null) {
             body.writeInt(0)
             return
@@ -184,24 +196,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         while (nodes.isNotEmpty()) {
             val n = nodes.removeLast()
             val depth = depths.removeLast()
-            n.getBoundsInScreen(bounds)
-            tree.writeShort(depth)
-            tree.writeInt(bounds.left)
-            tree.writeInt(bounds.top)
-            tree.writeInt(bounds.right)
-            tree.writeInt(bounds.bottom)
-            var f = 0
-            if (n.isClickable) f = f or 1
-            if (n.isEnabled) f = f or 2
-            if (n.isFocused) f = f or 4
-            if (n.isScrollable) f = f or 8
-            if (n.isChecked) f = f or 16
-            if (n.isVisibleToUser) f = f or 32
-            tree.writeByte(f)
-            str(n.text)
-            str(n.contentDescription)
-            str(n.viewIdResourceName)
-            str(n.className)
+            writeNode(n, depth)
             count++
             // Push children in reverse so they pop in document order (pre-order DFS).
             for (i in n.childCount - 1 downTo 0) {
@@ -213,6 +208,43 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         tree.flush()
         body.writeInt(count)
         treeBuf.writeTo(body)
+    }
+
+    /** One round trip: the app searches its own view hierarchy (see FIND in the protocol). */
+    private fun writeFind(text: String) {
+        val hits = activeRoot()?.findAccessibilityNodeInfosByText(text).orEmpty()
+        treeBuf.reset()
+        for (n in hits) writeNode(n, 0)
+        tree.flush()
+        body.writeInt(hits.size)
+        treeBuf.writeTo(body)
+    }
+
+    private fun writeNode(n: AccessibilityNodeInfo, depth: Int) {
+        n.getBoundsInScreen(bounds)
+        tree.writeShort(depth)
+        tree.writeInt(bounds.left)
+        tree.writeInt(bounds.top)
+        tree.writeInt(bounds.right)
+        tree.writeInt(bounds.bottom)
+        var f = 0
+        if (n.isClickable) f = f or 1
+        if (n.isEnabled) f = f or 2
+        if (n.isFocused) f = f or 4
+        if (n.isScrollable) f = f or 8
+        if (n.isChecked) f = f or 16
+        if (n.isVisibleToUser) f = f or 32
+        tree.writeByte(f)
+        str(n.text)
+        str(n.contentDescription)
+        str(n.viewIdResourceName)
+        str(n.className)
+    }
+
+    private fun readStr(input: DataInputStream): String {
+        val b = ByteArray(input.readUnsignedShort())
+        input.readFully(b)
+        return String(b, Charsets.UTF_8)
     }
 
     private fun str(s: CharSequence?) {

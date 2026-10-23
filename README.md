@@ -18,8 +18,10 @@ classic full-hierarchy dump.
   - `AgentInstrumentation` (fallback, `AGENT_MODE=instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
 - `host/main.odin` — Odin client. One persistent TCP connection through `adb forward`,
-  `TCP_NODELAY`, a reused receive buffer, the tree decoded into a `#soa` array, and all
-  per-step strings in a virtual-memory arena freed in O(1) after each step.
+  `TCP_NODELAY`, a reused receive buffer, nodes decoded into a `#soa` array, and all
+  per-step strings in a virtual-memory arena freed in O(1) after each step. Steps locate
+  their target with `FIND` (the app searches its own hierarchy, one round trip) and read the
+  full `TREE` only when that finds no visible exact match.
 - `run.sh` — disables animations, measures the `uiautomator dump` baseline, builds and
   starts everything, runs the benchmark.
 
@@ -51,6 +53,10 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
 2. **Tree fetch** — device-side tree walk plus transfer and decode. Compare with the
    baseline `uiautomator dump` average printed earlier.
 3. **Step loop**
+   - *FIND target on device* — locating the target after the previous screen settled.
+     *TREE fallbacks* counts the rounds where `FIND` brought back no visible exact match and
+     the full tree was read instead (e.g. text an app sets only through an accessibility
+     delegate, which `FIND` cannot see).
    - *UI finished changing* — when the app actually stopped changing after the tap.
      This is the app's time, not the tool's.
    - *settle declared* — when the agent concluded it was settled. The gap to the line above
@@ -64,8 +70,11 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
   120 ms. Ways under it: `UiAutomation.getWindowContentFrameStats()` for frame-precise
   timing, or an optional in-app debug library that hooks `Choreographer` (the Espresso/Detox
   approach).
-- Full tree is re-walked each read. Next step: keep the tree on the device, apply changes
-  from events, and send diffs.
+- A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
+  the app's main thread, since prefetching (at most 50 nodes per request) never spans
+  sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,
+  warming the cache during settle and parallel fetches were measured and did not pay off.
+  Later reads of the same screen are served from the accessibility cache (~3 ms).
 - Only one `UiAutomation` client can exist at a time (agent, instrumentation or
   `uiautomator`); `run.sh` stops both kinds of agent before the baseline and at exit.
 - The shell agent relies on hidden APIs (`UiAutomation(Looper, IUiAutomationConnection)`,

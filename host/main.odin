@@ -21,6 +21,7 @@ Op :: enum u8 {
 	Tap    = 3,
 	Key    = 4,
 	Settle = 5,
+	Find   = 6,
 }
 
 KEYCODE_BACK :: 4
@@ -187,7 +188,25 @@ op_tree :: proc(c: ^Conn, nodes: ^Tree, str_alloc: mem.Allocator) -> (agent_us: 
 	body: []byte
 	body, agent_us, ok = call(c, req[:])
 	if !ok do return
+	return agent_us, read_nodes(body, nodes, str_alloc)
+}
 
+// Only the nodes whose text or description contains `text` (ignoring case), found by the
+// app itself in one round trip; a cold TREE needs ~40. Depth is 0 in the results.
+op_find :: proc(c: ^Conn, text: string, nodes: ^Tree, str_alloc: mem.Allocator) -> (agent_us: u32, ok: bool) {
+	n := min(len(text), 0xFFFF)
+	req := make([]byte, 3 + n, str_alloc)
+	req[0] = u8(Op.Find)
+	_ = endian.put_u16(req[1:3], .Big, u16(n))
+	copy(req[3:], text[:n])
+	body: []byte
+	body, agent_us, ok = call(c, req)
+	if !ok do return
+	return agent_us, read_nodes(body, nodes, str_alloc)
+}
+
+// Decodes `u32 count, count * node` (the TREE and FIND body) into `nodes`.
+read_nodes :: proc(body: []byte, nodes: ^Tree, str_alloc: mem.Allocator) -> bool {
 	r := Reader{b = body, ok = true}
 	count := int(rd_u32(&r))
 	clear(nodes)
@@ -207,7 +226,7 @@ op_tree :: proc(c: ^Conn, nodes: ^Tree, str_alloc: mem.Allocator) -> (agent_us: 
 		if !r.ok do break
 		append(nodes, n)
 	}
-	return agent_us, r.ok
+	return r.ok
 }
 
 read_action :: proc(body: []byte) -> (res: Action_Result, ok: bool) {
@@ -272,8 +291,11 @@ find :: proc(nodes: #soa[]Node, needle: string) -> (idx: int, found: bool) {
 	return -1, false
 }
 
-// Re-reads the screen until `needle` is visible or the timeout passes. A tree read costs
-// a few ms, so polling here is cheap; the waiting is the app's time, not the tool's.
+// Polls until `needle` is visible or the timeout passes. Each round asks the agent to FIND
+// it (one round trip to the app). Only when that brings back no visible exact match does it
+// read the whole TREE (~40 round trips after a screen change), which also sees text FIND
+// cannot, such as text set by an accessibility delegate. After a miss `nodes` holds the full
+// tree, for diagnostics. The waiting is the app's time, not the tool's.
 wait_for :: proc(
 	c: ^Conn,
 	nodes: ^Tree,
@@ -283,12 +305,20 @@ wait_for :: proc(
 ) -> (
 	idx: int,
 	found: bool,
-	reads: int,
+	rounds: int,
+	tree_reads: int,
 	ok: bool,
 ) {
 	start := time.tick_now()
 	for {
-		reads += 1
+		rounds += 1
+		if _, fok := op_find(c, needle, nodes, str_alloc); !fok do return
+		idx, found = find(nodes[:], needle)
+		if found {
+			ok = true
+			return
+		}
+		tree_reads += 1
 		if _, tok := op_tree(c, nodes, str_alloc); !tok do return
 		ok = true
 		idx, found = find(nodes[:], needle)
@@ -432,6 +462,7 @@ main :: proc() {
 			delete(probe_max_ms)
 		}
 		inject_path: Inject_Path
+		tree_fallbacks := 0
 		statuses, back_statuses: [Settle_Status]int
 		methods: [Settle_Method]int
 		last_back: Settle_Result
@@ -448,19 +479,20 @@ main :: proc() {
 			step := time.tick_now()
 
 			t := time.tick_now()
-			idx, found, reads, rok := wait_for(&c, &nodes, step_alloc, target, 2000)
+			idx, found, rounds, tree_reads, rok := wait_for(&c, &nodes, step_alloc, target, 2000)
 			if !rok {
-				fmt.eprintln("tree fetch failed")
+				fmt.eprintln("find or tree fetch failed")
 				os.exit(1)
 			}
 			append(&read_ms, us(t) / 1000)
-			append(&reads_n, f64(reads))
+			append(&reads_n, f64(rounds))
+			tree_fallbacks += tree_reads
 			if !found {
 				visible := 0
 				for j in 0 ..< len(nodes) do if .Visible in nodes[j].flags do visible += 1
 				fmt.eprintf(
-					"step %d: \"%s\" not found within 2 s (%d reads). Screen: %d nodes, %d visible. Last BACK settle: %v after %s ms.\n",
-					i, target, reads, len(nodes), visible, last_back.status, num(f64(last_back.waited_us) / 1000),
+					"step %d: \"%s\" not found within 2 s (%d FIND rounds). Screen: %d nodes, %d visible. Last BACK settle: %v after %s ms.\n",
+					i, target, rounds, len(nodes), visible, last_back.status, num(f64(last_back.waited_us) / 1000),
 				)
 				fmt.eprintln("First nodes on screen (including invisible):")
 				print_nodes(nodes[:])
@@ -521,8 +553,8 @@ main :: proc() {
 			append(&back_ms, us(t) / 1000)
 		}
 
-		report("read screen + find (incl. waits)", read_ms[:], "ms")
-		report("screen reads needed", reads_n[:], "")
+		report("FIND target on device (incl. waits)", read_ms[:], "ms")
+		report("FIND rounds needed", reads_n[:], "")
 		report("find on host", find_us[:], "us")
 		report("tap (host view)", tap_ms[:], "ms")
 		report("  window lookup + frame clear", prep_ms[:], "ms")
@@ -556,7 +588,8 @@ main :: proc() {
 		case:                    path_label = fmt.tprintf("unknown (%d)", u8(inject_path))
 		}
 		fmt.printf("  injection path: %s\n", path_label)
-		fmt.println("  (\"screen reads needed\" > 1 means settle fired before the next screen was readable.)")
+		fmt.printf("  TREE fallbacks (FIND brought back no visible exact match): %d\n", tree_fallbacks)
+		fmt.println("  (\"FIND rounds needed\" > 1 means settle fired before the target was on screen.)")
 		fmt.println("  (a slow probe means the app's main thread was busy, so settle correctly kept waiting.)")
 	}
 }
