@@ -10,12 +10,20 @@
 		5D0000000000000000000101 /* Agent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000201 /* Agent.swift */; };
 		5D0000000000000000000102 /* Ops.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000202 /* Ops.swift */; };
 		5D0000000000000000000103 /* Private.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000203 /* Private.swift */; };
+		5D0000000000000000000104 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000204 /* Screen.swift */; };
+		5D0000000000000000000105 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000205 /* Input.swift */; };
+		5D0000000000000000000106 /* Settle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000206 /* Settle.swift */; };
+		5D0000000000000000000107 /* Spike.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000207 /* Spike.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		5D0000000000000000000201 /* Agent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Agent.swift; sourceTree = "<group>"; };
 		5D0000000000000000000202 /* Ops.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ops.swift; sourceTree = "<group>"; };
 		5D0000000000000000000203 /* Private.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Private.swift; sourceTree = "<group>"; };
+		5D0000000000000000000204 /* Screen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screen.swift; sourceTree = "<group>"; };
+		5D0000000000000000000205 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
+		5D0000000000000000000206 /* Settle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settle.swift; sourceTree = "<group>"; };
+		5D0000000000000000000207 /* Spike.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spike.swift; sourceTree = "<group>"; };
 		5D0000000000000000000301 /* SpeedrunAgentUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpeedrunAgentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -44,6 +52,10 @@
 				5D0000000000000000000201 /* Agent.swift */,
 				5D0000000000000000000202 /* Ops.swift */,
 				5D0000000000000000000203 /* Private.swift */,
+				5D0000000000000000000204 /* Screen.swift */,
+				5D0000000000000000000205 /* Input.swift */,
+				5D0000000000000000000206 /* Settle.swift */,
+				5D0000000000000000000207 /* Spike.swift */,
 			);
 			path = SpeedrunAgentUITests;
 			sourceTree = "<group>";
@@ -111,6 +123,10 @@
 				5D0000000000000000000101 /* Agent.swift in Sources */,
 				5D0000000000000000000102 /* Ops.swift in Sources */,
 				5D0000000000000000000103 /* Private.swift in Sources */,
+				5D0000000000000000000104 /* Screen.swift in Sources */,
+				5D0000000000000000000105 /* Input.swift in Sources */,
+				5D0000000000000000000106 /* Settle.swift in Sources */,
+				5D0000000000000000000107 /* Spike.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

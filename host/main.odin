@@ -69,8 +69,9 @@ Settle_Status :: enum u8 {
 }
 
 Settle_Method :: enum u8 {
-	Frames, // window switches, frame stats and accessibility events + main-thread idle probe
-	Events, // accessibility-event fallback
+	Frames,     // window switches, frame stats and accessibility events + main-thread idle probe
+	Events,     // accessibility-event fallback
+	Quiescence, // iOS: XCTest's quiescence, checked against the screen's signature
 }
 
 Settle_Result :: struct {
@@ -89,6 +90,7 @@ Inject_Path :: enum u8 {
 	UiAutomation,      // public UiAutomation API: syncs input transactions, waits for animations
 	UiAutomation_Fast, // hidden UiAutomation overload: syncs input transactions, no animation wait
 	Input_Manager,     // shell-uid agent straight to the input manager: async, no syncs
+	XCTest_Event,      // iOS: an event synthesized through testmanagerd, until delivered
 }
 
 Action_Result :: struct {
@@ -691,6 +693,7 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 		case .Input_Manager:     path_label = "InputManager as shell uid (async, no transaction syncs)"
 		case .UiAutomation_Fast: path_label = "UiAutomation, no animation wait (syncs input transactions)"
 		case .UiAutomation:      path_label = "UiAutomation public API (waits for animations; see logcat tag SpeedrunAgent)"
+		case .XCTest_Event:      path_label = "XCTest synthesized event (iOS)"
 		case:                    path_label = fmt.tprintf("unknown (%d)", u8(inject_path))
 		}
 		fmt.printf("  injection path: %s\n", path_label)
@@ -705,11 +708,14 @@ USAGE :: `usage:
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
 options:
-  --device <id>  the device to run on, as "adb devices" lists it (default: adb's choice)
-  --port <n>     port of the agent, on the device and on this machine (default 7777)
-  --instrument   run the agent as an instrumentation (~60 ms slower per action)
-Starts the agent on the device adb is connected to, runs, then stops it. Animations are
-turned off, as for any UI test, and stay off.`
+  --device <id>       the device: an Android serial ("adb devices") or a booted iOS
+                      simulator's UDID ("xcrun simctl list devices booted")
+  --platform <p>      android or ios (default: a connected Android device, else the one
+                      booted simulator)
+  --port <n>          the agent's port (default 7777 on Android, 7778 on iOS)
+  --instrument        Android: run the agent as an instrumentation (~60 ms slower per action)
+Starts the agent on the device, runs, then stops it. On Android, animations are turned off,
+as for any UI test, and stay off.`
 
 // --flow runs a Maestro flow file; exit status 0 if it passed. On a terminal the output is a
 // live view like Maestro's; --plain (or a pipe) prints one line per command instead.
@@ -721,8 +727,8 @@ run_cli :: proc(args: []string) -> int {
 		Bench,
 	}
 	mode: Mode
-	timings := ""
-	plain := false
+	timings, platform, device := "", "", ""
+	plain, port_given := false, false
 	dev := Device {
 		port = 7777,
 	}
@@ -751,7 +757,10 @@ run_cli :: proc(args: []string) -> int {
 			timings = value
 			i += 1
 		case (a == "--device" || a == "--udid") && value != "":
-			adb_serial = value
+			device = value
+			i += 1
+		case (a == "--platform" || a == "-p") && value != "":
+			platform = value
 			i += 1
 		case a == "--port" && value != "":
 			p, ok := strconv.parse_int(value)
@@ -759,7 +768,7 @@ run_cli :: proc(args: []string) -> int {
 				fmt.eprintln("--port needs a port number")
 				return 2
 			}
-			dev.port = p
+			dev.port, port_given = p, true
 			i += 1
 		case len(a) > 1 && a[0] == '-':
 			fmt.eprintf("unknown option or missing value: %s\n%s\n", a, USAGE)
@@ -771,6 +780,12 @@ run_cli :: proc(args: []string) -> int {
 
 	file, target := "", ""
 	iters := 10
+	if mode != .None {
+		if err := device_select(&dev, platform, device, port_given); err != "" {
+			fmt.eprintln(err)
+			return 1
+		}
+	}
 	switch mode {
 	case .None:
 		fmt.eprintln(USAGE)
@@ -790,6 +805,10 @@ run_cli :: proc(args: []string) -> int {
 			return 2
 		}
 	case .Bench:
+		if dev.platform == .IOS {
+			fmt.eprintln("--bench is Android-only for now (on iOS: agent/ios/spike/measure.py)")
+			return 2
+		}
 		if len(positional) > 0 do target = positional[0]
 		if len(positional) > 1 {
 			v, ok := strconv.parse_int(positional[1])
@@ -832,7 +851,7 @@ run_cli :: proc(args: []string) -> int {
 		k, _, v := strings.partition(e, "=")
 		pairs[i] = {k, v}
 	}
-	return 0 if run_maestro_flow(&c, file, pairs, timings, plain) else 1
+	return 0 if run_maestro_flow(&c, &dev, file, pairs, timings, plain) else 1
 }
 
 // The classic way to read the screen, for comparison: `uiautomator dump`, then read the file.

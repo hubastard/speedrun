@@ -21,7 +21,8 @@ same files.
     It builds its own `UiAutomation` the way `uiautomator dump` does.
   - `AgentInstrumentation` (fallback, `--instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
-- `agent/ios/` — the iOS agent, an XCUITest runner (in progress; see `agent/ios/README.md`).
+- `agent/ios/` — the iOS agent: an XCUITest runner serving the same protocol, for simulators
+  (see `agent/ios/README.md`).
 - `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
   `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
   - `main.odin`: command line and the latency benchmark. Its steps locate their target with
@@ -40,15 +41,16 @@ same files.
 
 ## Setup
 
-1. Android SDK with `adb` on PATH, an emulator running (or a device with USB debugging).
+1. Android: the SDK with `adb` on PATH, an emulator running (or a device with USB debugging).
+   iOS: Xcode (27 tested) and a booted simulator.
 2. To build: JDK 17 (Gradle comes from the wrapper in `agent/android/`, 8.14.3, downloaded on first
-   run) and Odin on PATH. Then, once:
+   run) and Odin on PATH; Xcode for the iOS agent (skipped without it). Then, once:
 
 ```
 ./build.sh
 ```
 
-`./speedrun` then needs only `adb`.
+`./speedrun` then needs only `adb` (Android) or Xcode's command-line tools (iOS).
 
 ## Run
 
@@ -59,7 +61,15 @@ Maestro flow files run as they are:
 ./compare.sh bench_scenario.yaml -e TIMES=5         # speedrun, then Maestro, side by side
 ./compare.sh flows/features.yaml                     # both tools must agree on every command
 ./race.sh bench_scenario.yaml -e TIMES=3            # both at once on two emulators, to watch
+
+./speedrun --platform ios --flow bench_scenario_ios.yaml -e TIMES=5   # iOS simulator
+DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
 ```
+
+speedrun picks a connected Android device, else the one booted simulator; `--platform` and
+`--device` (a serial or a simulator UDID) choose. On iOS it starts the agent's runner with
+`xcodebuild test-without-building` (about 4 s; one still serving from an earlier run is
+reused) and controls apps with `xcrun simctl`, as Maestro does.
 
 The latency breakdown (open the Settings app on the emulator first):
 
@@ -158,6 +168,15 @@ Not supported yet (an error naming it): other JavaScript (`&&`, `??`, calls, ari
 `travel`, `setOrientation`, recording, `addMedia`, airplane and dark mode, AI commands,
 `assertScreenshot`, `takeScreenshot.cropOn`, `openLink` with `browser`/`autoVerify`,
 `traits`/`css` selectors, `waitUntilVisible: true`, non-ASCII `inputText`, web flows.
+
+On iOS (simulators), the same commands run, with Maestro's iOS behavior: `back` does nothing
+(use the navigation bar's `BackButton`), `killApp` is `stopApp`, only ENTER, BACKSPACE, HOME and
+LOCK keys act, and the hierarchy is the foreground app plus the status bars with Maestro's
+attribute mapping. Not on iOS yet (an error naming it): `clearState`, `hideKeyboard`, real
+devices, and `launchApp`'s default permission grants; Safari web views and cross-process
+window offsets are not added to the hierarchy. How differs from Maestro's runner: settle is
+XCTest's quiescence checked against the screen instead of comparing screenshots, and text is
+typed at 100 characters per second after the first (Maestro: 30, after a fixed 0.5 s pause).
 
 Known differences in how, not what:
 

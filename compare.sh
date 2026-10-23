@@ -5,7 +5,10 @@
 # prints the median time per command (repeat iterations grouped), then the totals: the flow,
 # the time each tool spends outside it (start-up and shutdown: a slow tool costs that on
 # every run too), and the wall clock. Needs ./speedrun (./build.sh), maestro and python3.
+# The device: DEVICE (an Android serial or a booted iOS simulator's UDID), else ANDROID_SERIAL,
+# else the first Android device, else the booted simulator.
 #   ./compare.sh bench_scenario.yaml -e TIMES=5
+#   DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -20,15 +23,29 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 command -v maestro >/dev/null || { echo "maestro not found on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found on PATH"; exit 1; }
 # With several devices connected (race.sh leaves a second emulator running), both tools run
-# on ANDROID_SERIAL, or else on the first device.
-DEVICE="${ANDROID_SERIAL:-$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')}"
-[ -n "$DEVICE" ] || { echo "No device or emulator connected."; exit 1; }
-export ANDROID_SERIAL="$DEVICE"
+# on the same one.
+booted_sims() { xcrun simctl list devices booted 2>/dev/null | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\)) (Booted).*/\1/p'; }
+DEVICE="${DEVICE:-${ANDROID_SERIAL:-}}"
+[ -n "$DEVICE" ] || DEVICE="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1; exit }')"
+[ -n "$DEVICE" ] || DEVICE="$(booted_sims | head -1)"
+[ -n "$DEVICE" ] || { echo "No device: connect an Android device or boot an iOS simulator."; exit 1; }
+if booted_sims | grep -qx "$DEVICE"; then
+  PLATFORM=ios
+else
+  PLATFORM=android
+  export ANDROID_SERIAL="$DEVICE"
+fi
 APP="$(sed -n 's/^appId:[[:space:]]*//p' "$FLOW" | head -1 | tr -d "\"'\r")"
 [ -n "$APP" ] || { echo "no appId in $FLOW"; exit 1; }
 
-# Force-stop the app and open its launcher activity: both tools start from the same screen.
+# Stop the app and open it again: both tools start from the same screen.
 restart_app() {
+  if [ "$PLATFORM" = ios ]; then
+    xcrun simctl terminate "$DEVICE" "$APP" 2>/dev/null || true
+    xcrun simctl launch "$DEVICE" "$APP" >/dev/null
+    sleep 2
+    return
+  fi
   local activity
   activity="$(adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$APP" | tail -1 | tr -d '\r')"
   adb shell am force-stop "$APP"

@@ -7,27 +7,39 @@
 //   response = u32 length, u32 agent_us, body[length - 4]
 //   str = u16 len + utf8; bytes = u32 len + data
 //
-// This is the measurement spike (step 2): each op times one building block.
+// The Android agent's ops, same numbers and responses (see Agent.kt), as iOS does them:
 //   1 PING                                  -> (empty)
-//   3 TAP    i32 x, i32 y, i32 hold_ms      -> u32 inject_us          (points; synthesized event)
-//   8 TYPE   str text, i32 chars_per_s      -> u32 inject_us
+//  10 SCREEN                                -> u32 count, count * node        (Screen.swift)
+//        the foreground app, then SpringBoard's status bars, each a root at depth 0; Maestro's
+//        iOS attribute mapping; frames in points
+//   3 TAP    i32 x, i32 y                   -> u32 prep_us, u32 inject_us, u8 inject_path (3)
+//  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
+//   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same   (Maestro's swipe; flags unused)
+//   8 TYPE   str text                       -> same, u32 skipped (always 0)
+//   9 ERASE  i32 count                      -> same                          (count deletes)
+//   4 KEY    i32 android_keycode            -> same   (ENTER, DEL, HOME, POWER; others no-op)
+//  12 MARK                                  -> (empty)
+//   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms -> as on Android (Settle.swift)
 //  14 SCREENSHOT                            -> bytes png
-//  40 APP    str bundle_id                  -> u8 state               (XCUIApplication.State)
+// Measurement ops from the spike (Spike.swift; agent/ios/README.md):
+//  40 APP    str bundle_id                  -> u8 state               (target of 41-43)
 //  41 SNAP   u8 mode                        -> u32 count, u32 snapshot_us, u32 walk_us, count * node
 //        mode 0: snapshot() walked through children; 1: snapshot().dictionaryRepresentation
 //        node = u16 depth, i32 l, i32 t, i32 r, i32 b, u8 flags, str value, str label,
 //               str identifier, str type, str placeholder, str title
-//        flags: 2 enabled, 4 focused, 64 selected
 //  42 QUERY  str text, u8 mode              -> u8 found, i32 l, i32 t, i32 r, i32 b
 //        the first element whose label, value or identifier equals text (ignoring case).
 //        mode 0: firstMatch.frame; 1: firstMatch.snapshot().frame; 2: firstMatch.exists only
 //  43 IDLE   u8 mode, i32 timeout_ms        -> u8 ok, u32 since_tap_us, u32 waited_us, u32 checks,
-//                                              u32 changes, u32 top_row, u32 bottom_row, u32 first_change_us (mode 2)
-//  45 TAP_NOWAIT i32 x, i32 y, i32 hold_ms -> u32 dispatch_us         (TAP without waiting for delivery)
-//        mode 0: XCTest's quiescence wait (event loop and animations idle; private API)
-//        mode 1: Maestro's isScreenStatic, repeated: two screenshots, equal hashes
-//        mode 2: reference: screenshots for timeout_ms; since_tap_us = the last change
+//                                              u32 changes, u32 top_row, u32 bottom_row, u32 first_change_us
+//        mode 0: XCTest's quiescence wait; 1: Maestro's isScreenStatic, repeated (two
+//        screenshots, equal hashes); 2: reference: raw screenshots for timeout_ms
 //  44 METHODS str class                     -> str selectors, one per line ("+" for class methods)
+//  45 TAP_NOWAIT i32 x, i32 y, i32 hold_ms  -> u32 dispatch_us        (no wait for delivery)
+//  46 TAP_HOLD   i32 x, i32 y, i32 hold_ms  -> u32 inject_us          (until delivered)
+//  47 TYPE_RATE  str text, i32 chars_per_s  -> u32 inject_us          (_XCT_sendString)
+//  48 FOREGROUND                          -> str: what each way of listing the active apps returns
+//  49 TYPE_TEST  str text, i32 first_rate, i32 rest_rate, i32 wait_cap_ms -> u32 total_us
 import XCTest
 import Darwin
 

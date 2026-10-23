@@ -55,6 +55,7 @@ Record :: struct {
 
 Runner :: struct {
 	c:                    ^Conn,
+	dev:                  ^Device, // platform, simulator (iOS app control goes through simctl)
 	alloc:                mem.Allocator, // the run's lifetime
 	screen_arena:         virtual.Arena, // strings of the latest hierarchy read
 	h:                    Hierarchy,
@@ -87,7 +88,7 @@ SKIPPED :: "\x00skipped" // a command whose condition was false
 // Loads and runs `path`; `env` holds `-e KEY=VALUE` pairs. Writes per-command timings as
 // JSON to `timings_path` if set. `plain`: one line per command even on a terminal.
 // Returns false if the flow failed.
-run_maestro_flow :: proc(c: ^Conn, path: string, cli_env: []Env_Pair, timings_path: string, plain := false) -> bool {
+run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, cli_env: []Env_Pair, timings_path: string, plain := false) -> bool {
 	arena: virtual.Arena
 	_ = virtual.arena_init_growing(&arena)
 	defer virtual.arena_destroy(&arena)
@@ -101,6 +102,7 @@ run_maestro_flow :: proc(c: ^Conn, path: string, cli_env: []Env_Pair, timings_pa
 	}
 	r := Runner {
 		c     = c,
+		dev   = dev,
 		alloc = alloc,
 		debug = os.get_env("SPEEDRUN_DEBUG", alloc) != "",
 	}
@@ -128,9 +130,12 @@ run_maestro_flow :: proc(c: ^Conn, path: string, cli_env: []Env_Pair, timings_pa
 	scope["MAESTRO_FILENAME"] = base
 	for e in cli_env do scope[e.key] = e.value
 
-	// "Running on <emulator name>", like Maestro.
-	device := strings.trim_space(shell(&r, "getprop ro.boot.qemu.avd_name"))
-	if device == "" do device = strings.trim_space(shell(&r, "getprop ro.product.model"))
+	// "Running on <emulator or simulator name>", like Maestro.
+	device := dev.name
+	if dev.platform == .Android {
+		device = strings.trim_space(shell(&r, "getprop ro.boot.qemu.avd_name"))
+		if device == "" do device = strings.trim_space(shell(&r, "getprop ro.product.model"))
+	}
 	view_init(&r, &flow, flow.name if flow.name != "" else base, device, plain || r.debug)
 
 	start := time.tick_now()
@@ -226,6 +231,14 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	switch d in c.data {
 	case Launch_App:
 		app := eval(r, d.app_id) or_return
+		if r.dev.platform == .IOS {
+			// Maestro: clearState through simctl, stopApp through its runner, launch through
+			// `simctl launch`. Its default `permissions: all: allow` is not applied here yet.
+			if d.clear_state do return false, "launchApp clearState is not supported on iOS yet"
+			if d.stop_app do simctl("terminate", r.dev.udid, app)
+			if out, ok := simctl("launch", r.dev.udid, app); !ok do return true, out
+			return true, nil
+		}
 		if d.clear_state do _ = shell(r, "pm clear %s", app)
 		grant_runtime_permissions(r, app)
 		if d.stop_app do _ = shell(r, "am force-stop %s", app)
@@ -235,6 +248,12 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		return true, nil
 	case App_Cmd:
 		app := eval(r, d.app_id) or_return
+		if r.dev.platform == .IOS {
+			// killApp is stopApp on iOS, as in Maestro (no process death there).
+			if d.op == .Clear_State do return false, "clearState is not supported on iOS yet"
+			simctl("terminate", r.dev.udid, app)
+			return true, nil
+		}
 		switch d.op {
 		case .Stop:        _ = shell(r, "am force-stop %s", app)
 		case .Kill:        _ = shell(r, "am kill %s", app)
@@ -266,9 +285,11 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Navigate:
 		switch d {
 		case .Back:
+			if r.dev.platform == .IOS do return true, nil // no back key: a no-op, as in Maestro
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
 			return true, settle(r)
 		case .Hide_Keyboard:
+			if r.dev.platform == .IOS do return false, "hideKeyboard is not supported on iOS yet"
 			// Maestro presses BACK, then fails if (G)board ids are still on screen.
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
 			if e := settle(r); e != nil do return true, e
@@ -280,6 +301,10 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		case .Scroll:
 			return true, swipe_points(r, r.w / 2, r.h_px / 2, r.w / 2, i32(f32(r.h_px) * 0.1), 400, nil)
 		case .Clear_Keychain:
+			if r.dev.platform == .IOS {
+				if out, ok := simctl("keychain", r.dev.udid, "reset"); !ok do return true, out
+				return true, nil
+			}
 			return false, nil // iOS only: a no-op on Android
 		}
 	case Scroll_Until:
@@ -297,7 +322,11 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Open_Link:
 		link := eval(r, d.link) or_return
 		if strings.contains(link, " ") do return false, "links with spaces are not supported yet"
-		_ = shell(r, "am start -a android.intent.action.VIEW -d %s", link)
+		if r.dev.platform == .IOS {
+			if out, ok := simctl("openurl", r.dev.udid, link); !ok do return true, out
+		} else {
+			_ = shell(r, "am start -a android.intent.action.VIEW -d %s", link)
+		}
 		return true, settle(r)
 	case Run_Flow:
 		if cond, has := d.cond.?; has {

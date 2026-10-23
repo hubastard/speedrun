@@ -1,10 +1,14 @@
-// The device side of a run: copies the agent (embedded in this binary) to the device, starts
-// it as the shell user (or, failing that, as an instrumentation), forwards its port, and stops
-// it again on exit or Ctrl-C. Everything goes through the `adb` binary.
+// The device side of a run, then stopped again on exit or Ctrl-C.
+// Android: copies the agent (embedded in this binary) to the device, starts it as the shell user
+// (or, failing that, as an instrumentation) and forwards its port, all through `adb`.
+// iOS (simulators): starts the agent's XCUITest runner, built by build.sh next to this binary,
+// with `xcodebuild test-without-building`; a simulator shares the Mac's loopback, so the host
+// connects straight to it. App control goes through `xcrun simctl`, as Maestro's does.
 package speedrun
 
 import "base:runtime"
 import "core:fmt"
+import "core:net"
 import "core:os"
 import "core:strings"
 import "core:sys/posix"
@@ -28,13 +32,28 @@ STOP_MAESTRO_DRIVER ::
 	"if pidof " + MAESTRO_DRIVER + " >/dev/null; then am force-stop " + MAESTRO_DRIVER + ".test; am force-stop " +
 	MAESTRO_DRIVER + "; echo stopped-maestro; fi"
 
+Platform :: enum {
+	Android,
+	IOS,
+}
+
+IOS_PORT :: 7778 // default: Android's 7777 is often forwarded to an emulator already
+IOS_RUNNER_APP :: "com.speedrun.agent.uitests.xctrunner"
+IOS_PRODUCTS :: "agent/ios/build/Build/Products" // next to the speedrun binary
+IOS_START_TIMEOUT :: 90 * time.Second
+
 Device :: struct {
+	platform:   Platform,
 	port:       int,
+	udid:       string, // iOS: the simulator
+	name:       string, // shown as "Running on <name>"
 	instrument: bool, // the agent runs as an instrumentation (UiAutomation injection)
 	adb:        os.Process, // the `adb shell` the agent runs under
 	running:    bool,
 	forwarded:  bool,
 	local_apk:  string, // the embedded APK written to a temp file, for `adb push`/`install`
+	runner:     os.Process, // iOS: the xcodebuild running the agent's UI test
+	started:    bool, // iOS: this run started the runner (else it reused one already serving)
 }
 
 // The device adb talks to (--device); empty: adb's default (ANDROID_SERIAL, or the only one).
@@ -88,12 +107,93 @@ device_apk :: proc() -> string {
 	return fmt.tprintf("/data/local/tmp/speedrun-agent-%08x.apk", AGENT_APK_CRC)
 }
 
-// Starts the agent and forwards its port; the caller then connects. Prints why when the shell
-// agent cannot start and the instrumentation takes over.
+// Picks the platform and the device. --platform and --device win; otherwise a connected
+// Android device, else the one booted simulator.
+device_select :: proc(d: ^Device, platform, device: string, port_given: bool) -> (err: string) {
+	sims := booted_simulators()
+	is_sim :: proc(sims: []Simulator, id: string) -> (Simulator, bool) {
+		for s in sims do if s.udid == id do return s, true
+		return {}, false
+	}
+	switch platform {
+	case "android":
+		d.platform = .Android
+	case "ios":
+		d.platform = .IOS
+	case "":
+		if device != "" {
+			_, sim := is_sim(sims, device)
+			d.platform = .IOS if sim else .Android
+		} else if out, ok := adb("devices"); ok && strings.count(out, "\tdevice") > 0 {
+			d.platform = .Android
+		} else if len(sims) > 0 {
+			d.platform = .IOS
+		} else {
+			return "No device: connect an Android device or emulator (adb devices), or boot an iOS simulator."
+		}
+	case:
+		return fmt.tprintf("--platform takes android or ios, not %s", platform)
+	}
+	if d.platform == .Android {
+		adb_serial = device
+		return ""
+	}
+	if !port_given do d.port = IOS_PORT
+	switch {
+	case device != "":
+		sim, ok := is_sim(sims, device)
+		if !ok do return fmt.tprintf("Simulator %s is not booted (xcrun simctl boot %s); real iOS devices are not supported yet.", device, device)
+		d.udid, d.name = sim.udid, sim.name
+	case len(sims) == 1:
+		d.udid, d.name = sims[0].udid, sims[0].name
+	case len(sims) == 0:
+		return "No booted iOS simulator (xcrun simctl boot <udid>)."
+	case:
+		names := make([dynamic]string, context.temp_allocator)
+		for s in sims do append(&names, fmt.tprintf("%s (%s)", s.name, s.udid))
+		return fmt.tprintf("Several simulators are booted: pick one with --device <udid>:\n  %s", strings.join(names[:], "\n  ", context.temp_allocator))
+	}
+	return ""
+}
+
+Simulator :: struct {
+	udid, name: string,
+}
+
+// Booted simulators, from `xcrun simctl list devices booted` ("    iPhone 17 Pro (UDID) (Booted)").
+booted_simulators :: proc() -> []Simulator {
+	out, ok := simctl("list", "devices", "booted")
+	if !ok do return nil
+	sims := make([dynamic]Simulator, context.temp_allocator)
+	for line in strings.split_lines(out, context.temp_allocator) {
+		l := strings.trim_space(line)
+		if !strings.has_suffix(l, "(Booted)") do continue
+		l = strings.trim_space(l[:len(l) - len("(Booted)")])
+		i := strings.last_index(l, " (")
+		if i < 0 || !strings.has_suffix(l, ")") do continue
+		append(&sims, Simulator{udid = l[i + 2:len(l) - 1], name = l[:i]})
+	}
+	return sims[:]
+}
+
+// Runs `xcrun simctl args`. out is its stdout, plus its stderr when it failed.
+simctl :: proc(args: ..string) -> (out: string, ok: bool) {
+	cmd := make([dynamic]string, 0, len(args) + 2, context.temp_allocator)
+	append(&cmd, "xcrun", "simctl")
+	append(&cmd, ..args)
+	state, stdout, stderr, err := os.process_exec({command = cmd[:]}, context.temp_allocator)
+	if err != nil do return fmt.tprintf("xcrun: %v (Xcode command-line tools)", err), false
+	if state.exited && state.exit_code == 0 do return string(stdout), true
+	return strings.trim_space(strings.concatenate({string(stdout), string(stderr)}, context.temp_allocator)), false
+}
+
+// Starts the agent (and on Android forwards its port); the caller then connects. Prints why
+// when the Android shell agent cannot start and the instrumentation takes over.
 device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 	current = d
 	posix.signal(.SIGINT, on_signal)
 	posix.signal(.SIGTERM, on_signal)
+	if d.platform == .IOS do return ios_start(d)
 
 	present, perr := device_prepare()
 	if perr != "" do return perr
@@ -138,6 +238,11 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 
 // Stops the agent, removes the port forward and the temp APK. Safe to call twice.
 device_stop :: proc(d: ^Device) {
+	if d.platform == .IOS {
+		ios_stop(d)
+		current = nil
+		return
+	}
 	stop_agent(d)
 	if d.forwarded {
 		adb("forward", "--remove", fmt.tprintf("tcp:%d", d.port))
@@ -202,6 +307,91 @@ write_local_apk :: proc(d: ^Device) -> string {
 	d.local_apk = strings.clone(os.name(f))
 	if _, werr := os.write(f, AGENT_APK); werr != nil do return fmt.tprintf("could not write %s: %v", d.local_apk, werr)
 	return ""
+}
+
+// The runner of an earlier run may still be serving (on Ctrl-C of an xcodebuild, for one):
+// reuse it. Otherwise start one and wait until it answers.
+@(private = "file")
+ios_start :: proc(d: ^Device) -> string {
+	if answers_ping(d.port) do return ""
+	products := ios_products()
+	xctestrun := ""
+	if entries, err := os.read_all_directory_by_path(products, context.temp_allocator); err == nil {
+		for e in entries do if strings.has_suffix(e.name, ".xctestrun") do xctestrun = e.fullpath
+	}
+	if xctestrun == "" do return fmt.tprintf("The iOS agent is not built (%s): run ./build.sh (it needs Xcode).", products)
+
+	f, ferr := os.create_temp_file("", "speedrun-ios-runner-*.log")
+	if ferr != nil do return fmt.tprintf("could not create a temp file: %v", ferr)
+	log := strings.clone(os.name(f), context.temp_allocator)
+	defer {
+		os.close(f)
+		os.remove(log)
+	}
+	environ, _ := os.environ(context.temp_allocator)
+	env := make([dynamic]string, 0, len(environ) + 1, context.temp_allocator)
+	append(&env, ..environ)
+	append(&env, fmt.tprintf("TEST_RUNNER_SPEEDRUN_PORT=%d", d.port)) // reaches the runner as SPEEDRUN_PORT
+	p, err := os.process_start({
+		command = {"xcodebuild", "test-without-building", "-xctestrun", xctestrun, "-destination", fmt.tprintf("id=%s", d.udid)},
+		env = env[:], stdout = f, stderr = f,
+	})
+	if err != nil do return fmt.tprintf("could not run xcodebuild: %v", err)
+	d.runner, d.started = p, true
+
+	start := time.tick_now()
+	for time.tick_since(start) < IOS_START_TIMEOUT {
+		if answers_ping(d.port) do return ""
+		if state, werr := os.process_wait(p, 0); werr == nil && state.exited {
+			d.started = false
+			data, _ := os.read_entire_file(log, context.temp_allocator)
+			return fmt.tprintf("The iOS agent did not start. The end of xcodebuild's output:\n%s", indent(tail(string(data), 15)))
+		}
+		time.sleep(100 * time.Millisecond)
+	}
+	ios_stop(d)
+	return fmt.tprintf("The iOS agent did not answer within %v.", IOS_START_TIMEOUT)
+}
+
+// Ends the test run this process started; a runner it reused keeps serving.
+@(private = "file")
+ios_stop :: proc(d: ^Device) {
+	if !d.started do return
+	_ = os.process_terminate(d.runner)
+	for _ in 0 ..< 30 {
+		if state, err := os.process_wait(d.runner, 0); err == nil && state.exited do break
+		time.sleep(100 * time.Millisecond)
+	}
+	_ = os.process_kill(d.runner)
+	_, _ = os.process_wait(d.runner, 0)
+	simctl("terminate", d.udid, IOS_RUNNER_APP)
+	d.started = false
+}
+
+// Where build.sh puts the runner: agent/ios/build next to the speedrun binary.
+@(private = "file")
+ios_products :: proc() -> string {
+	dir, err := os.get_executable_directory(context.temp_allocator)
+	if err != nil do dir = "."
+	return strings.concatenate({dir, "/", IOS_PRODUCTS}, context.temp_allocator)
+}
+
+// An agent serving on 127.0.0.1:port (it answers PING).
+@(private = "file")
+answers_ping :: proc(port: int) -> bool {
+	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
+	if err != nil do return false
+	defer net.close(sock)
+	c := Conn{sock = sock}
+	defer delete(c.buf)
+	_, ok := op_ping(&c)
+	return ok
+}
+
+@(private = "file")
+tail :: proc(s: string, n: int) -> string {
+	lines := strings.split_lines(strings.trim_space(s), context.temp_allocator)
+	return strings.join(lines[max(len(lines) - n, 0):], "\n", context.temp_allocator)
 }
 
 @(private = "file")

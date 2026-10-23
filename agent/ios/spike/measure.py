@@ -23,7 +23,7 @@ def tap(text_or_box, hold=100):
         assert found, text_or_box
     else:
         l, t, r, b = text_or_box
-    body, _, ms = a.call(b"\x03" + i((l + r) // 2, (t + b) // 2, hold))
+    body, _, ms = a.call(b"\x2e" + i((l + r) // 2, (t + b) // 2, hold))
     return struct.unpack(">I", body[:4])[0] / 1000, ms
 
 def idle(mode, timeout=2500):
@@ -84,10 +84,10 @@ for mode, name in [(0, "XCTest quiescence (event loop + animations idle)"), (1, 
 print("== Typing into the search field")
 tap("magnifyingglass"); idle(0)
 for rate in (30, 1000):
-    body, _, _ = a.call(b"\x08" + s("Speedrun bench") + i(rate))
+    body, _, _ = a.call(b"\x2f" + s("Speedrun bench") + i(rate))
     typed = struct.unpack(">I", body[:4])[0] / 1000
     found = query("Speedrun bench", 2)[0]
-    body, _, _ = a.call(b"\x08" + s("\b" * 25) + i(rate))
+    body, _, _ = a.call(b"\x2f" + s("\b" * 25) + i(rate))
     erased = struct.unpack(">I", body[:4])[0] / 1000
     cleared = not query("Speedrun bench", 2)[0]
     print(f"  {rate:5d} chars/s: type 14 chars {typed:7.1f} ms (field shows it: {bool(found)}), "

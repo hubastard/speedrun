@@ -1,4 +1,4 @@
-# Client for the iOS agent spike (agent/ios/SpeedrunAgentUITests/Agent.swift): framing as the Android agent (u8 op + fields; u32 len, u32 agent_us, body).
+# Client for the iOS agent (agent/ios/SpeedrunAgentUITests/Agent.swift): framing as the Android agent (u8 op + fields; u32 len, u32 agent_us, body).
 import socket, struct, time
 class Agent:
     def __init__(self, port=7778, timeout=60):

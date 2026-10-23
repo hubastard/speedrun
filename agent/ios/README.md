@@ -1,29 +1,45 @@
-# iOS agent (spike)
+# iOS agent (simulators)
 
-Steps 1 and 2 of the iOS plan: a Maestro baseline on the iOS Settings app, and a bare XCUITest
-runner that times each building block an iOS agent would be made of. Nothing here is wired
-into `speedrun` yet.
+An XCUITest runner whose single test serves the Android agent's protocol (same ops, same
+responses) over TCP on `127.0.0.1:7778`: a simulator shares the Mac's loopback, so there is no
+forwarding. `./build.sh` builds it into `agent/ios/build`; `./speedrun --platform ios` starts it
+with `xcodebuild test-without-building` and stops it at exit. Only an XCTest runner may drive
+other apps on iOS, which is also how Maestro's iOS driver works.
 
-- `SpeedrunAgentUITests/` — the runner: one UI test that serves the Android agent's framing
-  (`u8 op` + fields; `u32 length, u32 agent_us, body`) over TCP on `127.0.0.1:7778` (a
-  simulator shares the Mac's loopback: no forwarding). Ops are listed in `Agent.swift`.
-  Private XCTest API is reached through the Objective-C runtime and checked before each use
-  (`Private.swift`): a missing method is an error naming it, not a crash.
-- `spike/` — the Python client and the measurement scripts.
+- `SpeedrunAgentUITests/` — `Agent.swift` (server, protocol), `Screen.swift` (the hierarchy,
+  with Maestro's iOS attribute mapping), `Input.swift` (taps, swipes, typing, keys),
+  `Settle.swift`, `Private.swift` (private XCTest API, reached through the Objective-C runtime
+  and checked before each use: a missing method is an error naming it, not a crash) and
+  `Spike.swift` (measurement-only ops).
+- `spike/` — the Python client and the measurement scripts (`measure.py`, `measure_followup.py`
+  for the building blocks, `typing.py` for typing rates).
 - `../../bench_scenario_ios.yaml` — the iOS version of `bench_scenario.yaml` (Settings, simulator
   in English), 12 commands per iteration.
 
-Build and start (Xcode 27, a booted simulator):
+How it does each part:
+
+- **Hierarchy**: the foreground app (found through XCTest's accessibility client and
+  testmanagerd, the last one checked first), then SpringBoard's status bars, re-read every 5 s
+  (they cost as much as the app and change with the clock). A read right after SETTLE is
+  served from settle's last snapshot (no action since, under 1 s old). ~70–90 ms otherwise.
+- **Input**: events synthesized through testmanagerd, as Maestro's runner does (a 100 ms tap,
+  Maestro's swipe shape). Text: the first character alone, then, once the focused field shows
+  it (at most 0.5 s), the rest at 100 characters per second; Maestro types at 30 after a fixed
+  0.5 s. Deleting from an empty field does not wait.
+- **Settle**: XCTest's quiescence (event loop, then animations, idle), then the screen's
+  signature: it must differ from what the flow last read (quiescence once reported idle
+  before a push had begun), and two signatures in a row must agree. "No change" after
+  `no_change_ms`, as on Android.
+
+To time the building blocks by hand:
 
 ```
-xcodebuild build-for-testing -project agent/ios/SpeedrunAgent.xcodeproj -scheme SpeedrunAgent \
-  -destination 'platform=iOS Simulator,id=<udid>' -derivedDataPath agent/ios/build
 TEST_RUNNER_SPEEDRUN_PORT=7778 xcodebuild test-without-building \
   -xctestrun agent/ios/build/Build/Products/*.xctestrun -destination 'id=<udid>' &
 python3 agent/ios/spike/measure.py        # Settings open on its home screen
 ```
 
-## Results (2026-10-23, iPhone 17 Pro simulator, iOS 26.2, Xcode 27.0, a loaded Mac)
+## Spike results (2026-10-23, iPhone 17 Pro simulator, iOS 26.2, Xcode 27.0, a loaded Mac)
 
 Maestro 2.11.0, `bench_scenario_ios.yaml -e TIMES=5`, all commands passed:
 
@@ -72,6 +88,6 @@ What it means:
 - Start-up: 3.7 s here against ~10 s for Maestro, before keeping the runner alive between
   runs.
 
-Next: a settle that combines quiescence with a guard against early idles, the trimmed
-snapshot, the typing losses, then the agent's real ops and `speedrun` support for iOS
-devices.
+The typing losses above came from `_XCT_sendString`; typing through synthesized key events
+(what the agent does) lost no character at up to 300 characters per second, without waiting
+after the first one (`spike/typing.py`, 5 tries each).
