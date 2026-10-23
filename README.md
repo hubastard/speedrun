@@ -199,7 +199,9 @@ Known differences in how, not what:
   warming the cache during settle and parallel fetches were measured and did not pay off.
   Later reads of the same screen are served from the accessibility cache (~3 ms).
 - Only one `UiAutomation` client can exist at a time (agent, instrumentation or
-  `uiautomator`); speedrun stops both kinds of agent before the baseline and at exit.
+  `uiautomator`); speedrun stops both kinds of agent before the baseline and at exit, and at
+  start-up stops a Maestro driver left running by an interrupted Maestro run. Any other client
+  holding it is reported, and the run stops.
 - The shell agent relies on hidden APIs (`UiAutomation(Looper, IUiAutomationConnection)`,
   `InputManagerGlobal.injectInputEvent`), checked on Android 17 / API 37. Each one that is
   missing is logged and falls back (InputManager → UiAutomation injection; no UiAutomation →

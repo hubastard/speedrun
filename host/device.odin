@@ -21,6 +21,13 @@ AGENT_START_TIMEOUT :: 10 * time.Second
 // the --nice-name command line (pkill would match comm, which is "main").
 STOP_AGENTS :: "am force-stop " + AGENT_PACKAGE + "; pids=$(pidof " + AGENT_NAME + ") && kill $pids"
 
+// Maestro's driver (an instrumentation in this package) holds the UiAutomation slot while it
+// runs, and an interrupted Maestro run leaves it running on the device.
+MAESTRO_DRIVER :: "dev.mobile.maestro"
+STOP_MAESTRO_DRIVER ::
+	"if pidof " + MAESTRO_DRIVER + " >/dev/null; then am force-stop " + MAESTRO_DRIVER + ".test; am force-stop " +
+	MAESTRO_DRIVER + "; echo stopped-maestro; fi"
+
 Device :: struct {
 	port:       int,
 	instrument: bool, // the agent runs as an instrumentation (UiAutomation injection)
@@ -61,7 +68,7 @@ adb :: proc(args: ..string) -> (out: string, ok: bool) {
 device_prepare :: proc() -> (present: bool, err: string) {
 	script := strings.concatenate({
 		"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; ",
-		"settings put global animator_duration_scale 0; ", STOP_AGENTS, "; ",
+		"settings put global animator_duration_scale 0; ", STOP_AGENTS, "; ", STOP_MAESTRO_DRIVER, "; ",
 		"for f in /data/local/tmp/speedrun-agent-*.apk; do ",
 		`[ "$f" = `, device_apk(), ` ] && echo present || rm -f "$f"; done`,
 	}, context.temp_allocator)
@@ -70,6 +77,9 @@ device_prepare :: proc() -> (present: bool, err: string) {
 		return false, strings.concatenate({out, "\nPick one with --device <serial> (see `adb devices`)."}, context.temp_allocator)
 	}
 	if !ok do return false, out
+	if strings.contains(out, "stopped-maestro") {
+		fmt.eprintln("Stopped Maestro's driver, left running on the device by an earlier Maestro run: it held the UiAutomation slot.")
+	}
 	return strings.contains(out, "present"), ""
 }
 
@@ -95,6 +105,12 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 		log, ok := start_shell_agent(d)
 		if verbose && ok {
 			for l in strings.split_lines(strings.trim_space(log), context.temp_allocator) do fmt.printf("  agent: %s\n", l)
+		}
+		// Another client holds the device's only UiAutomation slot: the instrumentation would
+		// hit the same wall, so say who to stop instead of falling back.
+		if !ok && strings.contains(log, "already registered") {
+			stop_agent(d)
+			return "Another UiAutomation client is running on the device (a test tool, uiautomator, an instrumentation); only one can run at a time. Stop it and retry."
 		}
 		if !ok {
 			fmt.eprintln("The shell agent did not start. Its output, then the end of logcat:")
