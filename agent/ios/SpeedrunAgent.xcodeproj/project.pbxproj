@@ -1,0 +1,196 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5D0000000000000000000101 /* Agent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000201 /* Agent.swift */; };
+		5D0000000000000000000102 /* Ops.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000202 /* Ops.swift */; };
+		5D0000000000000000000103 /* Private.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0000000000000000000203 /* Private.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		5D0000000000000000000201 /* Agent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Agent.swift; sourceTree = "<group>"; };
+		5D0000000000000000000202 /* Ops.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ops.swift; sourceTree = "<group>"; };
+		5D0000000000000000000203 /* Private.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Private.swift; sourceTree = "<group>"; };
+		5D0000000000000000000301 /* SpeedrunAgentUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpeedrunAgentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5D0000000000000000000401 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5D0000000000000000000501 = {
+			isa = PBXGroup;
+			children = (
+				5D0000000000000000000502 /* SpeedrunAgentUITests */,
+				5D0000000000000000000503 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5D0000000000000000000502 /* SpeedrunAgentUITests */ = {
+			isa = PBXGroup;
+			children = (
+				5D0000000000000000000201 /* Agent.swift */,
+				5D0000000000000000000202 /* Ops.swift */,
+				5D0000000000000000000203 /* Private.swift */,
+			);
+			path = SpeedrunAgentUITests;
+			sourceTree = "<group>";
+		};
+		5D0000000000000000000503 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5D0000000000000000000301 /* SpeedrunAgentUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5D0000000000000000000601 /* SpeedrunAgentUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5D0000000000000000000802 /* Build configuration list for PBXNativeTarget "SpeedrunAgentUITests" */;
+			buildPhases = (
+				5D0000000000000000000701 /* Sources */,
+				5D0000000000000000000401 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SpeedrunAgentUITests;
+			productName = SpeedrunAgentUITests;
+			productReference = 5D0000000000000000000301 /* SpeedrunAgentUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5D0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 5D0000000000000000000801 /* Build configuration list for PBXProject "SpeedrunAgent" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 5D0000000000000000000501;
+			productRefGroup = 5D0000000000000000000503 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5D0000000000000000000601 /* SpeedrunAgentUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5D0000000000000000000701 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5D0000000000000000000101 /* Agent.swift in Sources */,
+				5D0000000000000000000102 /* Ops.swift in Sources */,
+				5D0000000000000000000103 /* Private.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		5D0000000000000000000901 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		5D0000000000000000000902 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5D0000000000000000000903 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.speedrun.agent.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5D0000000000000000000904 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.speedrun.agent.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5D0000000000000000000801 /* Build configuration list for PBXProject "SpeedrunAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5D0000000000000000000901 /* Debug */,
+				5D0000000000000000000902 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5D0000000000000000000802 /* Build configuration list for PBXNativeTarget "SpeedrunAgentUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5D0000000000000000000903 /* Debug */,
+				5D0000000000000000000904 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 5D0000000000000000000001 /* Project object */;
+}

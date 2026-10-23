@@ -21,6 +21,7 @@ same files.
     It builds its own `UiAutomation` the way `uiautomator dump` does.
   - `AgentInstrumentation` (fallback, `--instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
+- `agent/ios/` — the iOS agent, an XCUITest runner (in progress; see `agent/ios/README.md`).
 - `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
   `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
   - `main.odin`: command line and the latency benchmark. Its steps locate their target with
