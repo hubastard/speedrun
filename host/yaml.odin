@@ -2,7 +2,7 @@
 // block (| >) scalars, flow collections ([a, b], {k: v}), comments and `---` documents.
 // Anchors, aliases and tags are rejected with the line number, never silently misread.
 // Scalars stay text; the flow layer converts them per field (bool, int, string).
-package spike_host
+package speedrun
 
 import "core:fmt"
 import "core:mem"

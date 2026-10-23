@@ -1,8 +1,9 @@
-# Mobile E2E latency spike (Android)
+# speedrun (Android)
 
-Goal: prove, with numbers, how fast one E2E step (read screen → find element → tap → wait
-until the UI settles) can be when the tooling is designed for speed, and compare it to the
-classic full-hierarchy dump and to Maestro, running the same Maestro flow files.
+A mobile E2E runner designed for speed. It runs Maestro flow files as they are, and proves
+with numbers how fast one E2E step (read screen → find element → tap → wait until the UI
+settles) can be, compared with the classic full-hierarchy dump and with Maestro running the
+same files.
 
 ## Pieces
 
@@ -18,16 +19,20 @@ classic full-hierarchy dump and to Maestro, running the same Maestro flow files.
   - `ShellMain` (default): started with `app_process` as the shell user, which holds
     `INJECT_EVENTS`, so taps go straight to the hidden input manager, async (~1 ms per tap).
     It builds its own `UiAutomation` the way `uiautomator dump` does.
-  - `AgentInstrumentation` (fallback, `AGENT_MODE=instrument`): injects through
+  - `AgentInstrumentation` (fallback, `--instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
-- `host/` — Odin client. One persistent TCP connection through `adb forward`,
-  `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
-  - `main.odin`: the latency benchmark. Its steps locate their target with `FIND` (the app
-    searches its own hierarchy, one round trip) and read the full `TREE` only when that finds
-    no visible exact match.
-  - `yaml.odin`, `flow.odin`, `maestro.odin`: runs Maestro flow files (see below).
-- `run.sh` — disables animations, builds and starts everything, then runs the latency
-  benchmark (after a `uiautomator dump` baseline) or a flow file.
+- `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
+  `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
+  - `main.odin`: command line and the latency benchmark. Its steps locate their target with
+    `FIND` (the app searches its own hierarchy, one round trip) and read the full `TREE` only
+    when that finds no visible exact match.
+  - `device.odin`: the agent's lifecycle. The agent APK is embedded in the binary; each run
+    pushes it if the device does not have this build yet, starts it, forwards its port and
+    stops it at exit (Ctrl-C too).
+  - `yaml.odin`, `flow.odin`, `maestro.odin`, `console.odin`: runs Maestro flow files and
+    prints them like Maestro does (see below).
+- `build.sh` — builds the agent APK, then `./speedrun` around it. Run it once (and after
+  changing `agent/` or `host/`); nothing rebuilds at run time.
 - `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
   the supported Maestro commands, each tap checked by an assertion.
 - `compare.sh` — runs one flow file with both tools and prints them side by side.
@@ -35,27 +40,33 @@ classic full-hierarchy dump and to Maestro, running the same Maestro flow files.
 ## Setup
 
 1. Android SDK with `adb` on PATH, an emulator running (or a device with USB debugging).
-2. JDK 17. Gradle comes from the wrapper in `agent/` (Gradle 8.14.3, downloaded on first run).
-   Build the agent: `cd agent && ./gradlew assembleDebug`
-3. Odin on PATH.
+2. To build: JDK 17 (Gradle comes from the wrapper in `agent/`, 8.14.3, downloaded on first
+   run) and Odin on PATH. Then, once:
+
+```
+./build.sh
+```
+
+`./speedrun` then needs only `adb`.
 
 ## Run
-
-Open the Settings app on the emulator, then:
-
-```
-./run.sh "Network & internet" 20
-```
-
-Run with no target to list texts visible on the current screen.
 
 Maestro flow files run as they are:
 
 ```
-./run.sh --flow bench_scenario.yaml -e TIMES=5      # this tool only
-./compare.sh bench_scenario.yaml -e TIMES=5         # this tool, then Maestro, side by side
+./speedrun --flow bench_scenario.yaml -e TIMES=5    # speedrun only
+./compare.sh bench_scenario.yaml -e TIMES=5         # speedrun, then Maestro, side by side
 ./compare.sh flows/features.yaml                     # both tools must agree on every command
 ```
+
+The latency breakdown (open the Settings app on the emulator first):
+
+```
+./speedrun --bench "Network & internet" 20
+```
+
+Run `--bench` with no target to list texts visible on the current screen. `./speedrun --help`
+lists the options (`--port`, `--instrument`, `--plain`, `--timings`).
 
 `bench_scenario.yaml` is 14 commands per iteration in Settings: navigation two levels deep,
 scrolling both ways, and text input in a dialog (erase, type, assert, cancel, so nothing
@@ -63,12 +74,12 @@ changes). `compare.sh` starts the flow's app fresh before each tool, lines the t
 command by command (warning if their command sequences or statuses differ) and prints
 medians per command, repeat iterations grouped. Its totals exclude each tool's start-up
 (Maestro's is printed separately). It needs `maestro` and `python3` on PATH.
-`--timings out.json` makes the runner write its per-command record.
+`--timings out.json` makes speedrun write its per-command record.
 
-The agent starts as the shell user (`adb push` to `/data/local/tmp/agent.apk`, then
-`app_process`); if it cannot start, `run.sh` prints why and falls back to the
-instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation. Agent logs:
-`adb logcat -s SpikeAgent`.
+The agent starts as the shell user (`adb push` to `/data/local/tmp/speedrun-agent-<crc>.apk`,
+skipped when that build is already there, then `app_process`); if it cannot start, speedrun
+prints why and falls back to the instrumentation. `--instrument` forces the instrumentation.
+Agent logs: `adb logcat -s SpeedrunAgent`.
 
 ## What the output means
 
@@ -92,7 +103,7 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
    window around the running command. When the output is piped, or with `--plain`, it is
    Maestro's plain format (`Tap on "X"... COMPLETED`) plus the time. Either way the run ends
    with the total and how many hierarchy reads it took. A failed lookup or assertion prints
-   the windows and texts of the last read (below the view in live mode). `SPIKE_DEBUG=1`
+   the windows and texts of the last read (below the view in live mode). `SPEEDRUN_DEBUG=1`
    prints every hierarchy read and shell command with its time (and implies `--plain`).
 
 ## Maestro flow files
@@ -146,7 +157,7 @@ Known differences in how, not what:
   Maestro gathers windows in a hash set, so its order there is arbitrary. Toasts are not in
   the hierarchy.
 
-## Known limits (deliberate for a spike)
+## Known limits (deliberate for now)
 
 - **Settle cannot see frames on Android 12+.** `getWindowContentFrameStats()` reads the
   window's own layer, but windows draw into a child (BLAST) layer, so it reports no frames.
@@ -162,14 +173,16 @@ Known differences in how, not what:
   stops before lifting and the content moves by the drag distance.
 - **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`: characters with
   no key sequence (most non-ASCII) are reported and the command fails. Key events go through
-  the IME before the field, about 60 ms per key on the emulator, for Maestro too.
+  the IME before the field, about 60 ms per key on the emulator, for Maestro too. The last
+  key of `TYPE` and `ERASE` waits until the app has handled it: the IME applies DELs
+  asynchronously, and spare DELs once deleted the first characters typed next.
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,
   warming the cache during settle and parallel fetches were measured and did not pay off.
   Later reads of the same screen are served from the accessibility cache (~3 ms).
 - Only one `UiAutomation` client can exist at a time (agent, instrumentation or
-  `uiautomator`); `run.sh` stops both kinds of agent before the baseline and at exit.
+  `uiautomator`); speedrun stops both kinds of agent before the baseline and at exit.
 - The shell agent relies on hidden APIs (`UiAutomation(Looper, IUiAutomationConnection)`,
   `InputManagerGlobal.injectInputEvent`), checked on Android 17 / API 37. Each one that is
   missing is logged and falls back (InputManager → UiAutomation injection; no UiAutomation →
@@ -178,7 +191,9 @@ Known differences in how, not what:
   thread; with the Mac busy, reads and shell commands were seen to block for 2–9 s and one
   `assertVisible` right after `launchApp` timed out. Rerun on a quieter machine before
   trusting a failure or a number.
-- Host goes through the `adb` binary for `forward`/`push`/`install`. A product would speak
-  the adb wire protocol directly.
+- speedrun goes through the `adb` binary for `forward`/`push`/`install` (about 0.5 s of
+  start-up per run). It could speak the adb wire protocol directly.
 - Android only. iOS needs a separate XCUITest- or in-app-based agent.
-- Animations are disabled by the script (normal practice for UI tests); re-enable afterwards.
+- Animations are disabled by every run (normal practice for UI tests) and stay disabled;
+  re-enable with `adb shell settings put global <name> 1` for `window_animation_scale`,
+  `transition_animation_scale` and `animator_duration_scale`.

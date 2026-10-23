@@ -3,7 +3,7 @@
 // last interaction, conditions, env scopes, gestures and key codes (drivers/AndroidDriver).
 // What differs is how: one agent round trip per hierarchy read and frame/event-driven settle
 // instead of fixed sleeps and screenshot diffs.
-package spike_host
+package speedrun
 
 import "core:encoding/json"
 import "core:fmt"
@@ -66,7 +66,7 @@ Runner :: struct {
 	records:              [dynamic]Record,
 	depth:                int,
 	path:                 string, // of the command being run
-	debug:                bool, // SPIKE_DEBUG: print every hierarchy read and shell command
+	debug:                bool, // SPEEDRUN_DEBUG: print every hierarchy read and shell command
 	view:                 View, // console output (console.odin)
 	reads, read_ms_total: f64,
 }
@@ -102,7 +102,7 @@ run_maestro_flow :: proc(c: ^Conn, path: string, cli_env: []Env_Pair, timings_pa
 	r := Runner {
 		c     = c,
 		alloc = alloc,
-		debug = os.get_env("SPIKE_DEBUG", alloc) != "",
+		debug = os.get_env("SPEEDRUN_DEBUG", alloc) != "",
 	}
 	_ = virtual.arena_init_growing(&r.screen_arena)
 	defer virtual.arena_destroy(&r.screen_arena)

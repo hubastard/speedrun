@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "e2e-spike-agent"
+rootProject.name = "speedrun-agent"
 include(":app")

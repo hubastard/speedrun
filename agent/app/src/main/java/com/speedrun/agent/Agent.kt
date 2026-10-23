@@ -1,4 +1,4 @@
-package com.spike.agent
+package com.speedrun.agent
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
@@ -27,11 +27,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.hypot
 
-internal const val TAG = "SpikeAgent"
+internal const val TAG = "SpeedrunAgent"
 
 /**
- * Logcat, tag SpikeAgent. The shell entry point also echoes to stdout: that is what
- * `adb shell` shows, and run.sh watches it to know when the agent is up.
+ * Logcat, tag SpeedrunAgent. The shell entry point also echoes to stdout: that is what
+ * `adb shell` shows, and speedrun watches it to know when the agent is up.
  */
 internal object AgentLog {
     @Volatile var echoToStdout = false
@@ -496,10 +496,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun key(code: Int) = timedAction { pressKey(code) }
 
-    private fun pressKey(code: Int) {
+    private fun pressKey(code: Int, sync: Boolean = false) {
         val t = SystemClock.uptimeMillis()
         injector.inject(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0))
-        injector.inject(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0))
+        injector.inject(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0), sync)
     }
 
     private val keyMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
@@ -507,6 +507,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private fun type(text: String) {
         var skipped = 0
         timedAction {
+            val keys = ArrayList<KeyEvent>()
             for (ch in text) {
                 val events = keyMap.getEvents(charArrayOf(ch))
                 if (events == null) {
@@ -515,15 +516,21 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 }
                 for (e in events) {
                     e.source = InputDevice.SOURCE_KEYBOARD
-                    injector.inject(e)
+                    keys += e
                 }
             }
+            // Keys reach the app in order, so once the last one is handled, all are.
+            keys.forEachIndexed { i, e -> injector.inject(e, sync = i == keys.lastIndex) }
         }
         body.writeInt(skipped)
     }
 
+    // The last DEL waits until the app has handled it (and so every DEL before it). The IME
+    // applies DELs asynchronously; without the wait, spare DELs (erasing more characters than
+    // the field holds) could land after the next command's first typed characters.
     private fun erase(count: Int) = timedAction {
-        repeat(count.coerceIn(0, 10_000)) { pressKey(KeyEvent.KEYCODE_DEL) }
+        val n = count.coerceIn(0, 10_000)
+        repeat(n) { pressKey(KeyEvent.KEYCODE_DEL, sync = it == n - 1) }
     }
 
     // ---- settle -----------------------------------------------------------------------

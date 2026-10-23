@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.spike.agent"
+    namespace = "com.speedrun.agent"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.spike.agent"
+        applicationId = "com.speedrun.agent"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

@@ -1,4 +1,4 @@
-package com.spike.agent
+package com.speedrun.agent
 
 import android.app.UiAutomation
 import android.os.HandlerThread
@@ -8,8 +8,8 @@ import kotlin.system.exitProcess
 /**
  * Launched as the shell user (the scrcpy approach):
  *   adb push app-debug.apk /data/local/tmp/agent.apk
- *   adb shell CLASSPATH=/data/local/tmp/agent.apk app_process / com.spike.agent.ShellMain 7777
- * (run.sh adds --nice-name=spike-agent so it can find and stop the process.)
+ *   adb shell CLASSPATH=/data/local/tmp/agent.apk app_process / com.speedrun.agent.ShellMain 7777
+ * (speedrun adds --nice-name=speedrun-agent so it can find and stop the process.)
  *
  * The shell uid holds INJECT_EVENTS, so input goes straight to the input manager, without
  * the transaction syncs UiAutomation does around every DOWN/UP. Tree reads and frame stats
@@ -17,7 +17,7 @@ import kotlin.system.exitProcess
  * UiAutomationShellWrapper). Only one UiAutomation client can exist at a time, so the
  * instrumentation must not be running.
  *
- * Exits non-zero, with the reason logged, when it cannot get going; run.sh then falls back
+ * Exits non-zero, with the reason logged, when it cannot get going; speedrun then falls back
  * to the instrumentation.
  */
 object ShellMain {
@@ -38,7 +38,7 @@ object ShellMain {
             exitProcess(2)
         }
 
-        Thread({ serve(ua, port) }, "SpikeAgentServer").start()
+        Thread({ serve(ua, port) }, "SpeedrunAgentServer").start()
         Looper.loop() // runs whatever the framework posts to the main looper
     }
 
@@ -59,7 +59,7 @@ object ShellMain {
 
     /** new UiAutomation(looper, new UiAutomationConnection()).connect(): all hidden API. */
     private fun connectUiAutomation(): UiAutomation {
-        val thread = HandlerThread("SpikeUiAutomation").apply { start() }
+        val thread = HandlerThread("SpeedrunUiAutomation").apply { start() }
         val connection = Class.forName("android.app.UiAutomationConnection")
             .getDeclaredConstructor()
             .newInstance()

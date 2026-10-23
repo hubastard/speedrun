@@ -1,8 +1,7 @@
-// E2E spike host: drives the on-device agent over one persistent TCP connection
-// (forwarded by `adb forward`) and measures where every millisecond goes.
-//
-// Usage: spike_host [port] [target_text | --scenario] [iterations]
-package spike_host
+// speedrun: runs Maestro flow files on Android through an on-device agent, over one
+// persistent TCP connection (forwarded by `adb forward`), and measures where every
+// millisecond goes. Usage: see USAGE below.
+package speedrun
 
 import "core:encoding/endian"
 import "core:fmt"
@@ -489,31 +488,18 @@ connect :: proc(port: int) -> (c: Conn, ok: bool) {
 }
 
 main :: proc() {
-	if len(os.args) > 2 && os.args[2] == "--flow" {
-		os.exit(run_flow_cli())
-	}
-	port := 7777
-	target := ""
-	iters := 10
-	if len(os.args) > 1 {
-		if v, vok := strconv.parse_int(os.args[1]); vok do port = v
-	}
-	if len(os.args) > 2 do target = os.args[2]
-	if len(os.args) > 3 {
-		if v, vok := strconv.parse_int(os.args[3]); vok do iters = max(1, v)
-	}
+	os.exit(run_cli(os.args[1:]))
+}
 
-	c, ok := connect(port)
-	if !ok {
-		fmt.eprintln("could not reach the agent on port", port, "(is `adb forward` set and the agent running?)")
-		os.exit(1)
-	}
-	defer net.close(c.sock)
+// The latency breakdown: transport, tree reads, then a tap + back step loop on target.
+run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
+	c := conn^
+	defer conn^ = c
 
 	arena: virtual.Arena
 	if err := virtual.arena_init_growing(&arena); err != nil {
 		fmt.eprintln("arena init failed:", err)
-		os.exit(1)
+		return 1
 	}
 	defer virtual.arena_destroy(&arena)
 	step_alloc := virtual.arena_allocator(&arena)
@@ -530,7 +516,7 @@ main :: proc() {
 			t := time.tick_now()
 			if _, pok := op_ping(&c); !pok {
 				fmt.eprintln("ping failed")
-				os.exit(1)
+				return 1
 			}
 			append(&rtt, us(t) / 1000)
 		}
@@ -550,7 +536,7 @@ main :: proc() {
 			a_us, tok := op_tree(&c, &nodes, step_alloc)
 			if !tok {
 				fmt.eprintln("tree fetch failed")
-				os.exit(1)
+				return 1
 			}
 			append(&host_ms, us(t) / 1000)
 			append(&agent_ms, f64(a_us) / 1000)
@@ -564,7 +550,7 @@ main :: proc() {
 		fmt.println("\nNo target text given; skipping the step benchmark.")
 		fmt.println("Visible texts you could target:")
 		print_targets(nodes[:])
-		return
+		return 0
 	}
 
 	// -- 3. steps ----------------------------------------------------------------------
@@ -599,7 +585,7 @@ main :: proc() {
 			idx, found, rounds, tree_reads, rok := wait_for(&c, &nodes, step_alloc, target, 2000)
 			if !rok {
 				fmt.eprintln("find or tree fetch failed")
-				os.exit(1)
+				return 1
 			}
 			append(&read_ms, us(t) / 1000)
 			append(&reads_n, f64(rounds))
@@ -614,7 +600,7 @@ main :: proc() {
 				)
 				fmt.eprintln("First nodes on screen (including invisible):")
 				print_nodes(nodes[:])
-				os.exit(1)
+				return 1
 			}
 
 			// Pure host-side lookup cost, isolated from the network.
@@ -627,7 +613,7 @@ main :: proc() {
 			ta, tok := op_tap(&c, (n.left + n.right) / 2, (n.top + n.bottom) / 2)
 			if !tok {
 				fmt.eprintln("tap failed")
-				os.exit(1)
+				return 1
 			}
 			append(&tap_ms, us(t) / 1000)
 			append(&prep_ms, f64(ta.prep_us) / 1000)
@@ -637,7 +623,7 @@ main :: proc() {
 			s, sok := settle_default(&c)
 			if !sok {
 				fmt.eprintln("settle failed")
-				os.exit(1)
+				return 1
 			}
 			statuses[s.status] += 1
 			methods[s.method] += 1
@@ -659,12 +645,12 @@ main :: proc() {
 			t = time.tick_now()
 			if _, kok := op_key(&c, KEYCODE_BACK); !kok {
 				fmt.eprintln("back failed")
-				os.exit(1)
+				return 1
 			}
 			bs, bok := settle_default(&c)
 			if !bok {
 				fmt.eprintln("settle after back failed")
-				os.exit(1)
+				return 1
 			}
 			last_back = bs
 			back_statuses[bs.status] += 1
@@ -704,7 +690,7 @@ main :: proc() {
 		switch inject_path {
 		case .Input_Manager:     path_label = "InputManager as shell uid (async, no transaction syncs)"
 		case .UiAutomation_Fast: path_label = "UiAutomation, no animation wait (syncs input transactions)"
-		case .UiAutomation:      path_label = "UiAutomation public API (waits for animations; see logcat tag SpikeAgent)"
+		case .UiAutomation:      path_label = "UiAutomation public API (waits for animations; see logcat tag SpeedrunAgent)"
 		case:                    path_label = fmt.tprintf("unknown (%d)", u8(inject_path))
 		}
 		fmt.printf("  injection path: %s\n", path_label)
@@ -712,45 +698,85 @@ main :: proc() {
 		fmt.println("  (\"FIND rounds needed\" > 1 means settle fired before the target was on screen.)")
 		fmt.println("  (a slow probe means the app's main thread was busy, so settle correctly kept waiting.)")
 	}
+	return 0
 }
 
-// spike_host <port> --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
-// Runs a Maestro flow file; exit status 0 if it passed. On a terminal the output is a live
-// view like Maestro's; --plain (or a pipe) prints one line per command instead.
-run_flow_cli :: proc() -> int {
-	port, pok := strconv.parse_int(os.args[1])
-	if !pok {
-		fmt.eprintln("usage: spike_host <port> --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]")
-		return 2
+USAGE :: `usage:
+  speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
+  speedrun --bench ["<on-screen text>" [iterations]]
+options:
+  --port <n>     port of the agent, on the device and on this machine (default 7777)
+  --instrument   run the agent as an instrumentation (~60 ms slower per action)
+Starts the agent on the device adb is connected to, runs, then stops it. Animations are
+turned off, as for any UI test, and stay off.`
+
+// --flow runs a Maestro flow file; exit status 0 if it passed. On a terminal the output is a
+// live view like Maestro's; --plain (or a pipe) prints one line per command instead.
+// --bench prints the latency breakdown, after a `uiautomator dump` baseline.
+run_cli :: proc(args: []string) -> int {
+	Mode :: enum {
+		None,
+		Flow,
+		Bench,
 	}
-	file, timings := "", ""
+	mode: Mode
+	timings := ""
 	plain := false
-	env: [dynamic]Env_Pair
+	dev := Device {
+		port = 7777,
+	}
+	env, positional: [dynamic]string
 	defer delete(env)
-	args := os.args[3:]
+	defer delete(positional)
 	for i := 0; i < len(args); i += 1 {
+		a := args[i]
+		value := args[i + 1] if i + 1 < len(args) else ""
 		switch {
-		case (args[i] == "-e" || args[i] == "--env") && i + 1 < len(args):
-			k, _, v := strings.partition(args[i + 1], "=")
-			append(&env, Env_Pair{k, v})
-			i += 1
-		case args[i] == "--plain":
+		case a == "--flow":
+			mode = .Flow
+		case a == "--bench":
+			mode = .Bench
+		case a == "-h" || a == "--help":
+			fmt.println(USAGE)
+			return 0
+		case a == "--plain":
 			plain = true
-		case args[i] == "--timings" && i + 1 < len(args):
-			timings = args[i + 1]
+		case a == "--instrument":
+			dev.instrument = true
+		case (a == "-e" || a == "--env") && value != "":
+			append(&env, value)
 			i += 1
-		case file == "":
-			file = args[i]
-		case:
-			fmt.eprintln("unexpected argument:", args[i])
+		case a == "--timings" && value != "":
+			timings = value
+			i += 1
+		case a == "--port" && value != "":
+			p, ok := strconv.parse_int(value)
+			if !ok || p <= 0 || p > 65535 {
+				fmt.eprintln("--port needs a port number")
+				return 2
+			}
+			dev.port = p
+			i += 1
+		case len(a) > 1 && a[0] == '-':
+			fmt.eprintf("unknown option or missing value: %s\n%s\n", a, USAGE)
 			return 2
+		case:
+			append(&positional, a)
 		}
 	}
-	if file == "" {
-		fmt.eprintln("--flow needs a flow file")
+
+	file, target := "", ""
+	iters := 10
+	switch mode {
+	case .None:
+		fmt.eprintln(USAGE)
 		return 2
-	}
-	{
+	case .Flow:
+		if len(positional) != 1 {
+			fmt.eprintln("--flow needs one flow file")
+			return 2
+		}
+		file = positional[0]
 		// Syntax and support errors first, without needing a device.
 		arena: virtual.Arena
 		_ = virtual.arena_init_growing(&arena)
@@ -759,14 +785,66 @@ run_flow_cli :: proc() -> int {
 			fmt.eprintln(err)
 			return 2
 		}
+	case .Bench:
+		if len(positional) > 0 do target = positional[0]
+		if len(positional) > 1 {
+			v, ok := strconv.parse_int(positional[1])
+			if !ok || v < 1 {
+				fmt.eprintln("iterations must be a positive number")
+				return 2
+			}
+			iters = v
+		}
+		if len(positional) > 2 {
+			fmt.eprintln("unexpected argument:", positional[2])
+			return 2
+		}
+		// uiautomator needs the UiAutomation slot: before the agent takes it.
+		if _, err := device_prepare(); err != "" {
+			fmt.eprintln(err)
+			return 1
+		}
+		bench_baseline()
+		fmt.printf("\n== Starting the agent (%s)\n", "instrumentation" if dev.instrument else "shell user, app_process")
 	}
-	c, ok := connect(port)
+
+	if err := device_start(&dev, verbose = mode == .Bench); err != "" {
+		device_stop(&dev)
+		fmt.eprintln(err)
+		return 1
+	}
+	defer device_stop(&dev)
+	c, ok := connect(dev.port)
 	if !ok {
-		fmt.eprintln("could not reach the agent on port", port, "(is `adb forward` set and the agent running?)")
+		fmt.eprintln("could not reach the agent on port", dev.port, "(logs: adb logcat -s SpeedrunAgent)")
 		return 1
 	}
 	defer net.close(c.sock)
-	return 0 if run_maestro_flow(&c, file, env[:], timings, plain) else 1
+
+	if mode == .Bench do return run_bench(&c, target, iters)
+	pairs := make([]Env_Pair, len(env))
+	defer delete(pairs)
+	for e, i in env {
+		k, _, v := strings.partition(e, "=")
+		pairs[i] = {k, v}
+	}
+	return 0 if run_maestro_flow(&c, file, pairs, timings, plain) else 1
+}
+
+// The classic way to read the screen, for comparison: `uiautomator dump`, then read the file.
+bench_baseline :: proc() {
+	fmt.println("== Baseline: 'uiautomator dump' x5 (a full-hierarchy dump, the classic way to read the screen)")
+	total := 0.0
+	for i in 1 ..= 5 {
+		t := time.tick_now()
+		adb("shell", "uiautomator dump /sdcard/speedrun_dump.xml")
+		adb("shell", "cat /sdcard/speedrun_dump.xml")
+		ms := us(t) / 1000
+		fmt.printf("  dump + read #%d: %.0f ms\n", i, ms)
+		total += ms
+	}
+	fmt.printf("  average: %.0f ms per screen read\n", total / 5)
+	free_all(context.temp_allocator)
 }
 
 print_nodes :: proc(nodes: #soa[]Node) {

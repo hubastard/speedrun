@@ -1,5 +1,5 @@
-# Benchmark flow, run as-is by both tools. Start on the Settings home screen, scrolled to
-# the top. Iterations come from TIMES:
+# Benchmark flow, run as-is by both tools. Start on the Settings home screen.
+# Iterations come from TIMES:
 #   ./compare.sh bench_scenario.yaml -e TIMES=5        (both tools, side by side)
 #   ./run.sh --flow bench_scenario.yaml -e TIMES=5     (this tool)
 #   maestro test -e TIMES=5 bench_scenario.yaml        (Maestro)
@@ -22,8 +22,8 @@ appId: com.android.settings
       - tapOn: "About emulated device"
       - tapOn: "Device name"
       - eraseText: 25
-      - inputText: "Spike bench"
-      - assertVisible: "Spike bench"
+      - inputText: "Speedrun bench"
+      - assertVisible: "Speedrun bench"
       - tapOn: "Cancel"
       - back
       - scrollUntilVisible:

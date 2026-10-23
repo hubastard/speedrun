@@ -1,7 +1,7 @@
 // Console output for flows, modeled on Maestro's CLI (maestro-cli runner/resultview): a live
 // view redrawn in place on a terminal (AnsiResultView), one line per command otherwise
 // (PlainTextResultView). Descriptions use Maestro's wording; each command also shows its time.
-package spike_host
+package speedrun
 
 import "core:c"
 import "core:fmt"

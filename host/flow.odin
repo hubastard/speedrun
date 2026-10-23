@@ -3,7 +3,7 @@
 // (maestro-orchestra/.../yaml). Strict: an unknown command or field is an error, and so is a
 // valid Maestro command or field this runner does not implement, so a flow that loads is
 // run as written.
-package spike_host
+package speedrun
 
 import "core:fmt"
 import "core:mem"

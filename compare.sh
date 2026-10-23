@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...
-# Runs the same Maestro flow file with this tool (./run.sh --flow) and with Maestro, each
+# Runs the same Maestro flow file with speedrun (./speedrun --flow) and with Maestro, each
 # after a fresh start of the flow's app, then lines the two runs up command by command and
 # prints the median time per command (repeat iterations grouped). Totals exclude each tool's
-# start-up. Needs maestro and python3 on PATH (python3 reads both reports).
+# start-up. Needs ./speedrun (./build.sh), and maestro and python3 on PATH.
 #   ./compare.sh bench_scenario.yaml -e TIMES=5
 set -euo pipefail
 cd "$(dirname "$0")"
 
 FLOW="${1:?usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...}"
 shift
-OUT="$(mktemp -d -t spike_compare.XXXXXX)"
+OUT="$(mktemp -d -t speedrun_compare.XXXXXX)"
 trap 'rm -rf "$OUT"' EXIT
 
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 
+[ -x ./speedrun ] || { echo "./speedrun not found: run ./build.sh first"; exit 1; }
 command -v maestro >/dev/null || { echo "maestro not found on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found on PATH"; exit 1; }
 APP="$(sed -n 's/^appId:[[:space:]]*//p' "$FLOW" | head -1 | tr -d "\"'\r")"
@@ -29,10 +30,10 @@ restart_app() {
   sleep 1
 }
 
-echo "== This tool: ./run.sh --flow $FLOW $*"
+echo "== speedrun: ./speedrun --flow $FLOW $*"
 restart_app
-# run.sh stops its agent at exit, so Maestro's driver can take the UiAutomation slot after it.
-./run.sh --flow "$FLOW" "$@" --timings "$OUT/spike.json" | tee "$OUT/spike.txt"
+# speedrun stops its agent at exit, so Maestro's driver can take the UiAutomation slot after it.
+./speedrun --flow "$FLOW" "$@" --timings "$OUT/speedrun.json"
 
 echo
 echo "== Maestro: maestro test $* $FLOW"
@@ -41,16 +42,16 @@ t0=$(now_ms)
 maestro test --debug-output "$OUT/maestro" --flatten-debug-output "$@" "$FLOW"
 t1=$(now_ms)
 
-python3 - "$OUT/spike.json" "$OUT/maestro" "$((t1 - t0))" <<'PY'
+python3 - "$OUT/speedrun.json" "$OUT/maestro" "$((t1 - t0))" <<'PY'
 import glob, json, statistics, sys
 
-spike_path, maestro_dir, maestro_wall_ms = sys.argv[1], sys.argv[2], int(sys.argv[3])
-ours = json.load(open(spike_path))
+ours_path, maestro_dir, maestro_wall_ms = sys.argv[1], sys.argv[2], int(sys.argv[3])
+ours = json.load(open(ours_path))
 report = json.load(open(glob.glob(f"{maestro_dir}/**/commands*.json", recursive=True)[0]))
 theirs = [e for e in report
           if list(e["command"])[0] not in ("defineVariablesCommand", "applyConfigurationCommand")]
 
-# Maestro's internal command names for the YAML commands this tool runs.
+# Maestro's internal command names for the YAML commands speedrun runs.
 NAMES = {
     "tapOnElement": {"tapOn", "doubleTapOn", "longPressOn"}, "tapOnPointV2Command": {"tapOn", "doubleTapOn", "longPressOn"},
     "assertConditionCommand": {"assertVisible", "assertNotVisible", "extendedWaitUntil"},
@@ -69,14 +70,14 @@ pairs = []
 for i, (o, t) in enumerate(zip(ours, theirs)):
     key = list(t["command"])[0]
     if o["command"] not in NAMES.get(key, set()):
-        print(f"\n!! The runs diverge at command #{i}: this tool ran `{o['command']}`, Maestro ran `{key}`."
+        print(f"\n!! The runs diverge at command #{i}: speedrun ran `{o['command']}`, Maestro ran `{key}`."
               " Only the commands before it are compared.")
         break
     if o["status"] != t["metadata"].get("status"):
-        print(f"!! #{i} {o['description']}: {o['status']} here, {t['metadata'].get('status')} in Maestro")
+        print(f"!! #{i} {o['description']}: {o['status']} in speedrun, {t['metadata'].get('status')} in Maestro")
     pairs.append((o, t["metadata"]))
 if len(ours) != len(theirs) and len(pairs) == min(len(ours), len(theirs)):
-    print(f"\n!! This tool ran {len(ours)} commands, Maestro {len(theirs)}.")
+    print(f"\n!! speedrun ran {len(ours)} commands, Maestro {len(theirs)}.")
 
 groups = {}
 for o, t in pairs:
@@ -85,8 +86,8 @@ for o, t in pairs:
     g["theirs"].append(t.get("duration") or 0)
 
 med = statistics.median
-print("\n== Side by side: median ms per command (Maestro / this tool)")
-print(f"   {'command':52s} {'runs':>4s} {'this tool':>10s} {'Maestro':>10s} {'ratio':>7s}")
+print("\n== Side by side: median ms per command (speedrun / Maestro)")
+print(f"   {'command':52s} {'runs':>4s} {'speedrun':>10s} {'Maestro':>10s} {'ratio':>7s}")
 for path, g in groups.items():
     o, m = med(g["ours"]), med(g["theirs"])
     indent = "  " * g["o"]["depth"]

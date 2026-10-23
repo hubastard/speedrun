@@ -1,4 +1,4 @@
-package com.spike.agent
+package com.speedrun.agent
 
 import android.app.Activity
 import android.app.Instrumentation
@@ -6,7 +6,7 @@ import android.os.Bundle
 
 /**
  * Fallback entry point (ShellMain is the fast one). Launched with:
- *   adb shell am instrument -w --no-hidden-api-checks -e port 7777 com.spike.agent/.AgentInstrumentation
+ *   adb shell am instrument -w --no-hidden-api-checks -e port 7777 com.speedrun.agent/.AgentInstrumentation
  * (--no-hidden-api-checks lets it use the injection call that skips the animation wait.)
  *
  * Runs as an instrumentation so it gets a UiAutomation connection (global tree access +

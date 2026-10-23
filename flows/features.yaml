@@ -91,9 +91,9 @@ env:
 - tapOn: About emulated device
 - tapOn: Device name
 - eraseText
-- inputText: Spike 42
+- inputText: Speedrun 42
 - assertVisible:
-    text: Spike \d+
+    text: Speedrun \d+
     focused: true
 - hideKeyboard
 - assertVisible: Cancel

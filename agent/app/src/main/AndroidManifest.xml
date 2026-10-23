@@ -4,11 +4,11 @@
     <!-- Needed for the localhost socket the host connects to through `adb forward`. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <application android:label="E2E Spike Agent" />
+    <application android:label="Speedrun Agent" />
 
     <!-- Targets its own package: UiAutomation still sees and drives every app on screen. -->
     <instrumentation
         android:name=".AgentInstrumentation"
-        android:label="e2e spike agent"
-        android:targetPackage="com.spike.agent" />
+        android:label="speedrun agent"
+        android:targetPackage="com.speedrun.agent" />
 </manifest>
