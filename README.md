@@ -57,6 +57,7 @@ Maestro flow files run as they are:
 ./speedrun --flow bench_scenario.yaml -e TIMES=5    # speedrun only
 ./compare.sh bench_scenario.yaml -e TIMES=5         # speedrun, then Maestro, side by side
 ./compare.sh flows/features.yaml                     # both tools must agree on every command
+./race.sh bench_scenario.yaml -e TIMES=3            # both at once on two emulators, to watch
 ```
 
 The latency breakdown (open the Settings app on the emulator first):
@@ -72,9 +73,21 @@ lists the options (`--port`, `--instrument`, `--plain`, `--timings`).
 scrolling both ways, and text input in a dialog (erase, type, assert, cancel, so nothing
 changes). `compare.sh` starts the flow's app fresh before each tool, lines the two runs up
 command by command (warning if their command sequences or statuses differ) and prints
-medians per command, repeat iterations grouped. Its totals exclude each tool's start-up
-(Maestro's is printed separately). It needs `maestro` and `python3` on PATH.
+medians per command, repeat iterations grouped. Then three totals per tool: the flow, the
+time outside it (start-up and shutdown, measured as the whole run's wall clock minus the
+flow: a slow tool costs that on every run) and the wall clock, all included. It needs
+`maestro` and `python3` on PATH.
 `--timings out.json` makes speedrun write its per-command record.
+
+`race.sh` is the demo: it starts speedrun on one emulator and Maestro on another at the same
+moment, so both screens can be watched side by side, and shows each tool's elapsed time and
+current command until both finish. With a single emulator running, it creates
+`<avd>_race` once (same system image and hardware settings) and boots it for Maestro; it
+stays up for the next race. `SPEEDRUN_DEVICE`/`MAESTRO_DEVICE` choose the devices. Two
+emulators share the machine, so numbers come from `compare.sh`, not from the race; and a
+freshly booted emulator is slower at first, so the first race on it is not representative.
+With several devices connected, `compare.sh` uses `ANDROID_SERIAL` or the first one, and
+`./speedrun --device <serial>` picks one.
 
 The agent starts as the shell user (`adb push` to `/data/local/tmp/speedrun-agent-<crc>.apk`,
 skipped when that build is already there, then `app_process`); if it cannot start, speedrun
@@ -113,6 +126,8 @@ source: how selectors match, which element wins, lookup timeouts and when they r
 conditions, env scopes, gesture coordinates and key codes. It is strict: an unknown command
 or field is an error, like in Maestro, and so is a Maestro command or field it does not
 implement yet. A flow that loads therefore runs as written; nothing is skipped silently.
+As in Maestro, `appId` does not open the app: a flow that needs it fresh starts with
+`- launchApp`.
 
 Supported:
 
@@ -132,9 +147,11 @@ Supported:
   also `point`, `repeat`, `delay`, `retryTapIfNoChange`, `waitToSettleTimeoutMs`.
 - Conditions: `visible`, `notVisible`, `platform`, `true`.
 - Env: `-e KEY=VALUE`, `MAESTRO_*` shell variables and `MAESTRO_FILENAME`, then the flow's
-  `env:`, which wins (Maestro's order); sub-flows get their own scope.
+  `env:`, which wins (Maestro's order); sub-flows get their own scope. A default that `-e`
+  can override is written as in Maestro: `env: { TIMES: ${TIMES || 1} }`. `${...}` takes a
+  variable name, or `||` fallbacks over names and number or string literals.
 
-Not supported yet (an error naming it): JavaScript (`${...}` takes only a variable name;
+Not supported yet (an error naming it): other JavaScript (`&&`, `??`, calls, arithmetic;
 `evalScript`, `runScript`, `assertTrue`, `copyTextFrom`), `inputRandom*`, `setClipboard`,
 `pasteText`, `setPermissions` and `launchApp.permissions`/`arguments`, `setLocation`,
 `travel`, `setOrientation`, recording, `addMedia`, airplane and dark mode, AI commands,

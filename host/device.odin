@@ -30,16 +30,25 @@ Device :: struct {
 	local_apk:  string, // the embedded APK written to a temp file, for `adb push`/`install`
 }
 
+// The device adb talks to (--device); empty: adb's default (ANDROID_SERIAL, or the only one).
+adb_serial: string
+
 // The device of this run, for the Ctrl-C handler.
 @(private = "file")
 current: ^Device
 
+// The adb command line for args, on the chosen device.
+adb_command :: proc(args: ..string) -> []string {
+	cmd := make([dynamic]string, 0, len(args) + 3, context.temp_allocator)
+	append(&cmd, "adb")
+	if adb_serial != "" do append(&cmd, "-s", adb_serial)
+	append(&cmd, ..args)
+	return cmd[:]
+}
+
 // Runs adb. out is its stdout, plus its stderr when it failed.
 adb :: proc(args: ..string) -> (out: string, ok: bool) {
-	cmd := make([]string, len(args) + 1, context.temp_allocator)
-	cmd[0] = "adb"
-	copy(cmd[1:], args)
-	state, stdout, stderr, err := os.process_exec({command = cmd}, context.temp_allocator)
+	state, stdout, stderr, err := os.process_exec({command = adb_command(..args)}, context.temp_allocator)
 	if err == .Not_Exist do return "adb not found on PATH", false
 	if err != nil do return fmt.tprintf("adb: %v", err), false
 	if state.exited && state.exit_code == 0 do return string(stdout), true
@@ -57,6 +66,9 @@ device_prepare :: proc() -> (present: bool, err: string) {
 		`[ "$f" = `, device_apk(), ` ] && echo present || rm -f "$f"; done`,
 	}, context.temp_allocator)
 	out, ok := adb("shell", script)
+	if !ok && strings.contains(out, "more than one device") {
+		return false, strings.concatenate({out, "\nPick one with --device <serial> (see `adb devices`)."}, context.temp_allocator)
+	}
 	if !ok do return false, out
 	return strings.contains(out, "present"), ""
 }
@@ -98,7 +110,7 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 		if e := write_local_apk(d); e != "" do return e
 		if out, ok := adb("install", "-r", d.local_apk); !ok do return out
 		cmd := fmt.tprintf("am instrument -w --no-hidden-api-checks -e port %d %s/.AgentInstrumentation", d.port, AGENT_PACKAGE)
-		p, err := os.process_start({command = {"adb", "shell", cmd}})
+		p, err := os.process_start({command = adb_command("shell", cmd)})
 		if err != nil do return fmt.tprintf("could not run adb: %v", err)
 		d.adb, d.running = p, true
 	}
@@ -147,7 +159,7 @@ start_shell_agent :: proc(d: ^Device) -> (log: string, ok: bool) {
 		"CLASSPATH=%s exec app_process / --nice-name=%s %s.ShellMain %d",
 		device_apk(), AGENT_NAME, AGENT_PACKAGE, d.port,
 	)
-	p, err := os.process_start({command = {"adb", "shell", cmd}, stdout = f, stderr = f})
+	p, err := os.process_start({command = adb_command("shell", cmd), stdout = f, stderr = f})
 	if err != nil do return fmt.tprintf("could not run adb: %v", err), false
 	d.adb, d.running = p, true
 

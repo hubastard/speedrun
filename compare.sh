@@ -2,8 +2,9 @@
 # Usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...
 # Runs the same Maestro flow file with speedrun (./speedrun --flow) and with Maestro, each
 # after a fresh start of the flow's app, then lines the two runs up command by command and
-# prints the median time per command (repeat iterations grouped). Totals exclude each tool's
-# start-up. Needs ./speedrun (./build.sh), and maestro and python3 on PATH.
+# prints the median time per command (repeat iterations grouped), then the totals: the flow,
+# the time each tool spends outside it (start-up and shutdown: a slow tool costs that on
+# every run too), and the wall clock. Needs ./speedrun (./build.sh), maestro and python3.
 #   ./compare.sh bench_scenario.yaml -e TIMES=5
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -18,6 +19,11 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 [ -x ./speedrun ] || { echo "./speedrun not found: run ./build.sh first"; exit 1; }
 command -v maestro >/dev/null || { echo "maestro not found on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found on PATH"; exit 1; }
+# With several devices connected (race.sh leaves a second emulator running), both tools run
+# on ANDROID_SERIAL, or else on the first device.
+DEVICE="${ANDROID_SERIAL:-$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')}"
+[ -n "$DEVICE" ] || { echo "No device or emulator connected."; exit 1; }
+export ANDROID_SERIAL="$DEVICE"
 APP="$(sed -n 's/^appId:[[:space:]]*//p' "$FLOW" | head -1 | tr -d "\"'\r")"
 [ -n "$APP" ] || { echo "no appId in $FLOW"; exit 1; }
 
@@ -33,19 +39,24 @@ restart_app() {
 echo "== speedrun: ./speedrun --flow $FLOW $*"
 restart_app
 # speedrun stops its agent at exit, so Maestro's driver can take the UiAutomation slot after it.
-./speedrun --flow "$FLOW" "$@" --timings "$OUT/speedrun.json"
+s0=$(now_ms)
+./speedrun --device "$DEVICE" --flow "$FLOW" "$@" --timings "$OUT/speedrun.json"
+s1=$(now_ms)
 
-echo
+# Maestro draws its live view from the top of the screen, over whatever is there: start it on
+# a clear screen. Scrollback keeps speedrun's run (no \e[3J).
+if [ -t 1 ]; then printf '\033[H\033[2J'; else echo; fi
 echo "== Maestro: maestro test $* $FLOW"
 restart_app
 t0=$(now_ms)
-maestro test --debug-output "$OUT/maestro" --flatten-debug-output "$@" "$FLOW"
+maestro --device "$DEVICE" test --debug-output "$OUT/maestro" --flatten-debug-output "$@" "$FLOW"
 t1=$(now_ms)
 
-python3 - "$OUT/speedrun.json" "$OUT/maestro" "$((t1 - t0))" <<'PY'
+python3 - "$OUT/speedrun.json" "$OUT/maestro" "$((s1 - s0))" "$((t1 - t0))" <<'PY'
 import glob, json, statistics, sys
 
-ours_path, maestro_dir, maestro_wall_ms = sys.argv[1], sys.argv[2], int(sys.argv[3])
+ours_path, maestro_dir = sys.argv[1], sys.argv[2]
+ours_wall, theirs_wall = int(sys.argv[3]), int(sys.argv[4])
 ours = json.load(open(ours_path))
 report = json.load(open(glob.glob(f"{maestro_dir}/**/commands*.json", recursive=True)[0]))
 theirs = [e for e in report
@@ -95,6 +106,17 @@ for path, g in groups.items():
     print(f"   {(indent + g['o']['description'])[:52]:52s} {len(g['ours']):4d} {o:10.0f} {m:10.0f} {ratio}")
 ours_total = sum(o["duration_ms"] for o, _ in pairs if o["depth"] == 0)
 theirs_total = sum(t.get("duration") or 0 for o, t in pairs if o["depth"] == 0)
-print(f"   {'FLOW TOTAL (s)':52s} {'':4s} {ours_total / 1000:10.1f} {theirs_total / 1000:10.1f} {theirs_total / max(ours_total, 1):6.1f}x")
-print(f"   (Maestro start-up, outside the flow: {(maestro_wall_ms - theirs_total) / 1000:.1f} s)")
+
+def total(label, o_ms, t_ms):
+    print(f"   {label:52s} {'':4s} {o_ms / 1000:10.1f} {t_ms / 1000:10.1f} {t_ms / max(o_ms, 1):6.1f}x")
+
+print()
+total("FLOW (s)", ours_total, theirs_total)
+# Each tool's whole run, from launching it to its exit, minus the flow: connecting to the
+# device, starting its driver, and shutting down. Only meaningful when both runs match.
+if len(pairs) == len(ours) == len(theirs):
+    total("OUTSIDE THE FLOW: start-up + shutdown (s)", ours_wall - ours_total, theirs_wall - theirs_total)
+else:
+    print("   (the runs differ, so the time outside the flow cannot be split out)")
+total("WALL CLOCK, ALL INCLUDED (s)", ours_wall, theirs_wall)
 PY

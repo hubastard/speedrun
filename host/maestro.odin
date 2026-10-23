@@ -964,8 +964,9 @@ define_env :: proc(r: ^Runner, pairs: []Env_Pair) -> Err {
 }
 
 // Replaces `${NAME}` with the variable's value (`\${` stays literal). Maestro evaluates
-// `${...}` as JavaScript; only plain variable names are supported here, anything else is
-// an error naming the expression.
+// `${...}` as JavaScript. Supported here: a variable name, and `||` fallbacks over variable
+// names and number or string literals (`${TIMES || 1}`, Maestro's way to give a default).
+// Anything else is an error rather than a wrong value.
 @(private = "file")
 eval :: proc(r: ^Runner, s: string) -> (out: string, err: Err) {
 	if !strings.contains(s, "${") do return s, nil
@@ -990,23 +991,52 @@ eval :: proc(r: ^Runner, s: string) -> (out: string, err: Err) {
 		expr := strings.trim_space(s[i + 2:i + close])
 		i += close + 1
 		if expr == "" do continue
-		for c in expr {
-			if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
-				// (not fmt: it reads `{` as a format directive)
-				return "", strings.concatenate({"`${", expr, "}`: JavaScript expressions are not supported, only `${NAME}`"}, r.alloc)
-			}
-		}
-		found := false
-		#reverse for scope in r.env {
-			if v, ok := scope[expr]; ok {
-				strings.write_string(&b, v)
-				found = true
-				break
-			}
-		}
-		if !found do return "", strings.concatenate({"`${", expr, "}`: variable is not defined"}, r.alloc)
+		strings.write_string(&b, eval_expr(r, expr) or_return)
 	}
 	return strings.to_string(b), nil
+}
+
+// `a || b || ...`: the first operand that is defined and truthy (JavaScript's `||`; env values
+// are strings, so only "" is falsy among them), else the last one.
+@(private = "file")
+eval_expr :: proc(r: ^Runner, expr: string) -> (out: string, err: Err) {
+	// (not fmt below: it reads `{` as a format directive)
+	unsupported := strings.concatenate(
+		{"`${", expr, "}`: JavaScript expressions are not supported, only `${NAME}` and `${NAME || default}`"},
+		r.alloc,
+	)
+	operands := strings.split(expr, "||", r.alloc)
+	for raw, k in operands {
+		op := strings.trim_space(raw)
+		value, defined, truthy := "", false, false
+		switch {
+		case op == "":
+			return "", unsupported
+		case len(op) >= 2 && (op[0] == '\'' || op[0] == '"') && op[len(op) - 1] == op[0]:
+			value = op[1:len(op) - 1]
+			if strings.index_byte(value, op[0]) >= 0 || strings.index_byte(value, '\\') >= 0 do return "", unsupported
+			defined, truthy = true, value != ""
+		case (op[0] >= '0' && op[0] <= '9') || op[0] == '-' || op[0] == '.':
+			f, ok := strconv.parse_f64(op)
+			if !ok do return "", unsupported
+			// JavaScript prints integral numbers without a fraction.
+			value = fmt.aprintf("%d", i64(f), allocator = r.alloc) if f == math.trunc(f) && math.abs(f) < 1e15 else fmt.aprintf("%v", f, allocator = r.alloc)
+			defined, truthy = true, f != 0
+		case:
+			for c in op {
+				if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) do return "", unsupported
+			}
+			#reverse for scope in r.env {
+				if v, ok := scope[op]; ok {
+					value, defined, truthy = v, true, v != ""
+					break
+				}
+			}
+		}
+		if truthy || (k == len(operands) - 1 && defined) do return value, nil
+	}
+	// Maestro would print "undefined" here; a typo in a name should not type that.
+	return "", strings.concatenate({"`${", expr, "}`: variable is not defined"}, r.alloc)
 }
 
 // ---- device ---------------------------------------------------------------------------

@@ -1,20 +1,23 @@
-# Benchmark flow, run as-is by both tools. Start on the Settings home screen.
-# Iterations come from TIMES:
-#   ./compare.sh bench_scenario.yaml -e TIMES=5        (both tools, side by side)
-#   ./run.sh --flow bench_scenario.yaml -e TIMES=5     (this tool)
-#   maestro test -e TIMES=5 bench_scenario.yaml        (Maestro)
+# Benchmark flow, run as-is by both tools. It starts Settings app fresh (launchApp):
+#
+# Iterations come from TIMES (1 when not given):
+#   ./compare.sh bench_scenario.yaml          (both tools, side by side)
+#   ./speedrun --flow bench_scenario.yaml     (speedrun)
+#   maestro test bench_scenario.yaml          (Maestro)
+
 appId: com.android.settings
+env:
+  TIMES: ${TIMES || 1}
 ---
+- launchApp
 - repeat:
     times: ${TIMES}
     commands:
-      # Navigation, two levels deep and back.
       - tapOn: "Display & touch"
       - tapOn: "Display size & text"
       - assertVisible: "Bold text"
       - back
       - back
-      # Scrolling, then text input in a dialog. Cancel keeps the device name unchanged.
       - scrollUntilVisible:
           element:
             text: "About emulated device"

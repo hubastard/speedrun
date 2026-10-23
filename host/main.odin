@@ -705,6 +705,7 @@ USAGE :: `usage:
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
 options:
+  --device <id>  the device to run on, as "adb devices" lists it (default: adb's choice)
   --port <n>     port of the agent, on the device and on this machine (default 7777)
   --instrument   run the agent as an instrumentation (~60 ms slower per action)
 Starts the agent on the device adb is connected to, runs, then stops it. Animations are
@@ -748,6 +749,9 @@ run_cli :: proc(args: []string) -> int {
 			i += 1
 		case a == "--timings" && value != "":
 			timings = value
+			i += 1
+		case (a == "--device" || a == "--udid") && value != "":
+			adb_serial = value
 			i += 1
 		case a == "--port" && value != "":
 			p, ok := strconv.parse_int(value)
