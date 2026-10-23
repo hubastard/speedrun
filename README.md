@@ -7,7 +7,7 @@ same files.
 
 ## Pieces
 
-- `agent/` — Kotlin APK that runs on the device. One `UiAutomation` connection gives it the
+- `agent/android/` — Kotlin APK that runs on the device. One `UiAutomation` connection gives it the
   accessibility tree of every app, per-window frame stats and accessibility events. It
   listens on `127.0.0.1:7777` (on the device) and speaks a tiny binary protocol (documented
   at the top of `Agent.kt`): read the screen (`TREE`, `FIND`, `SCREEN` for all windows), act
@@ -32,7 +32,7 @@ same files.
   - `yaml.odin`, `flow.odin`, `maestro.odin`, `console.odin`: runs Maestro flow files and
     prints them like Maestro does (see below).
 - `build.sh` — builds the agent APK, then `./speedrun` around it. Run it once (and after
-  changing `agent/` or `host/`); nothing rebuilds at run time.
+  changing `agent/android/` or `host/`); nothing rebuilds at run time.
 - `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
   the supported Maestro commands, each tap checked by an assertion.
 - `compare.sh` — runs one flow file with both tools and prints them side by side.
@@ -40,7 +40,7 @@ same files.
 ## Setup
 
 1. Android SDK with `adb` on PATH, an emulator running (or a device with USB debugging).
-2. To build: JDK 17 (Gradle comes from the wrapper in `agent/`, 8.14.3, downloaded on first
+2. To build: JDK 17 (Gradle comes from the wrapper in `agent/android/`, 8.14.3, downloaded on first
    run) and Odin on PATH. Then, once:
 
 ```

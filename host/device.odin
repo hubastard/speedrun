@@ -11,8 +11,8 @@ import "core:sys/posix"
 import "core:time"
 
 // build.sh builds the APK before this binary.
-AGENT_APK :: #load("../agent/app/build/outputs/apk/debug/app-debug.apk")
-AGENT_APK_CRC :: #load_hash("../agent/app/build/outputs/apk/debug/app-debug.apk", "crc32")
+AGENT_APK :: #load("../agent/android/app/build/outputs/apk/debug/app-debug.apk")
+AGENT_APK_CRC :: #load_hash("../agent/android/app/build/outputs/apk/debug/app-debug.apk", "crc32")
 AGENT_PACKAGE :: "com.speedrun.agent"
 AGENT_NAME :: "speedrun-agent" // the shell agent's process name (app_process --nice-name)
 AGENT_START_TIMEOUT :: 10 * time.Second
