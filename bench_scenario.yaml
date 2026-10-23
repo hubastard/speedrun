@@ -1,0 +1,30 @@
+# Same flow as `./run.sh --scenario N` (SCENARIO in host/main.odin), command for command.
+# Start on the Settings home screen, scrolled to the top. Iterations come from TIMES:
+#   maestro test -e TIMES=10 bench_scenario.yaml
+appId: com.android.settings
+---
+- repeat:
+    times: ${TIMES}
+    commands:
+      # Navigation, two levels deep and back.
+      - tapOn: "Display & touch"
+      - tapOn: "Display size & text"
+      - assertVisible: "Bold text"
+      - back
+      - back
+      # Scrolling, then text input in a dialog. Cancel keeps the device name unchanged.
+      - scrollUntilVisible:
+          element:
+            text: "About emulated device"
+          direction: DOWN
+      - tapOn: "About emulated device"
+      - tapOn: "Device name"
+      - eraseText: 25
+      - inputText: "Spike bench"
+      - assertVisible: "Spike bench"
+      - tapOn: "Cancel"
+      - back
+      - scrollUntilVisible:
+          element:
+            text: "Network & internet"
+          direction: UP

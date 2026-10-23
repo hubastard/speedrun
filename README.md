@@ -7,11 +7,13 @@ classic full-hierarchy dump.
 ## Pieces
 
 - `agent/` — Kotlin APK that runs on the device. One `UiAutomation` connection gives it the
-  accessibility tree of every app and per-window frame stats. It listens on
-  `127.0.0.1:7777` (on the device) and speaks a tiny binary protocol (documented at the top
-  of `Agent.kt`). Settle detection watches the active window's frame stats plus a
-  main-thread idle probe, with accessibility events as the fallback. Two entry points share
-  that logic (`Agent.kt`) and differ in how input is injected (`Injectors.kt`):
+  accessibility tree of every app, per-window frame stats and accessibility events. It
+  listens on `127.0.0.1:7777` (on the device) and speaks a tiny binary protocol (documented
+  at the top of `Agent.kt`): read the screen (`TREE`, `FIND`), act (`TAP`, `KEY`, `SWIPE`,
+  `TYPE`, `ERASE`) and wait (`SETTLE`). Settle detection watches window switches, the active
+  window's frames and accessibility events, then confirms with a main-thread idle probe.
+  Two entry points share that logic (`Agent.kt`) and differ in how input is injected
+  (`Injectors.kt`):
   - `ShellMain` (default): started with `app_process` as the shell user, which holds
     `INJECT_EVENTS`, so taps go straight to the hidden input manager, async (~1 ms per tap).
     It builds its own `UiAutomation` the way `uiautomator dump` does.
@@ -24,6 +26,8 @@ classic full-hierarchy dump.
   full `TREE` only when that finds no visible exact match.
 - `run.sh` — disables animations, measures the `uiautomator dump` baseline, builds and
   starts everything, runs the benchmark.
+- `bench.yaml`, `bench_scenario.yaml` — the same two benchmarks as Maestro flows.
+- `compare.sh` — runs the scenario with both tools and prints them side by side.
 
 ## Setup
 
@@ -41,6 +45,18 @@ Open the Settings app on the emulator, then:
 ```
 
 Run with no target to list texts visible on the current screen.
+
+A longer flow, 14 commands per iteration in Settings: navigation two levels deep, scrolling
+both ways, and text input in a dialog (erase, type, assert, cancel, so nothing changes):
+
+```
+./run.sh --scenario 10      # this tool only (restarts Settings on its home screen)
+./compare.sh 5              # this tool, then Maestro on bench_scenario.yaml, side by side
+```
+
+The scenario is `SCENARIO` in `host/main.odin`; `bench_scenario.yaml` is the same flow for
+Maestro, command for command. Keep them in sync. `compare.sh` needs `maestro` and `python3`
+on PATH; its totals exclude each tool's start-up (Maestro's is printed separately).
 
 The agent starts as the shell user (`adb push` to `/data/local/tmp/agent.apk`, then
 `app_process`); if it cannot start, `run.sh` prints why and falls back to the
@@ -62,14 +78,28 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
    - *settle declared* — when the agent concluded it was settled. The gap to the line above
      is pure detection overhead.
    - *WHOLE STEP* — the number to put in the pitch.
+4. **Scenario** (`--scenario`) — median time per command, named as in the Maestro flow, then
+   per iteration split into finding elements, actions and settling (the app's time plus
+   detection), and the change signals settle saw. *LOOP TOTAL* compares with the
+   `repeat` block of `bench_scenario.yaml`.
 
 ## Known limits (deliberate for a spike)
 
-- **~100 ms settle floor.** Android coalesces content-change accessibility events per window
-  (about every 100 ms), so an outside observer needs a quiet window above that; it's set to
-  120 ms. Ways under it: `UiAutomation.getWindowContentFrameStats()` for frame-precise
-  timing, or an optional in-app debug library that hooks `Choreographer` (the Espresso/Detox
-  approach).
+- **Settle cannot see frames on Android 12+.** `getWindowContentFrameStats()` reads the
+  window's own layer, but windows draw into a child (BLAST) layer, so it reports no frames.
+  Settle relies on window switches and an idle probe for screen transitions, and on
+  accessibility events for in-place changes (scroll, typing). Apps send those at most every
+  ~100 ms, so an in-place change costs a 120 ms quiet window. Ways under it: per-layer frames
+  from SurfaceFlinger (`--frametimeline` has them, but a dump takes ~12 ms), or an in-app
+  debug library that hooks `Choreographer` (the Espresso/Detox approach).
+- **`SWIPE` is a drag that never flings:** the pointer stops 60 ms before lifting, so the
+  content moves by the drag distance (minus 16 dp of touch slop) and scrolling is
+  deterministic. Its timestamps are synthetic and it is injected at once, except the first
+  MOVE, which waits about one frame for the app (a scroll container must intercept it).
+  Maestro flings, so scroll steps are not identical between the two tools.
+- **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`: characters with
+  no key sequence (most non-ASCII) are reported and the command fails. Key events go through
+  the IME before the field, about 60 ms per key on the emulator, for Maestro too.
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

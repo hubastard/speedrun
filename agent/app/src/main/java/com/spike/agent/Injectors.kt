@@ -25,7 +25,8 @@ object InjectPath {
 interface Injector {
     /** One of [InjectPath]; may change at runtime when a path falls back. */
     val path: Int
-    fun inject(e: InputEvent)
+    /** sync = return only once the app has handled the event (async otherwise). */
+    fun inject(e: InputEvent, sync: Boolean = false)
 }
 
 /** Unwraps reflection's InvocationTargetException so logs show the real error. */
@@ -51,24 +52,25 @@ class UiAutomationInjector(private val ua: UiAutomation) : Injector {
 
     override val path get() = if (fastInject != null) InjectPath.UI_AUTOMATION_FAST else InjectPath.UI_AUTOMATION
 
-    override fun inject(e: InputEvent) {
+    override fun inject(e: InputEvent, sync: Boolean) {
         val m = fastInject
         if (m != null) {
             try {
-                m.invoke(ua, e, false, false)
+                m.invoke(ua, e, sync, false)
                 return
             } catch (t: Throwable) {
                 AgentLog.w("fast injection unavailable, using public API: ${cause(t)}")
                 fastInject = null
             }
         }
-        ua.injectInputEvent(e, false)
+        ua.injectInputEvent(e, sync)
     }
 }
 
 /**
  * Straight to the hidden input manager, like scrcpy. Needs INJECT_EVENTS, which the shell
- * uid has (ShellMain). Async mode returns once the event is queued in the input dispatcher.
+ * uid has (ShellMain). Async mode returns once the event is queued in the input dispatcher;
+ * sync (wait-for-finish) once the app has handled it.
  * If the call throws (hidden method gone, permission denied) it logs once and hands this and
  * every later event to [fallback]. A refused event (false) is only logged: UiAutomation ends
  * up in the same InputManagerGlobal.injectInputEvent, so switching would not help.
@@ -82,10 +84,11 @@ class InputManagerInjector private constructor(
 
     override val path get() = if (failed) fallback.path else InjectPath.INPUT_MANAGER
 
-    override fun inject(e: InputEvent) {
+    override fun inject(e: InputEvent, sync: Boolean) {
         if (!failed) {
             try {
-                if (!(injectMethod.invoke(manager, e, INJECT_INPUT_EVENT_MODE_ASYNC) as Boolean)) {
+                val mode = if (sync) INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH else INJECT_INPUT_EVENT_MODE_ASYNC
+                if (!(injectMethod.invoke(manager, e, mode) as Boolean)) {
                     AgentLog.w("InputManager refused $e")
                 }
                 return
@@ -94,11 +97,12 @@ class InputManagerInjector private constructor(
             }
             failed = true
         }
-        fallback.inject(e)
+        fallback.inject(e, sync)
     }
 
     companion object {
         private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
+        private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 2
 
         /** Null (with the reason logged) when the hidden API is not there. */
         fun create(fallback: Injector): InputManagerInjector? {

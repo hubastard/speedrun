@@ -1,7 +1,7 @@
 // E2E spike host: drives the on-device agent over one persistent TCP connection
 // (forwarded by `adb forward`) and measures where every millisecond goes.
 //
-// Usage: spike_host [port] [target_text] [iterations]
+// Usage: spike_host [port] [target_text | --scenario] [iterations]
 package spike_host
 
 import "core:encoding/endian"
@@ -22,13 +22,16 @@ Op :: enum u8 {
 	Key    = 4,
 	Settle = 5,
 	Find   = 6,
+	Swipe  = 7,
+	Type   = 8,
+	Erase  = 9,
 }
 
 KEYCODE_BACK :: 4
 
-// Settle tuning. With window frame stats, "quiet" means no new frame for ~2 frames at
-// 60 Hz plus an idle-main-thread probe. If frame stats are unavailable the agent falls
-// back to accessibility events and raises the quiet window to 120 ms on its own.
+// Settle tuning. "Quiet" means no new frame for ~2 frames at 60 Hz plus an idle-main-thread
+// probe. After an accessibility event the agent waits 120 ms instead (apps send them at most
+// every ~100 ms); on Android 12+ frame stats stay empty, so events are what it mostly sees.
 SETTLE_QUIET_MS     :: 34
 SETTLE_NO_CHANGE_MS :: 1000 // only paid when a tap really does nothing
 SETTLE_TIMEOUT_MS   :: 10_000
@@ -60,7 +63,7 @@ Settle_Status :: enum u8 {
 }
 
 Settle_Method :: enum u8 {
-	Frames, // window frame stats + main-thread idle probe
+	Frames, // window switches, frame stats and accessibility events + main-thread idle probe
 	Events, // accessibility-event fallback
 }
 
@@ -72,6 +75,7 @@ Settle_Result :: struct {
 	frames:       u32, // new frames observed
 	probes:       u32, // main-thread probes made
 	probe_max_us: u32, // slowest probe (large = app main thread was busy)
+	events:       u32, // accessibility events from the active window observed
 }
 
 // Device-side injection route (the byte that used to be the fast_inject flag; 0/1 unchanged).
@@ -194,15 +198,20 @@ op_tree :: proc(c: ^Conn, nodes: ^Tree, str_alloc: mem.Allocator) -> (agent_us: 
 // Only the nodes whose text or description contains `text` (ignoring case), found by the
 // app itself in one round trip; a cold TREE needs ~40. Depth is 0 in the results.
 op_find :: proc(c: ^Conn, text: string, nodes: ^Tree, str_alloc: mem.Allocator) -> (agent_us: u32, ok: bool) {
-	n := min(len(text), 0xFFFF)
-	req := make([]byte, 3 + n, str_alloc)
-	req[0] = u8(Op.Find)
-	_ = endian.put_u16(req[1:3], .Big, u16(n))
-	copy(req[3:], text[:n])
 	body: []byte
-	body, agent_us, ok = call(c, req)
+	body, agent_us, ok = call(c, str_request(.Find, text, str_alloc))
 	if !ok do return
 	return agent_us, read_nodes(body, nodes, str_alloc)
+}
+
+// `u8 op, str text` (str = u16 len + utf8).
+str_request :: proc(op: Op, text: string, alloc: mem.Allocator) -> []byte {
+	n := min(len(text), 0xFFFF)
+	req := make([]byte, 3 + n, alloc)
+	req[0] = u8(op)
+	_ = endian.put_u16(req[1:3], .Big, u16(n))
+	copy(req[3:], text[:n])
+	return req
 }
 
 // Decodes `u32 count, count * node` (the TREE and FIND body) into `nodes`.
@@ -258,6 +267,44 @@ op_key :: proc(c: ^Conn, code: i32) -> (res: Action_Result, ok: bool) {
 	return read_action(body)
 }
 
+// A drag that does not fling: the content moves by about the drag distance.
+op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32) -> (res: Action_Result, ok: bool) {
+	req: [21]byte
+	req[0] = u8(Op.Swipe)
+	put_i32(req[1:5], x1)
+	put_i32(req[5:9], y1)
+	put_i32(req[9:13], x2)
+	put_i32(req[13:17], y2)
+	put_i32(req[17:21], duration_ms)
+	body: []byte
+	body, _, ok = call(c, req[:])
+	if !ok do return
+	return read_action(body)
+}
+
+// Key events into the focused field; `skipped` characters had no key sequence.
+op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Result, skipped: u32, ok: bool) {
+	body: []byte
+	body, _, ok = call(c, str_request(.Type, text, alloc))
+	if !ok do return
+	res, ok = read_action(body)
+	if !ok do return
+	r := Reader{b = body[9:], ok = true} // after prep_us, inject_us, inject_path
+	skipped = rd_u32(&r)
+	return res, skipped, r.ok
+}
+
+// `count` DEL presses.
+op_erase :: proc(c: ^Conn, count: i32) -> (res: Action_Result, ok: bool) {
+	req: [5]byte
+	req[0] = u8(Op.Erase)
+	put_i32(req[1:5], count)
+	body: []byte
+	body, _, ok = call(c, req[:])
+	if !ok do return
+	return read_action(body)
+}
+
 op_settle :: proc(c: ^Conn, quiet_ms, no_change_ms, timeout_ms: i32) -> (res: Settle_Result, ok: bool) {
 	req: [13]byte
 	req[0] = u8(Op.Settle)
@@ -275,6 +322,7 @@ op_settle :: proc(c: ^Conn, quiet_ms, no_change_ms, timeout_ms: i32) -> (res: Se
 	res.frames = rd_u32(&r)
 	res.probes = rd_u32(&r)
 	res.probe_max_us = rd_u32(&r)
+	res.events = rd_u32(&r)
 	return res, r.ok
 }
 
@@ -291,11 +339,19 @@ find :: proc(nodes: #soa[]Node, needle: string) -> (idx: int, found: bool) {
 	return -1, false
 }
 
+// Exact match on text or content-description, visible or not.
+has_text :: proc(nodes: #soa[]Node, needle: string) -> bool {
+	for i in 0 ..< len(nodes) {
+		if nodes[i].text == needle || nodes[i].desc == needle do return true
+	}
+	return false
+}
+
 // Polls until `needle` is visible or the timeout passes. Each round asks the agent to FIND
-// it (one round trip to the app). Only when that brings back no visible exact match does it
-// read the whole TREE (~40 round trips after a screen change), which also sees text FIND
-// cannot, such as text set by an accessibility delegate. After a miss `nodes` holds the full
-// tree, for diagnostics. The waiting is the app's time, not the tool's.
+// it (one round trip to the app). When FIND brings back no exact match at all, it reads the
+// whole TREE (~40 round trips after a screen change), which also sees text FIND cannot,
+// such as text set by an accessibility delegate. An exact match that is only off screen
+// needs no TREE: it would show the same node. The waiting is the app's time, not the tool's.
 wait_for :: proc(
 	c: ^Conn,
 	nodes: ^Tree,
@@ -318,10 +374,12 @@ wait_for :: proc(
 			ok = true
 			return
 		}
-		tree_reads += 1
-		if _, tok := op_tree(c, nodes, str_alloc); !tok do return
+		if !has_text(nodes[:], needle) {
+			tree_reads += 1
+			if _, tok := op_tree(c, nodes, str_alloc); !tok do return
+			idx, found = find(nodes[:], needle)
+		}
 		ok = true
-		idx, found = find(nodes[:], needle)
 		if found || us(start) / 1000 >= timeout_ms do return
 		time.sleep(5 * time.Millisecond)
 	}
@@ -343,7 +401,7 @@ report :: proc(label: string, xs: []f64, unit: string) {
 	if len(xs) == 0 do return
 	slice.sort(xs)
 	fmt.printf(
-		"  %-38s median %10s   p95 %10s   min %10s   max %10s  %s\n",
+		"  %-50s median %10s   p95 %10s   min %10s   max %10s  %s\n",
 		label, num(pct(xs, 0.5)), num(pct(xs, 0.95)), num(xs[0]), num(xs[len(xs) - 1]), unit,
 	)
 	free_all(context.temp_allocator)
@@ -443,6 +501,15 @@ main :: proc() {
 		fmt.printf("  nodes on screen: %d\n", len(nodes))
 	}
 
+	if target == SCENARIO_ARG {
+		if len(nodes) == 0 {
+			fmt.eprintln("empty screen: open the Settings app first")
+			os.exit(1)
+		}
+		run_scenario(&c, &nodes, &arena, iters, nodes[0].right, nodes[0].bottom)
+		return
+	}
+
 	if target == "" {
 		fmt.println("\nNo target text given; skipping the step benchmark.")
 		fmt.println("Visible texts you could target:")
@@ -454,11 +521,11 @@ main :: proc() {
 	fmt.printf("\n[3] Step loop x%d: wait for \"%s\" -> tap -> settle, then BACK -> settle\n", iters, target)
 	{
 		read_ms, reads_n, find_us, tap_ms, prep_ms, inject_ms, ui_ms, settle_ms, step_ms, back_ms: [dynamic]f64
-		over_frames_ms, over_events_ms, frames_n, probes_n, probe_max_ms: [dynamic]f64
+		over_frames_ms, over_events_ms, frames_n, events_n, probes_n, probe_max_ms: [dynamic]f64
 		defer {
 			delete(read_ms); delete(reads_n); delete(find_us); delete(tap_ms); delete(prep_ms)
 			delete(inject_ms); delete(ui_ms); delete(settle_ms); delete(step_ms); delete(back_ms)
-			delete(over_frames_ms); delete(over_events_ms); delete(frames_n); delete(probes_n)
+			delete(over_frames_ms); delete(over_events_ms); delete(frames_n); delete(events_n); delete(probes_n)
 			delete(probe_max_ms)
 		}
 		inject_path: Inject_Path
@@ -488,6 +555,7 @@ main :: proc() {
 			append(&reads_n, f64(rounds))
 			tree_fallbacks += tree_reads
 			if !found {
+				_, _ = op_tree(&c, &nodes, step_alloc) // the whole screen, for diagnostics
 				visible := 0
 				for j in 0 ..< len(nodes) do if .Visible in nodes[j].flags do visible += 1
 				fmt.eprintf(
@@ -531,6 +599,7 @@ main :: proc() {
 			}
 			if s.method == .Frames {
 				append(&frames_n, f64(s.frames))
+				append(&events_n, f64(s.events))
 				append(&probes_n, f64(s.probes))
 				append(&probe_max_ms, f64(s.probe_max_us) / 1000)
 			}
@@ -564,6 +633,7 @@ main :: proc() {
 		report("  detection overhead (frames)", over_frames_ms[:], "ms")
 		report("  detection overhead (events)", over_events_ms[:], "ms")
 		report("  new frames seen (frames)", frames_n[:], "")
+		report("  accessibility events seen (frames)", events_n[:], "")
 		report("  main-thread probes (frames)", probes_n[:], "")
 		report("  slowest probe (frames)", probe_max_ms[:], "ms")
 		report("WHOLE STEP", step_ms[:], "ms")
@@ -577,7 +647,7 @@ main :: proc() {
 			back_statuses[.Settled], back_statuses[.No_Change], back_statuses[.Timeout],
 		)
 		fmt.printf(
-			"  settle method: %d frame-stats, %d event fallback\n",
+			"  settle method: %d frames/events + probe (\"frames\" above), %d event-only fallback\n",
 			methods[.Frames], methods[.Events],
 		)
 		path_label: string
@@ -615,4 +685,249 @@ print_targets :: proc(nodes: #soa[]Node) {
 		shown += 1
 		if shown >= 25 do break
 	}
+}
+
+// ---- scenario -------------------------------------------------------------------------
+
+SCENARIO_ARG :: "--scenario"
+
+Cmd_Kind :: enum u8 {
+	Tap_On,         // wait until visible, tap its center, settle
+	Assert_Visible, // wait until visible
+	Back,           // BACK key, settle
+	Scroll_Down,    // until visible: drag the content up, settle (at most MAX_SWIPES)
+	Scroll_Up,      // until visible: drag the content down, settle
+	Erase_Text,     // `count` DEL presses in the focused field, settle
+	Input_Text,     // type `text` into the focused field, settle
+}
+
+Cmd :: struct {
+	kind:  Cmd_Kind,
+	text:  string,
+	count: int,
+}
+
+// One iteration, from the Settings home screen back to it. bench_scenario.yaml runs the same
+// flow in Maestro, command for command: keep the two in sync.
+SCENARIO := [?]Cmd {
+	// Navigation, two levels deep and back.
+	{.Tap_On, "Display & touch", 0},
+	{.Tap_On, "Display size & text", 0},
+	{.Assert_Visible, "Bold text", 0},
+	{.Back, "", 0},
+	{.Back, "", 0},
+	// Scrolling, then text input in a dialog. Cancel keeps the device name unchanged.
+	{.Scroll_Down, "About emulated device", 0},
+	{.Tap_On, "About emulated device", 0},
+	{.Tap_On, "Device name", 0},
+	{.Erase_Text, "", 25},
+	{.Input_Text, "Spike bench", 0},
+	{.Assert_Visible, "Spike bench", 0},
+	{.Tap_On, "Cancel", 0},
+	{.Back, "", 0},
+	{.Scroll_Up, "Network & internet", 0},
+}
+
+FIND_TIMEOUT_MS :: 5000
+MAX_SWIPES      :: 10
+SWIPE_MS        :: 300
+
+Scenario :: struct {
+	c:                               ^Conn,
+	nodes:                           ^Tree,
+	alloc:                           mem.Allocator,
+	screen_w, screen_h:              i32,
+	lookup_ms, action_ms, settle_ms: f64, // this iteration
+	rounds, tree_reads, swipes:      int,
+	scrolls, frames, events:         int,
+	statuses:                        [Settle_Status]int,
+	methods:                         [Settle_Method]int,
+	fail:                            string, // why the last command failed
+}
+
+// Maestro's name for each command, so the output reads against bench_scenario.yaml.
+cmd_label :: proc(cmd: Cmd) -> string {
+	switch cmd.kind {
+	case .Tap_On:         return fmt.tprintf("tapOn \"%s\"", cmd.text)
+	case .Assert_Visible: return fmt.tprintf("assertVisible \"%s\"", cmd.text)
+	case .Back:           return "back"
+	case .Scroll_Down:    return fmt.tprintf("scrollUntilVisible DOWN \"%s\"", cmd.text)
+	case .Scroll_Up:      return fmt.tprintf("scrollUntilVisible UP \"%s\"", cmd.text)
+	case .Erase_Text:     return fmt.tprintf("eraseText %d", cmd.count)
+	case .Input_Text:     return fmt.tprintf("inputText \"%s\"", cmd.text)
+	}
+	return "?"
+}
+
+sc_settle :: proc(s: ^Scenario) -> bool {
+	t := time.tick_now()
+	r, ok := settle_default(s.c)
+	s.settle_ms += us(t) / 1000
+	if !ok {
+		s.fail = "settle failed"
+		return false
+	}
+	s.statuses[r.status] += 1
+	s.methods[r.method] += 1
+	s.frames += int(r.frames)
+	s.events += int(r.events)
+	return true
+}
+
+// Books the time of an action started at `t`.
+sc_action :: proc(s: ^Scenario, t: time.Tick, ok: bool, what: string) -> bool {
+	s.action_ms += us(t) / 1000
+	if !ok do s.fail = fmt.tprintf("%s failed", what)
+	return ok
+}
+
+// Waits until `text` is visible; returns its index in s.nodes.
+sc_lookup :: proc(s: ^Scenario, text: string) -> (idx: int, ok: bool) {
+	t := time.tick_now()
+	i, found, rounds, tree_reads, fok := wait_for(s.c, s.nodes, s.alloc, text, FIND_TIMEOUT_MS)
+	s.lookup_ms += us(t) / 1000
+	s.rounds += rounds
+	s.tree_reads += tree_reads
+	if !fok {
+		s.fail = "find failed"
+		return
+	}
+	if !found {
+		s.fail = fmt.tprintf("\"%s\" not visible within %d ms", text, FIND_TIMEOUT_MS)
+		return
+	}
+	return i, true
+}
+
+// Drags half a screen at a time until `text` is visible. Visibility is checked with FIND
+// only, so scroll targets need text or a content description the app's search can see.
+sc_scroll :: proc(s: ^Scenario, text: string, down: bool) -> bool {
+	x := s.screen_w / 2
+	from, to := s.screen_h * 3 / 4, s.screen_h / 4
+	if !down do from, to = to, from
+	s.scrolls += 1
+	for i := 0; ; i += 1 {
+		t := time.tick_now()
+		_, fok := op_find(s.c, text, s.nodes, s.alloc)
+		s.lookup_ms += us(t) / 1000
+		s.rounds += 1
+		if !fok {
+			s.fail = "find failed"
+			return false
+		}
+		if _, found := find(s.nodes[:], text); found do return true
+		if i == MAX_SWIPES {
+			s.fail = fmt.tprintf("\"%s\" not visible after %d swipes", text, MAX_SWIPES)
+			return false
+		}
+		t = time.tick_now()
+		_, sok := op_swipe(s.c, x, from, x, to, SWIPE_MS)
+		sc_action(s, t, sok, "swipe") or_return
+		s.swipes += 1
+		sc_settle(s) or_return
+	}
+}
+
+run_cmd :: proc(s: ^Scenario, cmd: Cmd) -> bool {
+	switch cmd.kind {
+	case .Tap_On:
+		idx := sc_lookup(s, cmd.text) or_return
+		n := s.nodes[idx]
+		t := time.tick_now()
+		_, ok := op_tap(s.c, (n.left + n.right) / 2, (n.top + n.bottom) / 2)
+		sc_action(s, t, ok, "tap") or_return
+		return sc_settle(s)
+	case .Assert_Visible:
+		_ = sc_lookup(s, cmd.text) or_return
+		return true
+	case .Back:
+		t := time.tick_now()
+		_, ok := op_key(s.c, KEYCODE_BACK)
+		sc_action(s, t, ok, "back") or_return
+		return sc_settle(s)
+	case .Scroll_Down, .Scroll_Up:
+		return sc_scroll(s, cmd.text, cmd.kind == .Scroll_Down)
+	case .Erase_Text:
+		t := time.tick_now()
+		_, ok := op_erase(s.c, i32(cmd.count))
+		sc_action(s, t, ok, "erase") or_return
+		return sc_settle(s)
+	case .Input_Text:
+		t := time.tick_now()
+		_, skipped, ok := op_type(s.c, cmd.text, s.alloc)
+		sc_action(s, t, ok, "type") or_return
+		if skipped > 0 {
+			s.fail = fmt.tprintf("%d characters of \"%s\" have no key sequence", skipped, cmd.text)
+			return false
+		}
+		return sc_settle(s)
+	}
+	return false
+}
+
+run_scenario :: proc(c: ^Conn, nodes: ^Tree, arena: ^virtual.Arena, iters: int, screen_w, screen_h: i32) {
+	fmt.printf(
+		"\n[3] Scenario x%d: %d commands per iteration (navigation, scrolling, text input in a dialog)\n",
+		iters, len(SCENARIO),
+	)
+	s := Scenario {
+		c        = c,
+		nodes    = nodes,
+		alloc    = virtual.arena_allocator(arena),
+		screen_w = screen_w,
+		screen_h = screen_h,
+	}
+	cmd_ms: [len(SCENARIO)][dynamic]f64
+	iter_ms, lookup_ms, action_ms, settle_ms: [dynamic]f64
+	defer {
+		for &xs in cmd_ms do delete(xs)
+		delete(iter_ms); delete(lookup_ms); delete(action_ms); delete(settle_ms)
+	}
+
+	loop_start := time.tick_now()
+	for i in 0 ..< iters {
+		virtual.arena_free_all(arena)
+		s.lookup_ms, s.action_ms, s.settle_ms = 0, 0, 0
+		it := time.tick_now()
+		for cmd, k in SCENARIO {
+			t := time.tick_now()
+			if !run_cmd(&s, cmd) {
+				fmt.eprintf("iteration %d, command %d (%s): %s\n", i + 1, k + 1, cmd_label(cmd), s.fail)
+				if _, tok := op_tree(c, nodes, s.alloc); tok {
+					fmt.eprintln("Screen (first nodes, including invisible):")
+					print_nodes(nodes[:])
+				}
+				os.exit(1)
+			}
+			append(&cmd_ms[k], us(t) / 1000)
+		}
+		append(&iter_ms, us(it) / 1000)
+		append(&lookup_ms, s.lookup_ms)
+		append(&action_ms, s.action_ms)
+		append(&settle_ms, s.settle_ms)
+	}
+	loop_s := us(loop_start) / 1_000_000
+
+	fmt.println("  per command:")
+	for cmd, k in SCENARIO {
+		pad := " " if k + 1 < 10 else "" // %2d pads with zeros on some Odin versions
+		report(fmt.tprintf("%s%d %s", pad, k + 1, cmd_label(cmd)), cmd_ms[k][:], "ms")
+	}
+	report("ITERATION", iter_ms[:], "ms")
+	report("  finding elements (FIND, TREE)", lookup_ms[:], "ms")
+	report("  actions (tap, key, swipe, type, erase)", action_ms[:], "ms")
+	report("  settling (the app + detection)", settle_ms[:], "ms")
+	fmt.printf(
+		"  settles: %d changed+quiet, %d no change, %d timeout (%d frames/events, %d event-only fallback)\n",
+		s.statuses[.Settled], s.statuses[.No_Change], s.statuses[.Timeout], s.methods[.Frames], s.methods[.Events],
+	)
+	fmt.printf("  change signals seen: %d frames, %d accessibility events\n", s.frames, s.events)
+	fmt.printf(
+		"  FIND rounds: %d, TREE fallbacks: %d, swipes: %d over %d scrolls\n",
+		s.rounds, s.tree_reads, s.swipes, s.scrolls,
+	)
+	fmt.printf(
+		"\n  LOOP TOTAL (wall clock, %d iterations): %s s  ->  compare with `maestro test bench_scenario.yaml` (README)\n",
+		iters, num(loop_s),
+	)
 }

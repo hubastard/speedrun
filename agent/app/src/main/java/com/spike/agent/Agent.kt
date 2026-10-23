@@ -2,10 +2,12 @@ package com.spike.agent
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
+import android.content.res.Resources
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
@@ -18,7 +20,9 @@ import java.io.DataOutputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.hypot
 
 internal const val TAG = "SpikeAgent"
 
@@ -64,16 +68,33 @@ internal object AgentLog {
  *   4 KEY    i32 keycode                     -> u32 prep_us, u32 inject_us, u8 inject_path
  *        prep = active-window lookup + frame-stats clear; inject_path = see InjectPath
  *        (formerly fast_inject: 0 and 1 keep their meaning, 2 = shell-uid InputManager).
+ *   7 SWIPE  i32 x1, i32 y1, i32 x2, i32 y2, i32 duration_ms
+ *                                            -> u32 prep_us, u32 inject_us, u8 inject_path
+ *        a drag from (x1,y1) to (x2,y2) lasting duration_ms, then still for SWIPE_HOLD_MS
+ *        before lifting: no fling, the content moves by about the drag distance (less the
+ *        first 16 dp, spent on touch slop). The events carry those timestamps but are
+ *        injected right away, ending now; only the first MOVE waits for the app (~1 frame).
+ *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
+ *                                               u32 skipped
+ *        key events into the focused field (virtual keyboard map, like `adb shell input
+ *        text`); skipped = characters with no key sequence, which were not typed.
+ *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
+ *        count DEL key presses.
  *   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms
  *                                            -> u8 status, u32 ui_done_us, u32 waited_us,
- *                                               u8 method, u32 frames, u32 probes, u32 probe_max_us
+ *                                               u8 method, u32 frames, u32 probes, u32 probe_max_us,
+ *                                               u32 events
  *        status: 0 = UI changed then went quiet, 1 = nothing changed, 2 = timeout
- *        method: 0 = window frame stats, 1 = accessibility-event fallback
- *        times are measured from the moment the last TAP/KEY was injected.
+ *        method: 0 = window switches, frame stats and the active window's accessibility
+ *                events, plus the idle probe; 1 = accessibility-event fallback
+ *        frames/events = change signals seen of each kind
+ *        times are measured from the moment the last action (TAP to ERASE) was injected.
  *
- * Settle (frame method): the UI is settled when
+ * Settle (method 0): the UI is settled when
  *   1. the active window id is stable,
- *   2. that window has presented no new frame for quiet_ms, and
+ *   2. that window has presented no new frame for quiet_ms and sent no UI-change
+ *      accessibility event for quiet_ms, or for EVENT_QUIET_MS after an in-place change
+ *      (no window switch) last seen as an event, and
  *   3. an accessibility round trip to the app (served on its main thread) returns fast,
  *      which means the main thread is idle and not about to produce more frames.
  */
@@ -84,7 +105,19 @@ private object Op {
     const val KEY = 4
     const val SETTLE = 5
     const val FIND = 6
+    const val SWIPE = 7
+    const val TYPE = 8
+    const val ERASE = 9
 }
+
+// SWIPE: pointer still for this long before lifting. Past the VelocityTracker's 40 ms
+// "pointer stopped" threshold, so the gesture never flings.
+private const val SWIPE_HOLD_MS = 60
+private const val SWIPE_STEP_MS = 8 // one MOVE per ~120 Hz touch sample
+
+// Quiet time needed after a UI-change accessibility event: apps send content-change and
+// scroll events at most every ~100 ms, so a shorter gap does not prove the UI stopped.
+private const val EVENT_QUIET_MS = 120
 
 /**
  * Shared by both entry points: AgentInstrumentation (UiAutomation from the instrumentation,
@@ -92,8 +125,10 @@ private object Op {
  * InputManager injection).
  */
 class Agent(private val ua: UiAutomation, private val injector: Injector) {
-    // elapsedRealtimeNanos of the most recent UI-change accessibility event.
+    // elapsedRealtimeNanos of the most recent UI-change accessibility event, from any window
+    // and per window id.
     private val lastChange = AtomicLong(0L)
+    private val lastChangeByWindow = ConcurrentHashMap<Int, Long>()
     // elapsedRealtimeNanos of the most recent injected action.
     @Volatile private var lastAction = 0L
     // Active window when the last action was injected (its frame stats are cleared then).
@@ -119,8 +154,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED,
-                AccessibilityEvent.TYPE_VIEW_SCROLLED ->
-                    lastChange.set(SystemClock.elapsedRealtimeNanos())
+                AccessibilityEvent.TYPE_VIEW_SCROLLED,
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                    val t = SystemClock.elapsedRealtimeNanos()
+                    lastChange.set(t)
+                    lastChangeByWindow[e.windowId] = t
+                }
             }
         }
     }
@@ -160,6 +199,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.KEY -> key(input.readInt())
             Op.SETTLE -> settle(input.readInt(), input.readInt(), input.readInt())
             Op.FIND -> writeFind(readStr(input))
+            Op.SWIPE -> swipe(
+                input.readInt().toFloat(), input.readInt().toFloat(),
+                input.readInt().toFloat(), input.readInt().toFloat(), input.readInt(),
+            )
+            Op.TYPE -> type(readStr(input))
+            Op.ERASE -> erase(input.readInt())
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -289,16 +334,75 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         injectMotion(MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
     }
 
-    private fun injectMotion(e: MotionEvent) {
+    private fun injectMotion(e: MotionEvent, sync: Boolean = false) {
         e.source = InputDevice.SOURCE_TOUCHSCREEN
-        injector.inject(e)
+        injector.inject(e, sync)
         e.recycle()
     }
 
-    private fun key(code: Int) = timedAction {
+    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int) = timedAction {
+        val duration = durationMs.coerceIn(0, 10_000)
+        val dx = x2 - x1
+        val dy = y2 - y1
+        // Timestamps end now, so the app sees the gesture's speed without us waiting it out.
+        val down = SystemClock.uptimeMillis() - duration - SWIPE_HOLD_MS
+        fun move(f: Float, sync: Boolean = false) = injectMotion(
+            MotionEvent.obtain(down, down + (duration * f).toLong(), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f, 0),
+            sync,
+        )
+        injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x1, y1, 0))
+        // First MOVE just past touch slop, handled by the app before the rest (about one
+        // frame): a scrolling parent intercepts the gesture on it. Sent together, all MOVEs
+        // reach the app as one batched MOVE, which the parent spends on intercepting, so
+        // nothing would scroll.
+        val dist = hypot(dx, dy)
+        val first = if (dist > 0f) minOf(1f, swipeFirstMovePx / dist) else 1f
+        move(first, sync = true)
+        val steps = maxOf(1, duration / SWIPE_STEP_MS)
+        for (i in 1..steps) {
+            val f = i.toFloat() / steps
+            if (f > first) move(f)
+        }
+        // A second sample at the end leaves zero motion for touch resampling to extrapolate,
+        // and lifting SWIPE_HOLD_MS after the drag stops means zero velocity: no fling.
+        injectMotion(MotionEvent.obtain(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2, 0))
+        val up = maxOf(SystemClock.uptimeMillis(), down + duration + SWIPE_HOLD_MS)
+        injectMotion(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x2, y2, 0))
+    }
+
+    // 2x the 8 dp touch slop.
+    private val swipeFirstMovePx = 16 * Resources.getSystem().displayMetrics.density
+
+    private fun key(code: Int) = timedAction { pressKey(code) }
+
+    private fun pressKey(code: Int) {
         val t = SystemClock.uptimeMillis()
         injector.inject(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0))
         injector.inject(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0))
+    }
+
+    private val keyMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
+
+    private fun type(text: String) {
+        var skipped = 0
+        timedAction {
+            for (ch in text) {
+                val events = keyMap.getEvents(charArrayOf(ch))
+                if (events == null) {
+                    skipped++
+                    continue
+                }
+                for (e in events) {
+                    e.source = InputDevice.SOURCE_KEYBOARD
+                    injector.inject(e)
+                }
+            }
+        }
+        body.writeInt(skipped)
+    }
+
+    private fun erase(count: Int) = timedAction {
+        repeat(count.coerceIn(0, 10_000)) { pressKey(KeyEvent.KEYCODE_DEL) }
     }
 
     // ---- settle -----------------------------------------------------------------------
@@ -343,12 +447,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         val useFrames = actionWindow >= 0 &&
             (latestFrame(actionWindow) != null || activeWindowId().let { it >= 0 && it != actionWindow })
         if (useFrames) settleFrames(quietMs, noChangeMs, timeoutMs)
-        else settleEvents(maxOf(quietMs, 120), noChangeMs, timeoutMs)
+        else settleEvents(maxOf(quietMs, EVENT_QUIET_MS), noChangeMs, timeoutMs)
     }
 
     private fun settleFrames(quietMs: Int, noChangeMs: Int, timeoutMs: Int) {
         val start = lastAction
         val quiet = quietMs * 1_000_000L
+        val eventQuiet = maxOf(quietMs, EVENT_QUIET_MS) * 1_000_000L
         val noChange = noChangeMs * 1_000_000L
         val timeout = timeoutMs * 1_000_000L
         val busyUs = 10_000L // an idle main thread answers in ~1 ms
@@ -363,27 +468,41 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         var status = 2
         var now = start
 
-        var eventsSeen = start      // for windows whose frame stats are unavailable
+        var eventsSeen = start      // latest accessibility event already counted
+        var events = 0
+        var lastWasEvent = false    // the last change seen was an event
+        var switched = false        // the active window changed since the action
 
         fun poll(): Boolean { // returns true if something changed
             val w = activeWindowId()
             if (w != window) {
                 window = w
                 seen = Long.MIN_VALUE
+                lastWasEvent = false
+                switched = true
                 if (w >= 0) try { ua.clearWindowContentFrameStats(w) } catch (e: Exception) { }
                 return true
             }
             if (w < 0) return false
             val f = latestFrame(w)
-            if (f == null) {
-                // No frame stats for this window: use accessibility events as the change signal.
-                val ev = lastChange.get()
-                if (ev > eventsSeen) { eventsSeen = ev; return true }
-                return false
-            }
-            if (f > seen) {
+            if (f != null && f > seen) {
                 seen = f
                 frames++
+                lastWasEvent = false
+                return true
+            }
+            // Accessibility events from the active window: the only signal for in-place changes
+            // (scroll, typing) when frame stats stay empty, as on Android 12+ where a window
+            // draws into a child (BLAST) layer they do not see. Apps send content-change and
+            // scroll events at most every ~100 ms, so after an in-place change we wait out
+            // eventQuiet. After a window switch the short quiet plus the idle probe has been
+            // enough (the next lookup always finds its target), and the burst of events every
+            // new window sends would otherwise add ~100 ms to each transition.
+            val ev = lastChangeByWindow[w] ?: 0L
+            if (ev > eventsSeen) {
+                eventsSeen = ev
+                events++
+                lastWasEvent = true
                 return true
             }
             return false
@@ -393,7 +512,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             now = SystemClock.elapsedRealtimeNanos()
             if (poll()) { changed = true; last = now }
 
-            val quietReached = changed && now - last >= quiet
+            val quietReached = changed && now - last >= if (lastWasEvent && !switched) eventQuiet else quiet
             val noChangeReached = !changed && now - start >= noChange
             if (quietReached || noChangeReached) {
                 val p = probeMainThread()
@@ -421,6 +540,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(frames)
         body.writeInt(probes)
         body.writeInt(minOf(probeMaxUs, Int.MAX_VALUE.toLong()).toInt())
+        body.writeInt(events)
     }
 
     /** Fallback: Android coalesces content-change events (~100 ms), hence the larger window. */
@@ -447,6 +567,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(if (last > start) ((last - start) / 1000).toInt() else 0)
         body.writeInt(((now - start) / 1000).toInt())
         body.writeByte(1)
+        body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)

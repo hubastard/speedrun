@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Usage: ./run.sh "<text of an on-screen element to tap>" [iterations]
-# Example (open the Settings app on the emulator first):
-#   ./run.sh "Network & internet" 20
+#        ./run.sh --scenario [iterations]
+# Examples (open the Settings app on the emulator first):
+#   ./run.sh "Network & internet" 20   tap + back loop
+#   ./run.sh --scenario 10             multi-step flow, same as bench_scenario.yaml for Maestro
+#                                      (restarts Settings so it starts on the home screen)
 # The agent runs as the shell user (app_process, InputManager injection). AGENT_MODE=instrument
 # runs it as an instrumentation instead (UiAutomation injection, ~60 ms slower per action);
 # that is also the automatic fallback when the shell agent cannot start.
@@ -103,5 +106,11 @@ if [ "$AGENT_MODE" = instrument ]; then
 fi
 
 adb forward "tcp:$PORT" "tcp:$PORT" >/dev/null
+
+if [ "$TARGET" = --scenario ]; then
+  echo "== Restarting Settings on its home screen"
+  adb shell am force-stop com.android.settings
+  adb shell am start -W -n com.android.settings/.Settings >/dev/null
+fi
 
 "$HOST_BIN" "$PORT" "$TARGET" "$ITERS"
