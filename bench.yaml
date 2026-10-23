@@ -1,0 +1,7 @@
+appId: com.android.settings
+---
+- repeat:
+    times: 20
+    commands:
+      - tapOn: "Network & internet"
+      - back

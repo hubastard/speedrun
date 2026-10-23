@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Needed for the localhost socket the host connects to through `adb forward`. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application android:label="E2E Spike Agent" />
+
+    <!-- Targets its own package: UiAutomation still sees and drives every app on screen. -->
+    <instrumentation
+        android:name=".AgentInstrumentation"
+        android:label="e2e spike agent"
+        android:targetPackage="com.spike.agent" />
+</manifest>

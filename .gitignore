@@ -1,0 +1,5 @@
+spike_host
+.gradle
+.kotlin
+build
+.DS_Store
