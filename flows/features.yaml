@@ -1,0 +1,111 @@
+# Feature coverage for the flow runner, checked against Maestro with
+#   ./compare.sh flows/features.yaml
+# Every tap is followed by an assertion on where it should lead, so both tools passing
+# means both picked the same elements. Settings app, any starting screen.
+appId: com.android.settings
+name: Feature coverage
+env:
+  NI: Network & internet
+---
+- launchApp
+- assertVisible: Search Settings
+- assertNotVisible: Pair new device
+
+# Text selectors are case-insensitive regexes matching the whole text.
+- tapOn: network & INTERNET
+- assertVisible: Airplane mode
+- back
+- tapOn: Conn.* devices
+- assertVisible: Pair new device
+- back
+
+# id (also matches the part after "/") with index (sorted top to bottom): "Apps".
+- tapOn:
+    id: title
+    index: 3
+- assertVisible: Default apps
+- back
+
+# Relative selectors.
+- tapOn:
+    text: Apps
+    below: Connected devices
+- assertVisible: Default apps
+- back
+- tapOn:
+    containsChild: Notifications
+- assertVisible: App notifications
+- back
+
+# Sub-flows: a file with env, inline commands with env, conditions.
+- runFlow:
+    file: sub_section.yaml
+    env:
+      SECTION: Apps
+- runFlow:
+    env:
+      TARGET: ${NI}
+    commands:
+      - tapOn: ${TARGET}
+      - assertVisible: Airplane mode
+      - back
+- runFlow:
+    when:
+      visible: Search Settings
+    commands:
+      - assertVisible: ${NI}
+- runFlow:
+    when:
+      notVisible: Search Settings
+    commands:
+      - tapOn: This is skipped
+
+# Loops, retries, waits, gestures.
+- repeat:
+    times: 2
+    commands:
+      - scroll
+- scrollUntilVisible:
+    element: Network & internet
+    direction: UP
+- retry:
+    maxRetries: 1
+    commands:
+      - assertVisible: Network & internet
+- extendedWaitUntil:
+    visible: Network & internet
+    timeout: 3000
+- waitForAnimationToEnd
+- swipe:
+    direction: UP
+- swipe:
+    start: 50%, 30%
+    end: 50%, 80%
+- scrollUntilVisible:
+    element: Network & internet
+    direction: UP
+
+# Text input in a dialog, keyboard, keys.
+- scrollUntilVisible:
+    element: About emulated device
+- tapOn: About emulated device
+- tapOn: Device name
+- eraseText
+- inputText: Spike 42
+- assertVisible:
+    text: Spike \d+
+    focused: true
+- hideKeyboard
+- assertVisible: Cancel
+- tapOn: Cancel
+- back
+- pressKey: Home
+- assertNotVisible: Search Settings
+- launchApp:
+    stopApp: false
+- assertVisible: Search Settings
+
+# Optional: a warning, not a failure (after Maestro's 7 s optional lookup).
+- tapOn:
+    text: Not on this screen
+    optional: true

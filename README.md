@@ -2,15 +2,16 @@
 
 Goal: prove, with numbers, how fast one E2E step (read screen → find element → tap → wait
 until the UI settles) can be when the tooling is designed for speed, and compare it to the
-classic full-hierarchy dump.
+classic full-hierarchy dump and to Maestro, running the same Maestro flow files.
 
 ## Pieces
 
 - `agent/` — Kotlin APK that runs on the device. One `UiAutomation` connection gives it the
   accessibility tree of every app, per-window frame stats and accessibility events. It
   listens on `127.0.0.1:7777` (on the device) and speaks a tiny binary protocol (documented
-  at the top of `Agent.kt`): read the screen (`TREE`, `FIND`), act (`TAP`, `KEY`, `SWIPE`,
-  `TYPE`, `ERASE`) and wait (`SETTLE`). Settle detection watches window switches, the active
+  at the top of `Agent.kt`): read the screen (`TREE`, `FIND`, `SCREEN` for all windows), act
+  (`TAP`, `KEY`, `SWIPE`, `TYPE`, `ERASE`, `PRESS`), wait (`SETTLE`, `MARK`), plus `SHELL` and
+  `SCREENSHOT`. Settle detection watches window switches, the active
   window's frames and accessibility events, then confirms with a main-thread idle probe.
   Two entry points share that logic (`Agent.kt`) and differ in how input is injected
   (`Injectors.kt`):
@@ -19,15 +20,17 @@ classic full-hierarchy dump.
     It builds its own `UiAutomation` the way `uiautomator dump` does.
   - `AgentInstrumentation` (fallback, `AGENT_MODE=instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
-- `host/main.odin` — Odin client. One persistent TCP connection through `adb forward`,
-  `TCP_NODELAY`, a reused receive buffer, nodes decoded into a `#soa` array, and all
-  per-step strings in a virtual-memory arena freed in O(1) after each step. Steps locate
-  their target with `FIND` (the app searches its own hierarchy, one round trip) and read the
-  full `TREE` only when that finds no visible exact match.
-- `run.sh` — disables animations, measures the `uiautomator dump` baseline, builds and
-  starts everything, runs the benchmark.
-- `bench.yaml`, `bench_scenario.yaml` — the same two benchmarks as Maestro flows.
-- `compare.sh` — runs the scenario with both tools and prints them side by side.
+- `host/` — Odin client. One persistent TCP connection through `adb forward`,
+  `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
+  - `main.odin`: the latency benchmark. Its steps locate their target with `FIND` (the app
+    searches its own hierarchy, one round trip) and read the full `TREE` only when that finds
+    no visible exact match.
+  - `yaml.odin`, `flow.odin`, `maestro.odin`: runs Maestro flow files (see below).
+- `run.sh` — disables animations, builds and starts everything, then runs the latency
+  benchmark (after a `uiautomator dump` baseline) or a flow file.
+- `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
+  the supported Maestro commands, each tap checked by an assertion.
+- `compare.sh` — runs one flow file with both tools and prints them side by side.
 
 ## Setup
 
@@ -46,17 +49,21 @@ Open the Settings app on the emulator, then:
 
 Run with no target to list texts visible on the current screen.
 
-A longer flow, 14 commands per iteration in Settings: navigation two levels deep, scrolling
-both ways, and text input in a dialog (erase, type, assert, cancel, so nothing changes):
+Maestro flow files run as they are:
 
 ```
-./run.sh --scenario 10      # this tool only (restarts Settings on its home screen)
-./compare.sh 5              # this tool, then Maestro on bench_scenario.yaml, side by side
+./run.sh --flow bench_scenario.yaml -e TIMES=5      # this tool only
+./compare.sh bench_scenario.yaml -e TIMES=5         # this tool, then Maestro, side by side
+./compare.sh flows/features.yaml                     # both tools must agree on every command
 ```
 
-The scenario is `SCENARIO` in `host/main.odin`; `bench_scenario.yaml` is the same flow for
-Maestro, command for command. Keep them in sync. `compare.sh` needs `maestro` and `python3`
-on PATH; its totals exclude each tool's start-up (Maestro's is printed separately).
+`bench_scenario.yaml` is 14 commands per iteration in Settings: navigation two levels deep,
+scrolling both ways, and text input in a dialog (erase, type, assert, cancel, so nothing
+changes). `compare.sh` starts the flow's app fresh before each tool, lines the two runs up
+command by command (warning if their command sequences or statuses differ) and prints
+medians per command, repeat iterations grouped. Its totals exclude each tool's start-up
+(Maestro's is printed separately). It needs `maestro` and `python3` on PATH.
+`--timings out.json` makes the runner write its per-command record.
 
 The agent starts as the shell user (`adb push` to `/data/local/tmp/agent.apk`, then
 `app_process`); if it cannot start, `run.sh` prints why and falls back to the
@@ -78,10 +85,66 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
    - *settle declared* — when the agent concluded it was settled. The gap to the line above
      is pure detection overhead.
    - *WHOLE STEP* — the number to put in the pitch.
-4. **Scenario** (`--scenario`) — median time per command, named as in the Maestro flow, then
-   per iteration split into finding elements, actions and settling (the app's time plus
-   detection), and the change signals settle saw. *LOOP TOTAL* compares with the
-   `repeat` block of `bench_scenario.yaml`.
+4. **Flows** (`--flow`) — printed like `maestro test`. In a terminal, the live view: the
+   whole flow as a list (🔲 pending, ⏳ running, ✅ done, ⚠️ warned, ⚪️ skipped, ❌ failed),
+   redrawn in place, with the commands of a running repeat, retry or sub-flow nested under
+   it and each finished command's time on the right. A flow longer than the terminal shows a
+   window around the running command. When the output is piped, or with `--plain`, it is
+   Maestro's plain format (`Tap on "X"... COMPLETED`) plus the time. Either way the run ends
+   with the total and how many hierarchy reads it took. A failed lookup or assertion prints
+   the windows and texts of the last read (below the view in live mode). `SPIKE_DEBUG=1`
+   prints every hierarchy read and shell command with its time (and implies `--plain`).
+
+## Maestro flow files
+
+The runner reads Maestro 2.11.0 syntax and follows Maestro's semantics, taken from its
+source: how selectors match, which element wins, lookup timeouts and when they restart,
+conditions, env scopes, gesture coordinates and key codes. It is strict: an unknown command
+or field is an error, like in Maestro, and so is a Maestro command or field it does not
+implement yet. A flow that loads therefore runs as written; nothing is skipped silently.
+
+Supported:
+
+- Config: `appId`, `name`, `env`, `onFlowStart`, `onFlowComplete` (other keys are ignored,
+  as Maestro keeps them as metadata).
+- Commands: `launchApp` (`appId`, `clearState`, `stopApp`), `stopApp`, `killApp`,
+  `clearState`, `tapOn`, `doubleTapOn`, `longPressOn`, `assertVisible`, `assertNotVisible`,
+  `extendedWaitUntil`, `inputText`, `eraseText`, `hideKeyboard`, `back`, `pressKey`,
+  `scroll`, `scrollUntilVisible`, `swipe` (direction, from an element, start/end in pixels
+  or percent), `waitForAnimationToEnd`, `openLink`, `takeScreenshot`, `clearKeychain`
+  (a no-op on Android), `runFlow` (file or commands, `when`, `env`), `repeat` (`times`,
+  `while`), `retry`. Every command takes `label` and `optional`.
+- Selectors: `text` and `id` (case-insensitive regexes over the whole value; text also
+  matches hint, content description and error; id also matches after the `/`), `index`,
+  `enabled`, `selected`, `checked`, `focused`, `width`/`height`/`tolerance`, `below`,
+  `above`, `leftOf`, `rightOf`, `containsChild`, `containsDescendants`, `childOf`; on taps
+  also `point`, `repeat`, `delay`, `retryTapIfNoChange`, `waitToSettleTimeoutMs`.
+- Conditions: `visible`, `notVisible`, `platform`, `true`.
+- Env: `-e KEY=VALUE`, `MAESTRO_*` shell variables and `MAESTRO_FILENAME`, then the flow's
+  `env:`, which wins (Maestro's order); sub-flows get their own scope.
+
+Not supported yet (an error naming it): JavaScript (`${...}` takes only a variable name;
+`evalScript`, `runScript`, `assertTrue`, `copyTextFrom`), `inputRandom*`, `setClipboard`,
+`pasteText`, `setPermissions` and `launchApp.permissions`/`arguments`, `setLocation`,
+`travel`, `setOrientation`, recording, `addMedia`, airplane and dark mode, AI commands,
+`assertScreenshot`, `takeScreenshot.cropOn`, `openLink` with `browser`/`autoVerify`,
+`traits`/`css` selectors, `waitUntilVisible: true`, non-ASCII `inputText`, web flows.
+
+Known differences in how, not what:
+
+- Hierarchy reads take 6–40 ms instead of hundreds, so lookups poll far more often within
+  the same timeouts (17 s, 7 s optional, minus the time since the last interaction).
+- Settle is the agent's (window switches, accessibility events, idle probe), not
+  screenshot or hierarchy comparison; Maestro's extra settle before each tap is not repeated.
+- `launchApp` grants the app's runtime permissions that are not granted yet. Maestro runs
+  `pm grant` for every permission in the manifest; only runtime ones can change, so the end
+  state is the same.
+- Regexes use Odin's engine: Java-only syntax (lookaround, inline flags, `\p{...}`,
+  possessive quantifiers) is rejected; patterns invalid in both match as plain text, like
+  Maestro's fallback.
+- When a selector matches in several windows, the active window's elements come first.
+  Maestro gathers windows in a hash set, so its order there is arbitrary. Toasts are not in
+  the hierarchy.
 
 ## Known limits (deliberate for a spike)
 
@@ -92,11 +155,11 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
   ~100 ms, so an in-place change costs a 120 ms quiet window. Ways under it: per-layer frames
   from SurfaceFlinger (`--frametimeline` has them, but a dump takes ~12 ms), or an in-app
   debug library that hooks `Choreographer` (the Espresso/Detox approach).
-- **`SWIPE` is a drag that never flings:** the pointer stops 60 ms before lifting, so the
-  content moves by the drag distance (minus 16 dp of touch slop) and scrolling is
-  deterministic. Its timestamps are synthetic and it is injected at once, except the first
-  MOVE, which waits about one frame for the app (a scroll container must intercept it).
-  Maestro flings, so scroll steps are not identical between the two tools.
+- **`SWIPE` timestamps are synthetic:** the gesture is injected at once with the timing of
+  a real drag, so the app sees the right speed without the tool waiting it out. Only the
+  first MOVE waits about one frame for the app (a scroll container must intercept it). Flows
+  fling like `adb shell input swipe`, as Maestro does; without the fling flag the pointer
+  stops before lifting and the content moves by the drag distance.
 - **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`: characters with
   no key sequence (most non-ASCII) are reported and the command fails. Key events go through
   the IME before the field, about 60 ms per key on the emulator, for Maestro too.
@@ -111,6 +174,10 @@ instrumentation. `AGENT_MODE=instrument ./run.sh ...` forces the instrumentation
   `InputManagerGlobal.injectInputEvent`), checked on Android 17 / API 37. Each one that is
   missing is logged and falls back (InputManager → UiAutomation injection; no UiAutomation →
   instrumentation).
+- **A loaded host stalls the emulator.** Every hierarchy read waits on the target app's main
+  thread; with the Mac busy, reads and shell commands were seen to block for 2–9 s and one
+  `assertVisible` right after `launchApp` timed out. Rerun on a quieter machine before
+  trusting a failure or a number.
 - Host goes through the `adb` binary for `forward`/`push`/`install`. A product would speak
   the adb wire protocol directly.
 - Android only. iOS needs a separate XCUITest- or in-app-based agent.

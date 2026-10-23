@@ -1,0 +1,10 @@
+# Called from features.yaml. Its own env wins over the caller's for the same names
+# (Maestro defines the caller's env first, then this file's), so it opens Connected devices.
+appId: com.android.settings
+env:
+  SECTION: Connected devices
+  EXPECT: Pair new device
+---
+- tapOn: ${SECTION}
+- assertVisible: ${EXPECT}
+- back

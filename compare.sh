@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Usage: ./compare.sh [iterations]
-# Runs the multi-step scenario N times with this tool (./run.sh --scenario) and N times with
-# Maestro (bench_scenario.yaml), each from a fresh Settings home screen, then prints both
-# side by side, per command. Loop totals exclude each tool's start-up. Needs maestro and
-# python3 on PATH (python3 reads Maestro's per-command report).
+# Usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...
+# Runs the same Maestro flow file with this tool (./run.sh --flow) and with Maestro, each
+# after a fresh start of the flow's app, then lines the two runs up command by command and
+# prints the median time per command (repeat iterations grouped). Totals exclude each tool's
+# start-up. Needs maestro and python3 on PATH (python3 reads both reports).
+#   ./compare.sh bench_scenario.yaml -e TIMES=5
 set -euo pipefail
 cd "$(dirname "$0")"
 
-ITERS="${1:-5}"
+FLOW="${1:?usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...}"
+shift
 OUT="$(mktemp -d -t spike_compare.XXXXXX)"
 trap 'rm -rf "$OUT"' EXIT
 
@@ -15,47 +17,83 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 
 command -v maestro >/dev/null || { echo "maestro not found on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found on PATH"; exit 1; }
+APP="$(sed -n 's/^appId:[[:space:]]*//p' "$FLOW" | head -1 | tr -d "\"'\r")"
+[ -n "$APP" ] || { echo "no appId in $FLOW"; exit 1; }
 
+# Force-stop the app and open its launcher activity: both tools start from the same screen.
+restart_app() {
+  local activity
+  activity="$(adb shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$APP" | tail -1 | tr -d '\r')"
+  adb shell am force-stop "$APP"
+  adb shell am start -W -n "$activity" >/dev/null
+  sleep 1
+}
+
+echo "== This tool: ./run.sh --flow $FLOW $*"
+restart_app
 # run.sh stops its agent at exit, so Maestro's driver can take the UiAutomation slot after it.
-./run.sh --scenario "$ITERS" | tee "$OUT/spike.txt"
+./run.sh --flow "$FLOW" "$@" --timings "$OUT/spike.json" | tee "$OUT/spike.txt"
 
 echo
-echo "== Maestro: maestro test -e TIMES=$ITERS bench_scenario.yaml"
-adb shell am force-stop com.android.settings
-adb shell am start -W -n com.android.settings/.Settings >/dev/null
+echo "== Maestro: maestro test $* $FLOW"
+restart_app
 t0=$(now_ms)
-maestro test --debug-output "$OUT/maestro" --flatten-debug-output -e TIMES="$ITERS" bench_scenario.yaml
+maestro test --debug-output "$OUT/maestro" --flatten-debug-output "$@" "$FLOW"
 t1=$(now_ms)
 
-python3 - "$OUT/spike.txt" "$OUT/maestro" "$((t1 - t0))" <<'PY'
-import glob, json, re, statistics, sys
+python3 - "$OUT/spike.json" "$OUT/maestro" "$((t1 - t0))" <<'PY'
+import glob, json, statistics, sys
 
-spike_txt, maestro_dir, maestro_wall_ms = sys.argv[1], sys.argv[2], int(sys.argv[3])
-
-# This tool: per-command medians and totals from the host's report.
-text = open(spike_txt).read()
-ours = {int(m.group(1)): (m.group(2).strip(), float(m.group(3)))
-        for m in re.finditer(r"^\s+(\d+) (.+?)\s+median\s+([\d.]+)", text, re.M)}
-our_iter = float(re.search(r"ITERATION\s+median\s+([\d.]+)", text).group(1))
-our_loop = float(re.search(r"LOOP TOTAL \(wall clock, \d+ iterations\): ([\d.]+) s", text).group(1))
-
-# Maestro: commands.json lists the repeat block, then every command run inside it (depth 1).
+spike_path, maestro_dir, maestro_wall_ms = sys.argv[1], sys.argv[2], int(sys.argv[3])
+ours = json.load(open(spike_path))
 report = json.load(open(glob.glob(f"{maestro_dir}/**/commands*.json", recursive=True)[0]))
-inner = [e["metadata"] for e in report if e["metadata"].get("depth") == 1]
-loop_ms = next(e["metadata"]["duration"] for e in report if "repeatCommand" in e["command"])
-n = len(ours)
-per_cmd = [[m["duration"] for m in inner[k::n]] for k in range(n)]
-per_iter = [sum(m["duration"] for m in inner[i:i + n]) for i in range(0, len(inner), n)]
+theirs = [e for e in report
+          if list(e["command"])[0] not in ("defineVariablesCommand", "applyConfigurationCommand")]
+
+# Maestro's internal command names for the YAML commands this tool runs.
+NAMES = {
+    "tapOnElement": {"tapOn", "doubleTapOn", "longPressOn"}, "tapOnPointV2Command": {"tapOn", "doubleTapOn", "longPressOn"},
+    "assertConditionCommand": {"assertVisible", "assertNotVisible", "extendedWaitUntil"},
+    "backPressCommand": {"back"}, "hideKeyboardCommand": {"hideKeyboard"},
+    "inputTextCommand": {"inputText"}, "eraseTextCommand": {"eraseText"}, "pressKeyCommand": {"pressKey"},
+    "scrollCommand": {"scroll"}, "scrollUntilVisible": {"scrollUntilVisible"}, "swipeCommand": {"swipe"},
+    "waitForAnimationToEndCommand": {"waitForAnimationToEnd"}, "openLinkCommand": {"openLink"},
+    "launchAppCommand": {"launchApp"}, "stopAppCommand": {"stopApp"}, "killAppCommand": {"killApp"},
+    "clearStateCommand": {"clearState"}, "clearKeychainCommand": {"clearKeychain"},
+    "runFlowCommand": {"runFlow"}, "repeatCommand": {"repeat"}, "retryCommand": {"retry"},
+    "takeScreenshotCommand": {"takeScreenshot"},
+}
+
+# Both tools record commands in the order they start, containers before their children.
+pairs = []
+for i, (o, t) in enumerate(zip(ours, theirs)):
+    key = list(t["command"])[0]
+    if o["command"] not in NAMES.get(key, set()):
+        print(f"\n!! The runs diverge at command #{i}: this tool ran `{o['command']}`, Maestro ran `{key}`."
+              " Only the commands before it are compared.")
+        break
+    if o["status"] != t["metadata"].get("status"):
+        print(f"!! #{i} {o['description']}: {o['status']} here, {t['metadata'].get('status')} in Maestro")
+    pairs.append((o, t["metadata"]))
+if len(ours) != len(theirs) and len(pairs) == min(len(ours), len(theirs)):
+    print(f"\n!! This tool ran {len(ours)} commands, Maestro {len(theirs)}.")
+
+groups = {}
+for o, t in pairs:
+    g = groups.setdefault(o["path"], {"o": o, "ours": [], "theirs": []})
+    g["ours"].append(o["duration_ms"])
+    g["theirs"].append(t.get("duration") or 0)
 
 med = statistics.median
-print("\n== Side by side (median ms per command; Maestro / this tool)")
-print(f"   {'command':48s} {'this tool':>10s} {'Maestro':>10s} {'ratio':>7s}")
-for k in range(1, n + 1):
-    label, o = ours[k]
-    m = med(per_cmd[k - 1])
-    print(f"{k:2d} {label:48s} {o:10.0f} {m:10.0f} {m / o:6.1f}x")
-m_iter = med(per_iter)
-print(f"   {'ITERATION':48s} {our_iter:10.0f} {m_iter:10.0f} {m_iter / our_iter:6.1f}x")
-print(f"   {'LOOP TOTAL (s, %d iterations)' % len(per_iter):48s} {our_loop:10.1f} {loop_ms / 1000:10.1f} {loop_ms / 1000 / our_loop:6.1f}x")
-print(f"   (Maestro start-up, outside the loop: {(maestro_wall_ms - loop_ms) / 1000:.1f} s)")
+print("\n== Side by side: median ms per command (Maestro / this tool)")
+print(f"   {'command':52s} {'runs':>4s} {'this tool':>10s} {'Maestro':>10s} {'ratio':>7s}")
+for path, g in groups.items():
+    o, m = med(g["ours"]), med(g["theirs"])
+    indent = "  " * g["o"]["depth"]
+    ratio = f"{m / o:6.1f}x" if o > 0 else "      -"
+    print(f"   {(indent + g['o']['description'])[:52]:52s} {len(g['ours']):4d} {o:10.0f} {m:10.0f} {ratio}")
+ours_total = sum(o["duration_ms"] for o, _ in pairs if o["depth"] == 0)
+theirs_total = sum(t.get("duration") or 0 for o, t in pairs if o["depth"] == 0)
+print(f"   {'FLOW TOTAL (s)':52s} {'':4s} {ours_total / 1000:10.1f} {theirs_total / 1000:10.1f} {theirs_total / max(ours_total, 1):6.1f}x")
+print(f"   (Maestro start-up, outside the flow: {(maestro_wall_ms - theirs_total) / 1000:.1f} s)")
 PY

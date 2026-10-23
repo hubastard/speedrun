@@ -3,7 +3,10 @@ package com.spike.agent
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.content.res.Resources
+import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -53,12 +56,19 @@ internal object AgentLog {
  * Wire protocol (big-endian):
  *   request  = u8 op, then op-specific fields
  *   response = u32 length, u32 agent_us, body[length - 4]
- *   str = u16 len + utf8
+ *   str = u16 len + utf8; bytes = u32 len + data
  *
  *   1 PING                                   -> (empty)
  *   2 TREE                                   -> u32 count, count * node
+ *        the active window, every node (invisible ones too), pre-order
  *        node = u16 depth, i32 l, i32 t, i32 r, i32 b, u8 flags,
- *               str text, str desc, str id, str class
+ *               str text, str desc, str id, str class, str hint, str error
+ *        flags: 1 clickable, 2 enabled, 4 focused, 8 scrollable, 16 checked,
+ *               32 visible to user, 64 selected
+ *  10 SCREEN                                 -> u32 count, count * node
+ *        every window (active one first, then status bar, dialogs, keyboard...), each root
+ *        at depth 0, keeping only children the system reports visible to the user (all of
+ *        a WebView's): the hierarchy Maestro matches selectors against.
  *   6 FIND   str text                        -> u32 count, count * node
  *        nodes of the active window whose text or content description contains text,
  *        ignoring case, in document order (depth is 0). The app's own search: one round
@@ -68,18 +78,29 @@ internal object AgentLog {
  *   4 KEY    i32 keycode                     -> u32 prep_us, u32 inject_us, u8 inject_path
  *        prep = active-window lookup + frame-stats clear; inject_path = see InjectPath
  *        (formerly fast_inject: 0 and 1 keep their meaning, 2 = shell-uid InputManager).
- *   7 SWIPE  i32 x1, i32 y1, i32 x2, i32 y2, i32 duration_ms
+ *   7 SWIPE  i32 x1, i32 y1, i32 x2, i32 y2, i32 duration_ms, i32 flags
  *                                            -> u32 prep_us, u32 inject_us, u8 inject_path
- *        a drag from (x1,y1) to (x2,y2) lasting duration_ms, then still for SWIPE_HOLD_MS
- *        before lifting: no fling, the content moves by about the drag distance (less the
- *        first 16 dp, spent on touch slop). The events carry those timestamps but are
- *        injected right away, ending now; only the first MOVE waits for the app (~1 frame).
+ *        a drag from (x1,y1) to (x2,y2) lasting duration_ms. flags & 1 (fling): lift at
+ *        the end, like `adb shell input swipe`, so the content keeps its speed and flings.
+ *        Otherwise the pointer stays still for SWIPE_HOLD_MS before lifting: no fling, the
+ *        content moves by about the drag distance (less the first 16 dp, spent on touch
+ *        slop). The events carry those timestamps but are injected right away, ending now;
+ *        only the first MOVE waits for the app (~1 frame).
+ *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path
+ *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u32 skipped
  *        key events into the focused field (virtual keyboard map, like `adb shell input
  *        text`); skipped = characters with no key sequence, which were not typed.
  *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        count DEL key presses.
+ *  12 MARK                                   -> (empty)
+ *        an action without input: the next SETTLE measures from here (waiting for a screen
+ *        that is already changing, e.g. Maestro's waitForAnimationToEnd).
+ *  11 SHELL  str command                     -> bytes stdout
+ *        runs as the shell user through UiAutomation (no shell syntax: the line is split on
+ *        spaces). For app control: am force-stop, pm clear, pm grant, am start...
+ *  14 SCREENSHOT                             -> bytes png
  *   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms
  *                                            -> u8 status, u32 ui_done_us, u32 waited_us,
  *                                               u8 method, u32 frames, u32 probes, u32 probe_max_us,
@@ -88,7 +109,7 @@ internal object AgentLog {
  *        method: 0 = window switches, frame stats and the active window's accessibility
  *                events, plus the idle probe; 1 = accessibility-event fallback
  *        frames/events = change signals seen of each kind
- *        times are measured from the moment the last action (TAP to ERASE) was injected.
+ *        times are measured from the last action (TAP, KEY, SWIPE, TYPE, ERASE, PRESS, MARK).
  *
  * Settle (method 0): the UI is settled when
  *   1. the active window id is stable,
@@ -108,16 +129,23 @@ private object Op {
     const val SWIPE = 7
     const val TYPE = 8
     const val ERASE = 9
+    const val SCREEN = 10
+    const val SHELL = 11
+    const val MARK = 12
+    const val PRESS = 13
+    const val SCREENSHOT = 14
 }
 
-// SWIPE: pointer still for this long before lifting. Past the VelocityTracker's 40 ms
-// "pointer stopped" threshold, so the gesture never flings.
+// SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
+// 40 ms "pointer stopped" threshold, so the gesture never flings.
 private const val SWIPE_HOLD_MS = 60
 private const val SWIPE_STEP_MS = 8 // one MOVE per ~120 Hz touch sample
 
 // Quiet time needed after a UI-change accessibility event: apps send content-change and
 // scroll events at most every ~100 ms, so a shorter gap does not prove the UI stopped.
 private const val EVENT_QUIET_MS = 120
+
+private const val SHELL_UID = 2000 // android.os.Process.SHELL_UID
 
 /**
  * Shared by both entry points: AgentInstrumentation (UiAutomation from the instrumentation,
@@ -202,9 +230,15 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.SWIPE -> swipe(
                 input.readInt().toFloat(), input.readInt().toFloat(),
                 input.readInt().toFloat(), input.readInt().toFloat(), input.readInt(),
+                fling = input.readInt() and 1 != 0,
             )
             Op.TYPE -> type(readStr(input))
             Op.ERASE -> erase(input.readInt())
+            Op.SCREEN -> writeScreen()
+            Op.SHELL -> shell(readStr(input))
+            Op.MARK -> beginAction()
+            Op.PRESS -> press(input.readInt().toFloat(), input.readInt().toFloat(), input.readInt())
+            Op.SCREENSHOT -> screenshot()
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -279,11 +313,88 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         if (n.isScrollable) f = f or 8
         if (n.isChecked) f = f or 16
         if (n.isVisibleToUser) f = f or 32
+        if (n.isSelected) f = f or 64
         tree.writeByte(f)
         str(n.text)
         str(n.contentDescription)
         str(n.viewIdResourceName)
         str(n.className)
+        str(n.hintText)
+        str(n.error)
+    }
+
+    /** All windows, as Maestro's hierarchy dump sees them (see SCREEN in the protocol). */
+    private fun writeScreen() {
+        treeBuf.reset()
+        var count = 0
+        val seen = HashSet<Int>()
+        val active = ua.rootInActiveWindow
+        if (active != null) {
+            seen.add(active.windowId)
+            count += walkVisible(active)
+        }
+        val windows = try { ua.windows } catch (e: Exception) { emptyList() }
+        for (w in windows) {
+            if (!seen.add(w.id)) continue
+            val root = w.root ?: continue
+            count += walkVisible(root)
+        }
+        tree.flush()
+        body.writeInt(count)
+        treeBuf.writeTo(body)
+    }
+
+    /** Pre-order from a window root, skipping subtrees not visible to the user. */
+    private fun walkVisible(root: AccessibilityNodeInfo): Int {
+        var count = 0
+        val nodes = ArrayDeque<AccessibilityNodeInfo>()
+        val depths = ArrayDeque<Int>()
+        val inWebView = ArrayDeque<Boolean>()
+        nodes.addLast(root)
+        depths.addLast(0)
+        inWebView.addLast(false)
+        while (nodes.isNotEmpty()) {
+            val n = nodes.removeLast()
+            val depth = depths.removeLast()
+            // Like Maestro: a WebView's content is often reported invisible, so keep all of it.
+            val web = inWebView.removeLast() || n.className?.contains("WebView") == true
+            writeNode(n, depth)
+            count++
+            for (i in n.childCount - 1 downTo 0) {
+                val c = n.getChild(i) ?: continue
+                if (!web && !c.isVisibleToUser) continue
+                nodes.addLast(c)
+                depths.addLast(depth + 1)
+                inWebView.addLast(web)
+            }
+        }
+        return count
+    }
+
+    private fun shell(command: String) {
+        val out = ByteArrayOutputStream()
+        if (Process.myUid() == SHELL_UID) {
+            // Already the shell user. UiAutomation.executeShellCommand loses the output here:
+            // with the connection in-process it closes the pipe's write end on return, while
+            // the command is still writing. Same argument splitting as that call.
+            val args = command.split(' ').filter { it.isNotEmpty() }
+            val process = ProcessBuilder(args).redirectErrorStream(true).start()
+            process.inputStream.use { it.copyTo(out) }
+            process.waitFor()
+        } else {
+            ParcelFileDescriptor.AutoCloseInputStream(ua.executeShellCommand(command)).use { it.copyTo(out) }
+        }
+        body.writeInt(out.size())
+        out.writeTo(body)
+    }
+
+    private fun screenshot() {
+        val bitmap = ua.takeScreenshot() ?: throw IOException("screenshot failed")
+        val png = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, png)
+        bitmap.recycle()
+        body.writeInt(png.size())
+        png.writeTo(body)
     }
 
     private fun readStr(input: DataInputStream): String {
@@ -340,12 +451,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         e.recycle()
     }
 
-    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int) = timedAction {
+    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean) = timedAction {
         val duration = durationMs.coerceIn(0, 10_000)
+        val hold = if (fling) 0 else SWIPE_HOLD_MS
         val dx = x2 - x1
         val dy = y2 - y1
         // Timestamps end now, so the app sees the gesture's speed without us waiting it out.
-        val down = SystemClock.uptimeMillis() - duration - SWIPE_HOLD_MS
+        val down = SystemClock.uptimeMillis() - duration - hold
         fun move(f: Float, sync: Boolean = false) = injectMotion(
             MotionEvent.obtain(down, down + (duration * f).toLong(), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f, 0),
             sync,
@@ -363,11 +475,20 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val f = i.toFloat() / steps
             if (f > first) move(f)
         }
-        // A second sample at the end leaves zero motion for touch resampling to extrapolate,
-        // and lifting SWIPE_HOLD_MS after the drag stops means zero velocity: no fling.
-        injectMotion(MotionEvent.obtain(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2, 0))
-        val up = maxOf(SystemClock.uptimeMillis(), down + duration + SWIPE_HOLD_MS)
+        if (!fling) {
+            // A second sample at the end leaves zero motion for touch resampling to
+            // extrapolate, and lifting SWIPE_HOLD_MS after the drag stops means zero velocity.
+            injectMotion(MotionEvent.obtain(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2, 0))
+        }
+        val up = maxOf(SystemClock.uptimeMillis(), down + duration + hold)
         injectMotion(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x2, y2, 0))
+    }
+
+    private fun press(x: Float, y: Float, holdMs: Int) = timedAction {
+        val down = SystemClock.uptimeMillis()
+        injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
+        Thread.sleep(holdMs.coerceIn(0, 60_000).toLong()) // the app's long-press timer runs in real time
+        injectMotion(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
     }
 
     // 2x the 8 dp touch slop.

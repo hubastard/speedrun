@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Usage: ./run.sh "<text of an on-screen element to tap>" [iterations]
-#        ./run.sh --scenario [iterations]
+#        ./run.sh --flow <flow.yaml> [-e KEY=VALUE]... [--timings <out.json>]
 # Examples (open the Settings app on the emulator first):
-#   ./run.sh "Network & internet" 20   tap + back loop
-#   ./run.sh --scenario 10             multi-step flow, same as bench_scenario.yaml for Maestro
-#                                      (restarts Settings so it starts on the home screen)
+#   ./run.sh "Network & internet" 20                     latency breakdown: tap + back loop
+#   ./run.sh --flow bench_scenario.yaml -e TIMES=5       a Maestro flow file, run by this tool
 # The agent runs as the shell user (app_process, InputManager injection). AGENT_MODE=instrument
 # runs it as an instrumentation instead (UiAutomation injection, ~60 ms slower per action);
 # that is also the automatic fallback when the shell agent cannot start.
 set -euo pipefail
 cd "$(dirname "$0")"
 
+MODE=bench
+FLOW_ARGS=()
+if [ "${1:-}" = --flow ]; then
+  MODE=flow
+  shift
+  FLOW_ARGS=("$@")
+  [ ${#FLOW_ARGS[@]} -gt 0 ] || { echo "--flow needs a flow file"; exit 1; }
+fi
 TARGET="${1:-}"
 ITERS="${2:-10}"
 PORT="${PORT:-7777}"
@@ -49,19 +56,21 @@ for s in window_animation_scale transition_animation_scale animator_duration_sca
   adb shell settings put global "$s" 0
 done
 
-echo
-echo "== Baseline: 'uiautomator dump' x5 (a full-hierarchy dump, the classic way to read the screen)"
 stop_agents
-total=0
-for i in 1 2 3 4 5; do
-  t0=$(now_ms)
-  adb shell uiautomator dump /sdcard/spike_dump.xml >/dev/null 2>&1
-  adb shell cat /sdcard/spike_dump.xml >/dev/null
-  t1=$(now_ms)
-  echo "  dump + read #$i: $((t1 - t0)) ms"
-  total=$((total + t1 - t0))
-done
-echo "  average: $((total / 5)) ms per screen read"
+if [ "$MODE" = bench ]; then
+  echo
+  echo "== Baseline: 'uiautomator dump' x5 (a full-hierarchy dump, the classic way to read the screen)"
+  total=0
+  for i in 1 2 3 4 5; do
+    t0=$(now_ms)
+    adb shell uiautomator dump /sdcard/spike_dump.xml >/dev/null 2>&1
+    adb shell cat /sdcard/spike_dump.xml >/dev/null
+    t1=$(now_ms)
+    echo "  dump + read #$i: $((t1 - t0)) ms"
+    total=$((total + t1 - t0))
+  done
+  echo "  average: $((total / 5)) ms per screen read"
+fi
 
 echo
 echo "== Building host"
@@ -107,10 +116,8 @@ fi
 
 adb forward "tcp:$PORT" "tcp:$PORT" >/dev/null
 
-if [ "$TARGET" = --scenario ]; then
-  echo "== Restarting Settings on its home screen"
-  adb shell am force-stop com.android.settings
-  adb shell am start -W -n com.android.settings/.Settings >/dev/null
+if [ "$MODE" = flow ]; then
+  "$HOST_BIN" "$PORT" --flow "${FLOW_ARGS[@]}"
+else
+  "$HOST_BIN" "$PORT" "$TARGET" "$ITERS"
 fi
-
-"$HOST_BIN" "$PORT" "$TARGET" "$ITERS"

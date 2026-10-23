@@ -1,6 +1,8 @@
-# Same flow as `./run.sh --scenario N` (SCENARIO in host/main.odin), command for command.
-# Start on the Settings home screen, scrolled to the top. Iterations come from TIMES:
-#   maestro test -e TIMES=10 bench_scenario.yaml
+# Benchmark flow, run as-is by both tools. Start on the Settings home screen, scrolled to
+# the top. Iterations come from TIMES:
+#   ./compare.sh bench_scenario.yaml -e TIMES=5        (both tools, side by side)
+#   ./run.sh --flow bench_scenario.yaml -e TIMES=5     (this tool)
+#   maestro test -e TIMES=5 bench_scenario.yaml        (Maestro)
 appId: com.android.settings
 ---
 - repeat:
