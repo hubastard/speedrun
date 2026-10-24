@@ -36,6 +36,7 @@ Op :: enum u8 {
 	Appearance  = 19, // iOS agent: read or set light/dark mode
 	Location    = 20, // Android agent: test-provider location, re-sent on a timer
 	Label       = 21, // Android agent: an app's name in the device's language
+	Perms       = 22, // Android agent: the permissions an app requests, and their state
 }
 
 KEYCODE_BACK :: 4
@@ -256,6 +257,30 @@ op_label :: proc(c: ^Conn, app: string, alloc: mem.Allocator) -> (label: string,
 	r := Reader{b = body, ok = true}
 	label = rd_str(&r, alloc)
 	return label, r.ok
+}
+
+Requested_Permission :: struct {
+	name:             string,
+	granted, runtime: bool,
+	app_op_mode:      u8, // MANAGE_EXTERNAL_STORAGE's: 0 allowed, 2 errored, 3 default; else 255
+}
+
+// Android: the permissions `app` requests. ok is false when the agent cannot read them (the
+// caller falls back to dumpsys). Names in `alloc`.
+op_perms :: proc(c: ^Conn, app: string, alloc: mem.Allocator) -> (perms: []Requested_Permission, ok: bool) {
+	body: []byte
+	body, _, ok = call(c, str_request(.Perms, app, context.temp_allocator))
+	if !ok do return
+	r := Reader{b = body, ok = true}
+	if rd_u8(&r) == 0 do return nil, false
+	list := make([]Requested_Permission, int(rd_u16(&r)), alloc)
+	for &p in list {
+		p.name = rd_str(&r, alloc)
+		flags := rd_u8(&r)
+		p.granted, p.runtime = flags & 1 != 0, flags & 2 != 0
+		p.app_op_mode = rd_u8(&r)
+	}
+	return list, r.ok
 }
 
 op_quit :: proc(c: ^Conn) -> bool {

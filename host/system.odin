@@ -47,6 +47,18 @@ set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 @(private = "file")
 android_set_all_permissions :: proc(r: ^Runner, app, value: string) {
 	grant := value == "allow"
+	// From the agent (~5 ms): only what is not in the wanted state yet costs a shell call.
+	if perms, ok := op_perms(r.c, app, context.temp_allocator); ok {
+		for p in perms {
+			if p.name == "android.permission.MANAGE_EXTERNAL_STORAGE" {
+				want: u8 = 0 if grant else 2 if value == "deny" else 3
+				if p.app_op_mode != want do android_set_permission(r, app, p.name, value)
+			} else if p.runtime && p.granted != grant {
+				_ = shell(r, "pm %s %s %s", "grant" if grant else "revoke", app, p.name)
+			}
+		}
+		return
+	}
 	out := shell(r, "dumpsys package %s", app)
 	runtime := false
 	for line in strings.split_lines(out, context.temp_allocator) {
@@ -398,10 +410,12 @@ device_mode :: proc(r: ^Runner, op: Device_Mode_Op) -> (mutating: bool, err: Err
 			if _, ok := op_appearance(r.c, 2 if on else 1); !ok do return true, "agent connection lost"
 			return true, nil
 		}
-		// Android restarts the visible activities: wait for that.
+		// Android restarts the visible activities: the next command that needs the screen
+		// waits for that (exec); mode switches and asserts on them run meanwhile.
 		if !op_mark(r.c) do return true, "agent connection lost"
 		_ = shell(r, "cmd uimode night %s", "yes" if on else "no")
-		return true, settle(r)
+		r.settle_due = true
+		return true, nil
 	case .Assert_Dark, .Assert_Light:
 		want := op == .Assert_Dark
 		have := dark_enabled(r) or_return

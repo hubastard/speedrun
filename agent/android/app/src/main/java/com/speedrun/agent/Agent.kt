@@ -104,6 +104,11 @@ internal object AgentLog {
  *        runs as the shell user through UiAutomation (no shell syntax: the line is split on
  *        spaces). For app control: am force-stop, pm clear, pm grant, am start...
  *  14 SCREENSHOT                             -> bytes png
+ *  22 PERMS    str package                     -> u8 ok, u16 count, count * (str name,
+ *                                               u8 flags, u8 app_op_mode)
+ *        the permissions the app requests (Permissions): flags bit 0 granted, bit 1
+ *        runtime; app_op_mode for MANAGE_EXTERNAL_STORAGE (0 allowed, 2 errored, 3 default),
+ *        255 for the others. ok 0 = not readable here: use dumpsys.
  *  21 LABEL    str package                     -> str label ("" when unknown)
  *        the app's name in the device's language (AppLabel).
  *  20 LOCATION str "providers lat lon interval_ms"
@@ -146,6 +151,7 @@ private object Op {
     const val SCREENSHOT = 14
     const val LOCATION = 20
     const val LABEL = 21
+    const val PERMS = 22
 }
 
 // SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
@@ -255,6 +261,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.SCREENSHOT -> screenshot()
             Op.LOCATION -> location(readStr(input))
             Op.LABEL -> writeStr(AppLabel.of(readStr(input)) ?: "")
+            Op.PERMS -> writePermissions(readStr(input))
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -423,6 +430,17 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         bitmap.recycle()
         body.writeInt(png.size())
         png.writeTo(body)
+    }
+
+    private fun writePermissions(packageName: String) {
+        val list = Permissions.of(packageName)
+        body.writeByte(if (list == null) 0 else 1)
+        body.writeShort(list?.size ?: 0)
+        for (p in list ?: emptyList()) {
+            writeStr(p.name)
+            body.writeByte((if (p.granted) 1 else 0) or (if (p.runtime) 2 else 0))
+            body.writeByte(p.appOpMode)
+        }
     }
 
     private fun writeStr(s: String) {

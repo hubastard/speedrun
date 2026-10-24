@@ -87,6 +87,7 @@ Runner :: struct {
 	recording:            Recording, // startRecording's, until stopRecording or the end
 	location:             Location_Mock, // Android's mock location (setLocation, travel)
 	notifications:        string, // iOS: "allow" or "deny" answers the notification alert (system.odin)
+	settle_due:           bool, // a change's settle put off until a command needs the screen
 }
 
 Rx :: struct {
@@ -416,6 +417,19 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 // the lookup timeout clock). `err` is empty on success, SKIPPED, or the failure.
 @(private = "file")
 exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
+	// A settle put off (Android's dark mode restarting the apps, which Maestro does not wait
+	// for at all) is paid by the first command that reads or touches the screen.
+	if r.settle_due {
+		switch _ in c.data {
+		case Device_Mode, Set_Permissions, Set_Location, Travel, Add_Media, Start_Recording,
+		     Stop_Recording, Eval_Script, Run_Script, Set_Clipboard, Run_Flow, Repeat, Retry:
+		case Launch_App, App_Cmd, Tap, Assert, Input_Text, Erase_Text, Key_Press, Navigate,
+		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot, Copy_Text, Paste_Text,
+		     Input_Random, Set_Orientation, Assert_Screenshot:
+			r.settle_due = false
+			settle(r) or_return
+		}
+	}
 	switch d in c.data {
 	case Launch_App:
 		app := eval(r, d.app_id) or_return
