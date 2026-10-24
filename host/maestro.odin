@@ -82,6 +82,10 @@ Runner :: struct {
 	script_dir:           string, // of the running runScript
 	copied_text:          Maybe(string), // maestro.copiedText
 	http_seq:             int,
+	api_level:            int, // Android, read when needed (system.odin)
+	flow_dir:             string, // this flow's debug output folder ("" for none)
+	recording:            Recording, // startRecording's, until stopRecording or the end
+	location:             Location_Mock, // Android's mock location (setLocation, travel)
 }
 
 Rx :: struct {
@@ -154,22 +158,22 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 		dev     = dev,
 		alloc   = run_alloc,
 		debug   = os.get_env("SPEEDRUN_DEBUG", run_alloc) != "",
-		env_gen = 1,
-		log_rec = -1,
+		env_gen  = 1,
+		log_rec  = -1,
+		flow_dir = opts.flow_dir,
 	}
 	_ = virtual.arena_init_growing(&r.screen_arena)
 	defer virtual.arena_destroy(&r.screen_arena)
 	defer js_stop(&r)
+	defer location_stop_updates(&r)
+	// A recording still running when the flow ends is stopped and kept.
+	defer if r.recording.active do _ = stop_recording(&r)
 
-	// Display size: the extent of all window roots, in the current orientation.
+	// The first read gives the display size (read_screen).
 	if !read_screen(&r) {
 		if !opts.silent do fmt.eprintln("could not read the screen")
 		result.error = strings.clone("could not read the screen", alloc)
 		return
-	}
-	for i in r.h.roots {
-		r.w = max(r.w, r.h.nodes[i].right)
-		r.h_px = max(r.h.nodes[i].bottom, r.h_px)
 	}
 
 	// Env, Maestro's order: -e values, MAESTRO_* shell variables not given with -e, the
@@ -255,7 +259,17 @@ MAESTRO_COMMAND_NAMES :: [][2]string {
 	{"takeScreenshot", "takeScreenshotCommand"}, {"evalScript", "evalScriptCommand"},
 	{"runScript", "runScriptCommand"}, {"assertTrue", "assertConditionCommand"},
 	{"copyTextFrom", "copyTextCommand"}, {"setClipboard", "setClipboardCommand"},
-	{"pasteText", "pasteTextCommand"},
+	{"pasteText", "pasteTextCommand"}, {"setPermissions", "setPermissionsCommand"},
+	{"inputRandomText", "inputRandomTextCommand"}, {"inputRandomNumber", "inputRandomTextCommand"},
+	{"inputRandomEmail", "inputRandomTextCommand"}, {"inputRandomPersonName", "inputRandomTextCommand"},
+	{"inputRandomCityName", "inputRandomTextCommand"}, {"inputRandomCountryName", "inputRandomTextCommand"},
+	{"inputRandomColorName", "inputRandomTextCommand"}, {"setOrientation", "setOrientationCommand"},
+	{"setAirplaneMode", "setAirplaneModeCommand"}, {"toggleAirplaneMode", "toggleAirplaneModeCommand"},
+	{"setDarkMode", "setDarkModeCommand"}, {"toggleDarkMode", "toggleDarkModeCommand"},
+	{"assertDarkMode", "assertDarkModeCommand"}, {"assertLightMode", "assertLightModeCommand"},
+	{"assertScreenshot", "assertScreenshotCommand"}, {"startRecording", "startRecordingCommand"},
+	{"stopRecording", "stopRecordingCommand"}, {"addMedia", "addMediaCommand"},
+	{"setLocation", "setLocationCommand"}, {"travel", "travelCommand"},
 }
 
 // The flow's debug output, laid out as Maestro's artifacts bundle: commands.json (each
@@ -306,7 +320,6 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 
 // A description with its ${...} evaluated, as Maestro's messages show them (its live view
 // shows them as written); as written when they do not evaluate.
-@(private = "file")
 evaluated :: proc(r: ^Runner, description: string) -> string {
 	if v, err := eval(r, description); err == nil do return v
 	return description
@@ -329,7 +342,6 @@ os_base :: proc(path: string) -> string {
 	return path[i + 1:] if i >= 0 else path
 }
 
-@(private = "file")
 write_file :: proc(path: string, data: []byte) -> bool {
 	return os.write_entire_file(path, data) == nil
 }
@@ -406,31 +418,42 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	switch d in c.data {
 	case Launch_App:
 		app := eval(r, d.app_id) or_return
+		perms := d.permissions[:] if d.has_permissions else DEFAULT_PERMISSIONS
+		args := eval_launch_arguments(r, d.arguments[:]) or_return
+		// Maestro's order: clear the keychain, clear the state, set the permissions, launch
+		// (stopping the app first unless stopApp: false).
 		if r.dev.platform == .IOS {
-			// Maestro: clearState through simctl, stopApp through its runner, launch through
-			// `simctl launch`. Its default `permissions: all: allow` is not applied here yet.
-			if d.clear_state do ios_clear_state(r.dev.udid, app) or_return
 			if d.clear_keychain {
 				if out, ok := simctl("keychain", r.dev.udid, "reset"); !ok do return true, out
 			}
-			if d.stop_app do simctl("terminate", r.dev.udid, app)
+			t := time.tick_now()
+			if d.clear_state do ios_clear_state(r.dev.udid, app) or_return
+			debug_step(r, "clear state", &t)
+			set_permissions(r, app, perms) or_return
+			debug_step(r, "permissions", &t)
+			// Just reinstalled, the app is not running.
+			if d.stop_app && !d.clear_state do simctl("terminate", r.dev.udid, app)
+			debug_step(r, "terminate", &t)
 			// `simctl launch` returns once the process starts; Android's `am start -W` once
 			// it has launched. Wait for the app's UI, then settle: a tap during the launch
 			// would be ignored.
 			if !op_mark(r.c) do return true, "agent connection lost"
-			if out, ok := simctl("launch", r.dev.udid, app); !ok do return true, out
+			cmd := make([dynamic]string, 0, 3 + 2 * len(args), context.temp_allocator)
+			append(&cmd, "launch", r.dev.udid, app)
+			append(&cmd, ..ios_launch_arguments(args))
+			if out, ok := simctl(..cmd[:]); !ok do return true, out
+			debug_step(r, "simctl launch", &t)
 			ready, ok := op_launched(r.c, app, 20_000, r.alloc)
+			debug_step(r, "app ready", &t)
 			if !ok do return true, "agent connection lost"
 			if !ready do return true, fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
 			return true, settle(r)
 		}
 		if d.clear_state do _ = shell(r, "pm clear %s", app)
-		grant_runtime_permissions(r, app)
+		set_permissions(r, app, perms) or_return
 		if d.stop_app do _ = shell(r, "am force-stop %s", app)
 		comp := launcher(r, app) or_return
-		out := shell(r, "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n %s", comp)
-		if strings.contains(out, "Error") do return true, strings.trim_space(out)
-		return true, nil
+		return true, android_launch(r, comp, args)
 	case App_Cmd:
 		app := eval(r, d.app_id) or_return
 		if r.dev.platform == .IOS {
@@ -468,7 +491,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
 			return true, settle(r)
 		case .Hide_Keyboard:
-			if r.dev.platform == .IOS do return false, "hideKeyboard is not supported on iOS yet"
+			if r.dev.platform == .IOS do return true, ios_hide_keyboard(r)
 			// Maestro presses BACK, then fails if (G)board ids are still on screen.
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
 			if e := settle(r); e != nil do return true, e
@@ -501,12 +524,26 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Open_Link:
 		link := eval(r, d.link) or_return
 		if strings.contains(link, " ") do return false, "links with spaces are not supported yet"
+		// iOS opens every link the same way (Maestro ignores browser and autoVerify there).
 		if r.dev.platform == .IOS {
 			if out, ok := simctl("openurl", r.dev.udid, link); !ok do return true, out
-		} else {
-			_ = shell(r, "am start -a android.intent.action.VIEW -d %s", link)
+			return true, settle(r)
 		}
-		return true, settle(r)
+		browser := ""
+		if d.browser {
+			// AndroidDriver.openBrowser: Chrome, else Firefox, else the default handler.
+			packages := shell(r, "pm list packages")
+			for p in ([]string{"com.android.chrome", "org.mozilla.firefox"}) {
+				if strings.contains(packages, fmt.tprintf("package:%s\n", p)) || strings.has_suffix(strings.trim_space(packages), p) {
+					browser = p
+					break
+				}
+			}
+		}
+		_ = shell(r, "am start -a android.intent.action.VIEW -d %s %s", link, browser)
+		settle(r) or_return
+		if d.auto_verify do auto_verify(r) or_return
+		return true, nil
 	case Run_Flow:
 		if cond, has := d.cond.?; has {
 			met := condition_met(r, cond, c.optional, -1) or_return
@@ -556,11 +593,26 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			if e == nil || attempt >= retries do return mutating, e
 		}
 	case Screenshot:
-		path := eval(r, d.path) or_return
-		png, ok := op_screenshot(r.c, r.alloc)
-		if !ok do return false, "agent connection lost"
-		if !write_file(fmt.aprintf("%s.png", path, allocator = r.alloc), png) do return false, "cannot write the screenshot"
+		file := command_output(r, "takeScreenshot", eval(r, d.path) or_return, ".png") or_return
+		png := screenshot(r, d.crop_on, c.optional) or_return
+		if !write_file(file, png) do return false, fmt.aprintf("cannot write %s", file, allocator = r.alloc)
 		return false, nil
+	case Assert_Screenshot:
+		return false, assert_screenshot(r, c, d)
+	case Start_Recording:
+		return false, start_recording(r, command_output(r, "startRecording", eval(r, d.path) or_return, ".mp4") or_return)
+	case Stop_Recording:
+		return false, stop_recording(r)
+	case Add_Media:
+		return true, add_media(r, d.files[:])
+	case Set_Location:
+		lat_s, lon_s := eval(r, d.latitude) or_return, eval(r, d.longitude) or_return
+		lat, lat_ok := strconv.parse_f64(strings.trim_space(lat_s))
+		lon, lon_ok := strconv.parse_f64(strings.trim_space(lon_s))
+		if !lat_ok || !lon_ok do return true, fmt.aprintf("setLocation: not a latitude and longitude: %s, %s", lat_s, lon_s, allocator = r.alloc)
+		return true, set_location(r, lat, lon)
+	case Travel:
+		return true, travel(r, d)
 	case Eval_Script:
 		// Scripts can make requests that change the app: mutating, as in Maestro.
 		_ = eval(r, d.script) or_return
@@ -594,11 +646,19 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		text, has := r.copied_text.?
 		if !has do return true, nil
 		return true, type_text(r, text)
+	case Set_Permissions:
+		// Behind the scenes: the screen does not change.
+		return false, set_permissions(r, eval(r, d.app_id) or_return, d.permissions[:])
+	case Input_Random:
+		return true, type_text(r, js_random(r, d.kind, d.length) or_return)
+	case Set_Orientation:
+		return true, set_orientation(r, eval(r, d.orientation) or_return)
+	case Device_Mode:
+		return device_mode(r, d.op)
 	}
 	return false, "unhandled command"
 }
 
-@(private = "file")
 type_text :: proc(r: ^Runner, text: string) -> Err {
 	_, skipped, ok := op_type(r.c, text, r.alloc)
 	if !ok do return "agent connection lost"
@@ -606,6 +666,36 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 		return fmt.aprintf("%d characters of \"%s\" have no key sequence (non-ASCII text is not supported yet)", skipped, text, allocator = r.alloc)
 	}
 	return settle(r)
+}
+
+// IOSDriver.hideKeyboard: past the keyboard's introduction, then a short swipe up, and if
+// the keyboard is still there (its delete key), one to the left. It never fails.
+@(private = "file")
+ios_hide_keyboard :: proc(r: ^Runner) -> Err {
+	if !read_screen(r) do return "agent connection lost"
+	intro := compile(r, "Speed up your typing by sliding your finger across the letters to compose a word.*") or_return
+	cont := compile(r, "Continue") or_return
+	for &n in r.h.nodes do if n.kept && has_bounds(n) && rx_full(intro, n.text) {
+		y := n.top + (n.bottom - n.top) / 2
+		if y < r.h_px / 2 do break
+		for &b in r.h.nodes do if b.kept && has_bounds(b) && rx_full(cont, b.text) && b.top + (b.bottom - b.top) / 2 > y {
+			if _, ok := op_tap(r.c, b.left + (b.right - b.left) / 2, b.top + (b.bottom - b.top) / 2); !ok do return "agent connection lost"
+			settle(r) or_return
+			break
+		}
+		break
+	}
+	keyboard_shown :: proc(r: ^Runner) -> (shown: bool, err: Err) {
+		if !read_screen(r) do return false, "agent connection lost"
+		for &n in r.h.nodes do if n.kept && n.id == "delete" do return true, nil
+		return false, nil
+	}
+	w, h := r.w, r.h_px
+	if !(keyboard_shown(r) or_return) do return nil
+	swipe_points(r, w / 2, h / 2, w / 2, i32(f32(h) * 0.47), 50, nil) or_return
+	if !(keyboard_shown(r) or_return) do return nil
+	// swipe_points settled already (Maestro's closing waitForAppToSettle).
+	return swipe_points(r, w / 2, h / 2, i32(f32(w) * 0.47), h / 2, 50, nil)
 }
 
 // A sub-flow: its own env scope, the caller's env then its own, then onFlowStart, commands,
@@ -631,8 +721,8 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	x, y: i32
 	// The tapped element as it was (strings copied: the hierarchy's arena is reset by reads).
 	tapped: struct {
-		text, desc: string,
-		flags:      Flags,
+		text, desc, class: string,
+		flags:             Flags,
 	}
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
@@ -643,7 +733,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		el := find_element(r, d.sel, c.optional, -1) or_return
 		n := r.h.nodes[el]
 		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
-		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), n.flags}
+		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags}
 		if d.point != "" {
 			p := eval(r, d.point) or_return
 			ok: bool
@@ -652,6 +742,10 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		}
 	}
 	before := r.h.hash
+	typing_before := typing(r)
+	// The screen was read since the last tap: the checks below share that read (one costs
+	// ~180 ms on iOS).
+	read_since_tap := false
 	for attempt := 0; attempt < (2 if d.retry else 1); attempt += 1 {
 		for i in 0 ..< d.repeat {
 			t := time.tick_now()
@@ -668,28 +762,82 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			}
 		}
 		settle(r, d.settle_ms) or_return
+		read_since_tap = false
 		// The element moved between the lookup and the tap: an app that keeps laying out after
 		// it looked settled (Settings inserts a banner ~0.5 s after launch). If it is still
 		// there, unchanged (nothing reacted to the tap: a toggled switch would differ), the
 		// tap missed it: tap it where it is now. Once.
 		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
 			if !read_screen(r) do return "agent connection lost"
-			if el, found, _ := try_find(r, d.sel, 0); found {
+			read_since_tap = true
+			if el := select(r, d.sel) or_return; el >= 0 {
 				n := r.h.nodes[el]
 				nx, ny := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 				same := n.text == tapped.text && n.desc == tapped.desc && n.flags == tapped.flags
-				if same && (abs(int(nx - x)) > 4 || abs(int(ny - y)) > 4) {
+				moved := abs(int(nx - x)) > 4 || abs(int(ny - y)) > 4
+				if r.debug && moved do fmt.printf("      [tapped %s moved by %d,%d; same %v]\n", tapped.class, nx - x, ny - y, same)
+				// A field the tap focused moves out of the keyboard's way (and the read can
+				// predate its focus flag): that is no miss.
+				if same && moved && (typing_before || !typing(r)) {
 					x, y = nx, ny
 					if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
 					settle(r, d.settle_ms) or_return
+					read_since_tap = false
 				}
 			}
 		}
 		if !d.retry do break
-		if !read_screen(r) do return "agent connection lost"
+		if !read_since_tap {
+			if !read_screen(r) do return "agent connection lost"
+			read_since_tap = true
+		}
 		if r.h.hash != before do break
 	}
+	// waitUntilVisible (Maestro.tap): the screen did not change and something covers the
+	// element at its center: wait for it to show (10 reads, 1 s apart), then tap it again.
+	if d.sel != nil && d.sel.wait_until_visible {
+		if !read_since_tap && !read_screen(r) do return "agent connection lost"
+		if r.h.hash != before do return nil
+		for attempt in 0 ..< 10 {
+			if el := select(r, d.sel) or_return; el >= 0 {
+				n := r.h.nodes[el]
+				x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+				if element_at(r, r.h.roots[:], x, y) == el do break
+			}
+			if attempt == 9 do break
+			time.sleep(time.Second)
+			if !read_screen(r) do return "agent connection lost"
+		}
+		if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
+		settle(r, d.settle_ms) or_return
+	}
 	return nil
+}
+
+// A keyboard is up or a text field has the focus, in the last read.
+@(private = "file")
+typing :: proc(r: ^Runner) -> bool {
+	for &n in r.h.nodes {
+		if !n.kept do continue
+		if n.class == "Keyboard" do return true // iOS
+		if .Focused in n.flags && (strings.has_suffix(n.class, "EditText") || n.class == "TextField" ||
+			n.class == "SecureTextField" || n.class == "TextView" || n.class == "SearchField") {
+			return true
+		}
+	}
+	return false
+}
+
+// ViewHierarchy.getElementAt: the last element containing the point, its own children first.
+@(private = "file")
+element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
+	#reverse for k in list {
+		n := r.h.nodes[k]
+		if !n.kept do continue
+		if e := element_at(r, n.children[:], x, y); e >= 0 do return e
+		if has_bounds(n) && x >= n.left && x <= n.right && y >= n.top && y <= n.bottom do return k
+	}
+	return -1
 }
 
 @(private = "file")
@@ -705,7 +853,33 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	dir := swipe_for_scroll(d.direction)
 	end := time.tick_now()._nsec + timeout * 1_000_000
 	retry_center := 0
+	cx, cy := r.w / 2, r.h_px / 2
+	ex, ey := edge_point(r, cx, cy, dir)
+	// After a swipe the content drifts on (~1.5 s on iOS, a fling on Android) and a settle
+	// waits for it to stop. While the element is not on screen yet that wait is useless: the
+	// next swipe's touch stops the drift anyway. So read right away, swipe again if it is not
+	// there, and settle only once it shows, for Maestro's checks below on a still screen.
+	// A swipe is over only after its own duration, as a finger's would be: Android's SWIPE
+	// injects it at once, and gestures overlapping in time can leave a list stuck.
+	moving := false
+	swiped: time.Tick
+	gesture := time.Duration(duration + 50) * time.Millisecond
 	for {
+		if moving {
+			if !read_screen(r) do return "agent connection lost"
+			if el := select(r, d.sel) or_return; el < 0 || visible_pct(r.h.nodes[el], r.w, r.h_px) <= 0 {
+				if time.tick_now()._nsec >= end do break
+				if time.tick_since(swiped) < gesture {
+					time.sleep(50 * time.Millisecond)
+					continue
+				}
+				swiped = time.tick_now()
+				if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling = true); !ok do return "agent connection lost"
+				continue
+			}
+			settle(r, d.settle_ms) or_return
+			moving = false
+		}
 		el, found, ferr := try_find(r, d.sel, 500)
 		if ferr != nil do return ferr
 		if found {
@@ -719,9 +893,9 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 			}
 		}
 		// swipeFromCenter: from the screen center towards the edge.
-		cx, cy := r.w / 2, r.h_px / 2
-		ex, ey := edge_point(r, cx, cy, dir)
-		if e := swipe_points(r, cx, cy, ex, ey, i32(duration), d.settle_ms); e != nil do return e
+		swiped = time.tick_now()
+		if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling = true); !ok do return "agent connection lost"
+		moving = true
 		if time.tick_now()._nsec >= end do break
 	}
 	return fmt.aprintf("No visible element found: %s\n%s", evaluated(r, selector_description(d.sel)), screen_summary(r), allocator = r.alloc)
@@ -791,7 +965,6 @@ edge_point :: proc(r: ^Runner, x, y: i32, dir: Swipe_Dir) -> (i32, i32) {
 	return x, y
 }
 
-@(private = "file")
 settle :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> Err {
 	_, err := settle_status(r, timeout_ms)
 	return err
@@ -802,6 +975,7 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> (Settle_Statu
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, SETTLE_NO_CHANGE_MS, timeout)
 	if !ok do return .Timeout, "agent connection lost"
+	if r.debug do fmt.printf("      [settle %v: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
 	return res.status, nil
 }
 
@@ -840,7 +1014,6 @@ adjusted :: proc(r: ^Runner, ms: i64) -> i64 {
 
 // Orchestra.findElement: polls the hierarchy until the selector matches. `timeout` < 0:
 // the lookup default (17 s, optional 7 s) shortened by the time since the last interaction.
-@(private = "file")
 find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -> (idx: int, err: Err) {
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
 	i, found := try_find(r, sel, limit) or_return
@@ -851,7 +1024,6 @@ find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -
 }
 
 // One read at least (Maestro's do-while), then re-reads until found or `timeout_ms` passes.
-@(private = "file")
 try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, found: bool, err: Err) {
 	end := time.tick_now()._nsec + timeout_ms * 1_000_000
 	for {
@@ -863,7 +1035,6 @@ try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, foun
 }
 
 // The last hierarchy read, briefly: each window, then the texts on screen.
-@(private = "file")
 screen_summary :: proc(r: ^Runner) -> string {
 	b := strings.builder_make(r.alloc)
 	strings.write_string(&b, "      screen:")
@@ -895,6 +1066,7 @@ filter_description :: proc(s: ^Selector) -> string {
 	if s.right_of != nil do append(&parts, fmt.tprintf("Right of: %s", selector_description(s.right_of)))
 	if s.contains_child != nil do append(&parts, fmt.tprintf("Contains child: %s", selector_description(s.contains_child)))
 	if s.child_of != nil do append(&parts, fmt.tprintf("Child of: %s", selector_description(s.child_of)))
+	if len(s.traits) > 0 do append(&parts, trait_names(s.traits[:]))
 	if t, ok := s.index.?; ok do append(&parts, fmt.tprintf("Index: %s", t))
 	if v, ok := s.enabled.?; ok do append(&parts, "Enabled" if v else "Disabled")
 	if v, ok := s.selected.?; ok do append(&parts, "Selected" if v else "Not selected")
@@ -959,7 +1131,7 @@ apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) 
 	_, hs := s.selected.?
 	_, hc := s.checked.?
 	_, hf := s.focused.?
-	has_basic := text_rx != nil || id_rx != nil || hw || hh || he || hs || hc || hf
+	has_basic := text_rx != nil || id_rx != nil || hw || hh || he || hs || hc || hf || len(s.traits) > 0
 
 	out: [dynamic]int
 	out.allocator = context.temp_allocator
@@ -1116,6 +1288,19 @@ basic_match :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: H_Node) ->
 		if w, ok := s.width.?; ok && abs(int(n.right - n.left) - w) > tol do return false
 		if h, ok := s.height.?; ok && abs(int(n.bottom - n.top) - h) > tol do return false
 	}
+	// TraitFilters. Every element has a text attribute in Maestro's hierarchy (empty when
+	// it shows none), so `text` keeps them all.
+	for t in s.traits {
+		switch t {
+		case .TEXT:
+		case .SQUARE:
+			if !has_bounds(n) do return false
+			off := 1 - f32(n.right - n.left) / f32(n.bottom - n.top) // NaN or ±Inf when flat
+			if !(off < 0.03 && off > -0.03) do return false
+		case .LONG_TEXT:
+			if strings.rune_count(n.text) <= 200 do return false
+		}
+	}
 	return true
 }
 
@@ -1159,7 +1344,6 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	return &r.regexes[pattern], nil
 }
 
-@(private = "file")
 has_bounds :: proc(n: H_Node) -> bool {
 	return n.right > n.left || n.bottom > n.top || n.left != 0 || n.top != 0
 }
@@ -1370,9 +1554,17 @@ read_screen :: proc(r: ^Runner) -> bool {
 		for c in transmute([]u8)n.text do hash = (hash ~ u64(c)) * 1099511628211
 	}
 	r.h.hash = hash
+	// Display size: the extent of the window roots, in the current orientation (it changes
+	// with setOrientation).
+	w, h: i32
+	for i in r.h.roots {
+		w = max(w, r.h.nodes[i].right)
+		h = max(h, r.h.nodes[i].bottom)
+	}
+	if w > 0 && h > 0 do r.w, r.h_px = w, h
 	// filterOutOfBounds: drop nodes less than 10% on screen whose children are all dropped.
-	w, h := r.w, r.h_px
-	if w == 0 || h == 0 do w, h = max(i32), max(i32) // first read, display size not known yet
+	w, h = r.w, r.h_px
+	if w == 0 || h == 0 do w, h = max(i32), max(i32) // display size not known yet
 	#reverse for &n, k in r.h.nodes {
 		if !n.kept do n.kept = visible_pct(n, w, h) >= 0.1
 		if n.kept && n.parent >= 0 do r.h.nodes[n.parent].kept = true
@@ -1393,7 +1585,12 @@ read_screen :: proc(r: ^Runner) -> bool {
 	return true
 }
 
-@(private = "file")
+// SPEEDRUN_DEBUG: how long a step of a command took (since `t`, which moves to now).
+debug_step :: proc(r: ^Runner, what: string, t: ^time.Tick) {
+	if r.debug do fmt.printf("      [%s %.0f ms]\n", what, us(t^) / 1000)
+	t^ = time.tick_now()
+}
+
 shell :: proc(r: ^Runner, format: string, args: ..any) -> string {
 	t := time.tick_now()
 	out, _ := op_shell(r.c, fmt.tprintf(format, ..args), r.alloc)
@@ -1402,7 +1599,6 @@ shell :: proc(r: ^Runner, format: string, args: ..any) -> string {
 }
 
 // LaunchAppCommand: the package's launcher activity (cached).
-@(private = "file")
 launcher :: proc(r: ^Runner, app: string) -> (comp: string, err: Err) {
 	if c, ok := r.launchers[app]; ok do return c, nil
 	out := shell(r, "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER %s", app)
@@ -1413,24 +1609,6 @@ launcher :: proc(r: ^Runner, app: string) -> (comp: string, err: Err) {
 	}
 	r.launchers[app] = last
 	return last, nil
-}
-
-// Maestro grants every permission in the manifest on launch (pm grant per permission;
-// only runtime permissions can change). Same end state, faster: grant the runtime ones
-// that are not granted yet, plus MANAGE_EXTERNAL_STORAGE through appops.
-@(private = "file")
-grant_runtime_permissions :: proc(r: ^Runner, app: string) {
-	out := shell(r, "dumpsys package %s", app)
-	for line in strings.split_lines(out, context.temp_allocator) {
-		l := strings.trim_space(line)
-		if strings.has_suffix(l, "granted=false") || strings.contains(l, ": granted=false,") {
-			perm, _, _ := strings.partition(l, ":")
-			_ = shell(r, "pm grant %s %s", app, perm)
-		}
-		if l == "android.permission.MANAGE_EXTERNAL_STORAGE" {
-			_ = shell(r, "appops set %s MANAGE_EXTERNAL_STORAGE allow", app)
-		}
-	}
 }
 
 @(private = "file")

@@ -32,6 +32,29 @@ enum Private {
         return proxy
     }
 
+    /// The device's orientation (ORIENTATION sets it) and whether the foreground app's UI is
+    /// laid out in landscape (its last snapshot is wider than tall: an app that supports
+    /// portrait only stays upright when the device turns). Touches come in the UI's points
+    /// and are played in the hardware's, which are portrait.
+    static var deviceOrientation: UIDeviceOrientation = .portrait
+    static var uiLandscape = false
+
+    /// The orientation the simulator is in now (it outlives the agent). Main thread.
+    static func readOrientation() {
+        let o = XCUIDevice.shared.orientation
+        deviceOrientation = o == .unknown ? .portrait : o
+    }
+
+    private static func hardwarePoint(_ p: CGPoint) -> CGPoint {
+        guard uiLandscape else { return p }
+        let screen = UIScreen.main
+        let w = screen.nativeBounds.width / screen.nativeScale, h = screen.nativeBounds.height / screen.nativeScale
+        // The UI turns opposite to the device: home button (or bottom) on the right for
+        // landscapeLeft.
+        if deviceOrientation == .landscapeRight { return CGPoint(x: p.y, y: h - p.x) }
+        return CGPoint(x: w - p.y, y: p.x)
+    }
+
     /// A touch at point (screen points) held for hold seconds, played by testmanagerd; returns
     /// once it has been delivered (or right away when wait is false).
     static func tap(at point: CGPoint, hold: TimeInterval, wait: Bool = true) throws {
@@ -47,7 +70,7 @@ enum Private {
         let move = NSSelectorFromString("moveToPoint:atOffset:")
         guard path.responds(to: move) else { throw AgentError(message: "XCPointerEventPath.moveToPoint:atOffset: is missing") }
         typealias Move = @convention(c) (NSObject, Selector, CGPoint, TimeInterval) -> Void
-        unsafeBitCast(path.method(for: move), to: Move.self)(path, move, end, 0.1)
+        unsafeBitCast(path.method(for: move), to: Move.self)(path, move, hardwarePoint(end), 0.1)
         try call(path, "liftUpAtOffset:", 0.1 + duration)
         try synthesize(try record(with: path))
     }
@@ -86,7 +109,7 @@ enum Private {
         let alloc = pathClass.perform(NSSelectorFromString("alloc")).takeUnretainedValue() as! NSObject
         guard alloc.responds(to: initPath) else { throw AgentError(message: "XCPointerEventPath.initForTouchAtPoint:offset: is missing") }
         typealias InitPath = @convention(c) (NSObject, Selector, CGPoint, TimeInterval) -> NSObject
-        return unsafeBitCast(alloc.method(for: initPath), to: InitPath.self)(alloc, initPath, point, 0)
+        return unsafeBitCast(alloc.method(for: initPath), to: InitPath.self)(alloc, initPath, hardwarePoint(point), 0)
     }
 
     private static func record(with path: NSObject) throws -> NSObject {

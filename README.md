@@ -34,11 +34,19 @@ same files.
   - `yaml.odin`, `flow.odin`, `maestro.odin`, `console.odin`: runs Maestro flow files and
     prints them like Maestro does (see below).
   - `js.odin`, `js/`: JavaScript for flows, on QuickJS-ng (vendored in `js/quickjs-ng`, MIT):
-    `engine.c` wraps it, `prelude.js` sets up what Maestro's scripts see.
-- `build.sh` — builds the agent APK and the JavaScript engine, then `./speedrun` around them.
+    `engine.c` wraps it, `prelude.js` sets up what Maestro's scripts see, including `faker`
+    with Datafaker's English word lists (`js/datafaker`, Apache-2.0).
+  - `system.odin`: commands that change the device rather than tap the app (permissions,
+    launch arguments, orientation, dark and airplane mode, location, media, recording).
+  - `image.odin`, `image/`: screenshot cropping and comparison, with stb_image (vendored,
+    public domain).
+- `build.sh` — builds the agent APK, the JavaScript engine and the image codecs, then
+  `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
 - `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
-  the supported Maestro commands, each tap checked by an assertion.
+  the supported Maestro commands, each tap checked by an assertion; `flows/javascript` (no
+  app needed), `flows/device/settings.yaml` (Android) and `flows/ignite/device.yaml` (iOS)
+  cover scripts and the device commands.
 - `compare.sh` — runs one flow file with both tools and prints them side by side.
 
 ## Setup
@@ -97,7 +105,9 @@ replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
   `report.xml` / `report.html`), with flow `tags` and `properties` (`junitId`,
   `junitClassname`).
 - The debug output: `~/.maestro/tests/<yyyy-MM-dd_HHmmss>/<flow>/` with `commands.json`,
-  `logs/maestro.log` and, on a failure, `screenshots/final.png`; `--debug-output`,
+  `logs/maestro.log`, on a failure `screenshots/final.png`, and what `takeScreenshot` and
+  `startRecording` write (`takeScreenshot/<path>.png`, `startRecording/<path>.mp4`, as in
+  Maestro 2.11; a path leaving that folder is an error); `--debug-output`,
   `--flatten-debug-output`, `--test-output-dir` as in Maestro.
 - `--shard-split N` / `--shard-all N` across connected devices (or `--device a,b`): one
   speedrun per device, `[shard N]` lines, a merged report and Maestro's summary box.
@@ -182,19 +192,26 @@ Supported:
 
 - Config: `appId`, `name`, `env`, `onFlowStart`, `onFlowComplete` (other keys are ignored,
   as Maestro keeps them as metadata).
-- Commands: `launchApp` (`appId`, `clearState`, `stopApp`), `stopApp`, `killApp`,
-  `clearState`, `tapOn`, `doubleTapOn`, `longPressOn`, `assertVisible`, `assertNotVisible`,
-  `extendedWaitUntil`, `inputText`, `eraseText`, `hideKeyboard`, `back`, `pressKey`,
-  `scroll`, `scrollUntilVisible`, `swipe` (direction, from an element, start/end in pixels
-  or percent), `waitForAnimationToEnd`, `openLink`, `takeScreenshot`, `clearKeychain`
-  (a no-op on Android), `runFlow` (file or commands, `when`, `env`), `repeat` (`times`,
-  `while`), `retry`, `evalScript`, `runScript` (`file`, `env`, `when`), `assertTrue`,
-  `copyTextFrom`, `setClipboard`, `pasteText`. Every command takes `label` and `optional`.
+- Commands: `launchApp` (`appId`, `clearState`, `clearKeychain`, `stopApp`, `permissions`,
+  `arguments`), `stopApp`, `killApp`, `clearState`, `setPermissions`, `tapOn`, `doubleTapOn`,
+  `longPressOn`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `inputText`,
+  `inputRandomText`/`Number`/`Email`/`PersonName`/`CityName`/`CountryName`/`ColorName`,
+  `eraseText`, `hideKeyboard`, `back`, `pressKey`, `scroll`, `scrollUntilVisible`, `swipe`
+  (direction, from an element, start/end in pixels or percent), `waitForAnimationToEnd`,
+  `openLink` (`browser`, `autoVerify`), `takeScreenshot` (`cropOn`), `assertScreenshot`
+  (`thresholdPercentage`, `cropOn`), `startRecording`, `stopRecording`, `addMedia`,
+  `setLocation`, `travel`, `setOrientation`, `setDarkMode`, `toggleDarkMode`,
+  `assertDarkMode`, `assertLightMode`, `setAirplaneMode`, `toggleAirplaneMode`,
+  `clearKeychain` (a no-op on Android), `runFlow` (file or commands, `when`, `env`),
+  `repeat` (`times`, `while`), `retry`, `evalScript`, `runScript` (`file`, `env`, `when`),
+  `assertTrue`, `copyTextFrom`, `setClipboard`, `pasteText`, and the legacy `action: back`
+  (and its other words). Every command takes `label` and `optional`.
 - Selectors: `text` and `id` (case-insensitive regexes over the whole value; text also
   matches hint, content description and error; id also matches after the `/`), `index`,
   `enabled`, `selected`, `checked`, `focused`, `width`/`height`/`tolerance`, `below`,
-  `above`, `leftOf`, `rightOf`, `containsChild`, `containsDescendants`, `childOf`; on taps
-  also `point`, `repeat`, `delay`, `retryTapIfNoChange`, `waitToSettleTimeoutMs`.
+  `above`, `leftOf`, `rightOf`, `containsChild`, `containsDescendants`, `childOf`, `traits`
+  (`text`, `square`, `long-text`); on taps also `point`, `repeat`, `delay`,
+  `retryTapIfNoChange`, `waitToSettleTimeoutMs`, `waitUntilVisible`.
 - Conditions: `visible`, `notVisible`, `platform`, `true`.
 - Env: `-e KEY=VALUE`, `MAESTRO_*` shell variables and `MAESTRO_FILENAME`, then the flow's
   `env:`, which wins (Maestro's order); sub-flows get their own scope, with the caller's
@@ -209,22 +226,28 @@ Supported:
   `relativePoint()`, `console.log` (its lines show under the command, in `--plain` output
   too) and `http.get/post/put/delete/request` with okhttp's rules (`headers`, a string
   `body`, `multipartForm`; the reply's `ok`, `status`, `body`, lowercased `headers`), sent
-  through `curl`. `faker` is not there yet: using it fails the command, naming the call.
+  through `curl`. `faker` has Datafaker's common providers (`name`, `internet`, `address`,
+  `number`, `lorem`, `text`, `phoneNumber`, `color`, `company`, `bool`), with its English
+  word lists; another provider or method fails the command, naming the call. `inputRandom*`
+  draw from the same generators.
 - YAML as Maestro's parser reads it: a plain (unquoted) value containing `: ` is an error
   ("mapping values are not allowed here"); quote it.
 
-Not supported yet (an error naming it): `faker` in scripts, `inputRandom*`,
-`setPermissions` and `launchApp.permissions`/`arguments`, `setLocation`,
-`travel`, `setOrientation`, recording, `addMedia`, airplane and dark mode, AI commands,
-`assertScreenshot`, `takeScreenshot.cropOn`, `openLink` with `browser`/`autoVerify`,
-`traits`/`css` selectors, `waitUntilVisible: true`, non-ASCII `inputText`, web flows.
+Not supported (an error naming it): AI commands, web flows (`url:`, the `css` selector),
+non-ASCII `inputText` on Android, and picking the app in Android's "Open with" dialog for
+`openLink: autoVerify` (it needs the app's display name; the rest of `autoVerify`, Chrome's
+first-run screens, is done).
 
 On iOS (simulators), the same commands run, with Maestro's iOS behavior: `back` does nothing
 (use the navigation bar's `BackButton`), `killApp` is `stopApp`, only ENTER, BACKSPACE, HOME and
 LOCK keys act, and the hierarchy is the foreground app plus the status bars with Maestro's
-attribute mapping; `clearState` reinstalls the app, as Maestro does. Not on iOS yet (an error
-naming it): `hideKeyboard`, real devices, and `launchApp`'s default permission grants; Safari
-web views and cross-process window offsets are not added to the hierarchy. How differs from
+attribute mapping; `clearState` reinstalls the app, as Maestro does; `hideKeyboard` swipes as
+Maestro's does; airplane mode does nothing (no simulator has it). Permissions (`launchApp`
+grants all by default, as in Maestro) are written to the simulator's privacy database the
+way Maestro's `applesimutils` does, so neither is needed; location goes through
+`simctl privacy`. Not yet: answering the notification-permission alert (Maestro's runner taps
+it on its next read), real devices; Safari web views and cross-process window offsets are not
+added to the hierarchy. How differs from
 Maestro's runner: settle is XCTest's quiescence checked against the screen instead of
 comparing screenshots, and after the first character the rest of the text is typed as soon as
 the field shows it, at 100 characters per second (Maestro: a fixed 0.5 s pause, then 30). A
@@ -238,9 +261,21 @@ Known differences in how, not what:
   the same timeouts (17 s, 7 s optional, minus the time since the last interaction).
 - Settle is the agent's (window switches, accessibility events, idle probe), not
   screenshot or hierarchy comparison; Maestro's extra settle before each tap is not repeated.
-- `launchApp` grants the app's runtime permissions that are not granted yet. Maestro runs
-  `pm grant` for every permission in the manifest; only runtime ones can change, so the end
-  state is the same.
+- `launchApp` (and `setPermissions` with `all`) grants or revokes only the app's runtime
+  permissions not yet in that state. Maestro runs `pm grant`/`revoke` for every permission
+  in the manifest; only runtime ones can change, so the end state is the same.
+- Android without Maestro's driver app: launch `arguments` are typed intent extras on
+  `am start`; `setLocation`/`travel` use the shell's test location providers (gps, network,
+  fused; Android 12+, the emulator's GPS before), sent again every 2 s while the flow runs;
+  `addMedia` copies to `Pictures`/`Movies` and runs the media scanner.
+- `launchApp` waits until the app's UI is up and settled, where Maestro returns at once and
+  its next command waits instead.
+- `scrollUntilVisible` settles only once the element is on screen: until then it reads the
+  screen while the list still drifts and swipes again as soon as the last swipe has played
+  out (the touch stops the drift). Maestro settles and polls 500 ms after every swipe. The
+  checks on visibility and centering run on a still screen, as Maestro's do.
+- Android `setLocation`/`travel` set the providers from the agent (one binder call each);
+  `cmd location` is the fallback when the agent runs as the instrumentation.
 - Regexes use Odin's engine: Java-only syntax (lookaround, inline flags, `\p{...}`,
   possessive quantifiers) is rejected; patterns invalid in both match as plain text, like
   Maestro's fallback.

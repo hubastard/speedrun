@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds ./speedrun: the Android agent APK first, then the Odin binary, which embeds it and
-# links the JavaScript engine (host/js); and,
+# links the JavaScript engine (host/js) and the image codecs (host/image); and,
 # when Xcode is installed, the iOS agent (an XCUITest runner for simulators, in
 # agent/ios/build, which speedrun starts from there). Run it once, and again after changing
 # agent/ or host/. Running flows never rebuilds anything.
@@ -23,6 +23,16 @@ if [[ ! -f $JS/build/libspeedrunjs.a || $JS/engine.c -nt $JS/build/libspeedrunjs
   cc -O2 -fPIC -DNDEBUG -Wall -c "$JS/engine.c" -o "$JS/build/engine.o"
   rm -f "$JS/build/libspeedrunjs.a"
   ar rcs "$JS/build/libspeedrunjs.a" "$JS/build/quickjs.o" "$JS/build/engine.o"
+fi
+
+# stb_image and stb_image_write, for screenshots (cropOn, assertScreenshot).
+IMG=host/image
+mkdir -p "$IMG/build"
+if [[ ! -f $IMG/build/libspeedrunimage.a || $IMG/image.c -nt $IMG/build/libspeedrunimage.a ]]; then
+  echo "== Building the image codecs (stb)"
+  cc -O2 -fPIC -DNDEBUG -c "$IMG/image.c" -o "$IMG/build/image.o"
+  rm -f "$IMG/build/libspeedrunimage.a"
+  ar rcs "$IMG/build/libspeedrunimage.a" "$IMG/build/image.o"
 fi
 
 echo "== Building speedrun (Odin)"

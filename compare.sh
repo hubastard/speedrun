@@ -105,6 +105,15 @@ NAMES = {
     "takeScreenshotCommand": {"takeScreenshot"}, "evalScriptCommand": {"evalScript"},
     "runScriptCommand": {"runScript"}, "copyTextCommand": {"copyTextFrom"},
     "setClipboardCommand": {"setClipboard"}, "pasteTextCommand": {"pasteText"},
+    "setPermissionsCommand": {"setPermissions"}, "setOrientationCommand": {"setOrientation"},
+    "inputRandomTextCommand": {"inputRandomText", "inputRandomNumber", "inputRandomEmail", "inputRandomPersonName",
+                               "inputRandomCityName", "inputRandomCountryName", "inputRandomColorName"},
+    "setAirplaneModeCommand": {"setAirplaneMode"}, "toggleAirplaneModeCommand": {"toggleAirplaneMode"},
+    "setDarkModeCommand": {"setDarkMode"}, "toggleDarkModeCommand": {"toggleDarkMode"},
+    "assertDarkModeCommand": {"assertDarkMode"}, "assertLightModeCommand": {"assertLightMode"},
+    "assertScreenshotCommand": {"assertScreenshot"}, "startRecordingCommand": {"startRecording"},
+    "stopRecordingCommand": {"stopRecording"}, "addMediaCommand": {"addMedia"},
+    "setLocationCommand": {"setLocation"}, "travelCommand": {"travel"},
 }
 
 # Both tools record commands in the order they start, containers before their children.

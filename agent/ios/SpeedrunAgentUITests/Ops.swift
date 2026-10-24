@@ -12,6 +12,7 @@ final class Ops {
     /// A new client: nothing cached from the previous one's screens. Main thread.
     func reset() {
         screen.reset()
+        Private.readOrientation()
     }
 
     func handle(op: UInt8, conn: Conn, out: inout Writer) throws {
@@ -51,6 +52,20 @@ final class Ops {
         case 17: // LAUNCHED
             let id = try conn.readStr(), timeout = try conn.readI32()
             out.u8(onMain { screen.waitLaunched(id, timeoutMs: Int(timeout)) } ? 1 : 0)
+        case 18: // ORIENTATION
+            let raw = try conn.readI32()
+            guard let orientation = UIDeviceOrientation(rawValue: Int(raw)) else {
+                throw AgentError(message: "unknown orientation \(raw)")
+            }
+            onMain { XCUIDevice.shared.orientation = orientation }
+            Private.deviceOrientation = orientation
+        case 19: // APPEARANCE: 0 reads, 1 sets light, 2 sets dark; answers the appearance after
+            let want = try conn.readI32()
+            out.u8(UInt8(onMain { () -> Int in
+                if want == 1 { XCUIDevice.shared.appearance = .light }
+                if want == 2 { XCUIDevice.shared.appearance = .dark }
+                return XCUIDevice.shared.appearance.rawValue
+            }))
         case 16: // INFO
             let env = ProcessInfo.processInfo.environment
             // Maestro's description of a simulator: "<model> - iOS <version> - <udid>".

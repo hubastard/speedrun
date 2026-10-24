@@ -100,7 +100,8 @@ view_nodes :: proc(r: ^Runner, cmds: []Cmd, depth: int) -> (out: [dynamic]^View_
 			n.children = view_nodes(r, d.commands[:], depth + 1)
 		case Launch_App, App_Cmd, Tap, Assert, Input_Text, Erase_Text, Key_Press, Navigate,
 		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot, Eval_Script, Run_Script,
-		     Copy_Text, Set_Clipboard, Paste_Text:
+		     Copy_Text, Set_Clipboard, Paste_Text, Set_Permissions, Input_Random, Set_Orientation, Device_Mode,
+		     Assert_Screenshot, Start_Recording, Stop_Recording, Add_Media, Set_Location, Travel:
 		}
 		r.view.nodes[&c] = n
 		append(&out, n)
@@ -420,6 +421,30 @@ maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 			"Launch app \"%s\"%s%s%s", d.app_id, " with clear state" if d.clear_state else "",
 			" and clear keychain" if d.clear_keychain else "", " without stopping app" if !d.stop_app else "",
 		)
+		if d.has_arguments {
+			// Kotlin's Map.toString: {key=value, other=value}
+			b := strings.builder_make(context.temp_allocator)
+			for a, i in d.arguments do fmt.sbprintf(&b, "%s%s=%s", ", " if i > 0 else "", a.key, a.value)
+			s = strings.concatenate({s, " (launch arguments: {", strings.to_string(b), "})"}, context.temp_allocator)
+		}
+	case Set_Permissions:
+		s = "Set permissions"
+	case Input_Random:
+		s = fmt.tprintf("Input text random %v", d.kind)
+	case Set_Orientation:
+		name, known := orientation_by_name(d.orientation)
+		s = fmt.tprintf("Set orientation %s", name if known else d.orientation)
+	case Device_Mode:
+		switch d.op {
+		case .Airplane_On:     s = "Enable airplane mode"
+		case .Airplane_Off:    s = "Disable airplane mode"
+		case .Airplane_Toggle: s = "Toggle airplane mode"
+		case .Dark_On:         s = "Enable dark mode"
+		case .Dark_Off:        s = "Disable dark mode"
+		case .Dark_Toggle:     s = "Toggle dark mode"
+		case .Assert_Dark:     s = "Assert dark mode is enabled"
+		case .Assert_Light:    s = "Assert dark mode is disabled"
+		}
 	case App_Cmd:
 		switch d.op {
 		case .Stop:        s = fmt.tprintf("Stop %s", d.app_id)
@@ -447,11 +472,29 @@ maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 		s = fmt.tprintf("Retry %s%d times", fmt.tprintf("%s ", d.source) if d.source != "" else "", n)
 	case Screenshot:
 		s = fmt.tprintf("Take screenshot %s", d.path)
+		if d.crop_on != nil do s = fmt.tprintf("%s, cropped to %s", s, selector_description(d.crop_on))
+	case Assert_Screenshot:
+		s = fmt.tprintf("Assert screenshot matches %s (threshold: %s%%)", d.path, d.threshold)
+		if d.crop_on != nil do s = fmt.tprintf("%s (cropped on %s)", s, selector_description(d.crop_on))
+	case Start_Recording:
+		s = fmt.tprintf("Start recording %s", d.path)
+	case Stop_Recording:
+		s = "Stop recording"
+	case Add_Media:
+		s = fmt.tprintf("Adding media files(%d) to the device", len(d.files))
+	case Set_Location:
+		s = fmt.tprintf("Set location (%s, %s)", d.latitude, d.longitude)
+	case Travel:
+		b := strings.builder_make(context.temp_allocator)
+		for p, i in d.points {
+			fmt.sbprintf(&b, "%s(%s, %s)", ", " if i > 0 else "", kotlin_double(p[0], context.temp_allocator), kotlin_double(p[1], context.temp_allocator))
+		}
+		s = fmt.tprintf("Travel path %s", strings.to_string(b))
 	case Wait_Animation:
 		s = "Wait for animation to end"
 		if t, has := d.timeout.?; has do s = fmt.tprintf("%s within %s ms", s, t)
 	case Open_Link:
-		s = fmt.tprintf("Open %s", d.link)
+		s = fmt.tprintf("Open %s%s%s", d.link, " with auto verification" if d.auto_verify else "", " in browser" if d.browser else "")
 	case Eval_Script:
 		s = fmt.tprintf("Run %s", d.script)
 	case Run_Script:
@@ -465,6 +508,19 @@ maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 		s = "Paste text"
 	}
 	return strings.clone(s, r.alloc)
+}
+
+// ElementTrait.description, joined.
+trait_names :: proc(traits: []Trait) -> string {
+	names := make([dynamic]string, 0, len(traits), context.temp_allocator)
+	for t in traits {
+		switch t {
+		case .TEXT:      append(&names, "Has text")
+		case .SQUARE:    append(&names, "Is square")
+		case .LONG_TEXT: append(&names, "Has long text")
+		}
+	}
+	return strings.join(names[:], ", ", context.temp_allocator)
 }
 
 selector_description :: proc(s: ^Selector) -> string {
@@ -489,6 +545,7 @@ selector_description :: proc(s: ^Selector) -> string {
 		if t, ok := s.tolerance.?; ok do size = fmt.tprintf("%s(tolerance: %d)", size, t)
 		append(&parts, size)
 	}
+	if len(s.traits) > 0 do append(&parts, fmt.tprintf("Has traits: %s", trait_names(s.traits[:])))
 	if t, ok := s.index.?; ok {
 		n, iok := parse_int_strict(t)
 		append(&parts, fmt.tprintf("Index: %d", n) if iok else fmt.tprintf("Index: %s", t))

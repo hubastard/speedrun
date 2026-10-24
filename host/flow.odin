@@ -24,6 +24,15 @@ Selector :: struct {
 	retry_tap_if_no_change:              bool,
 	repeat, delay:                       Maybe(int),
 	wait_to_settle_timeout_ms:           Maybe(int),
+	wait_until_visible:                  bool,
+	traits:                              [dynamic]Trait,
+}
+
+// ElementTrait.
+Trait :: enum u8 {
+	TEXT, // "Has text"
+	SQUARE, // "Is square"
+	LONG_TEXT, // "Has long text"
 }
 
 Condition :: struct {
@@ -44,10 +53,61 @@ Env_Pair :: struct {
 }
 
 Launch_App :: struct {
-	app_id:         string,
-	clear_state:    bool,
-	clear_keychain: bool, // iOS only
-	stop_app:       bool,
+	app_id:          string,
+	clear_state:     bool,
+	clear_keychain:  bool, // iOS only
+	stop_app:        bool,
+	permissions:     [dynamic]Env_Pair, // none given: Maestro's default, `all: allow`
+	has_permissions: bool,
+	arguments:       [dynamic]Launch_Arg,
+	has_arguments:   bool, // `arguments:` given, even empty (it shows in the description)
+}
+// A launch argument with the type its YAML value has (Jackson's): an Android intent extra
+// of that type, an iOS process argument.
+Launch_Arg_Kind :: enum u8 {
+	String,
+	Bool,
+	Int,
+	Long,
+	Double,
+}
+Launch_Arg :: struct {
+	key, value: string,
+	kind:       Launch_Arg_Kind,
+}
+Set_Permissions :: struct {
+	app_id:      string,
+	permissions: [dynamic]Env_Pair,
+}
+// InputRandomType, named as Maestro describes the command ("Input text random TEXT").
+Random_Kind :: enum u8 {
+	TEXT,
+	NUMBER,
+	TEXT_EMAIL_ADDRESS,
+	TEXT_PERSON_NAME,
+	TEXT_CITY_NAME,
+	TEXT_COUNTRY_NAME,
+	TEXT_COLOR,
+}
+Input_Random :: struct {
+	kind:   Random_Kind,
+	length: int, // TEXT and NUMBER; 8 when not given or not positive
+}
+Set_Orientation :: struct {
+	orientation: string, // as written (may use ${}); resolved when run
+}
+Device_Mode_Op :: enum u8 {
+	Airplane_On,
+	Airplane_Off,
+	Airplane_Toggle,
+	Dark_On,
+	Dark_Off,
+	Dark_Toggle,
+	Assert_Dark,
+	Assert_Light,
+}
+Device_Mode :: struct {
+	op: Device_Mode_Op,
 }
 App_Op :: enum u8 {
 	Stop,
@@ -108,7 +168,9 @@ Wait_Animation :: struct {
 	timeout: Maybe(string),
 }
 Open_Link :: struct {
-	link: string,
+	link:        string,
+	auto_verify: bool,
+	browser:     bool,
 }
 Sub_Flow :: struct {
 	commands:    [dynamic]Cmd,
@@ -132,7 +194,28 @@ Retry :: struct {
 	max_retries: string,
 }
 Screenshot :: struct {
-	path: string,
+	path:    string,
+	crop_on: ^Selector,
+}
+Assert_Screenshot :: struct {
+	path:      string, // as written; `.png` added unless it has an image extension
+	threshold: string, // percentage of matching pixels needed
+	crop_on:   ^Selector,
+	dir:       string, // of the flow: the reference image is relative to it
+}
+Start_Recording :: struct {
+	path: string, // `.mp4` added
+}
+Stop_Recording :: struct {}
+Add_Media :: struct {
+	files: [dynamic]string, // absolute, checked at load time
+}
+Set_Location :: struct {
+	latitude, longitude: string,
+}
+Travel :: struct {
+	points: [dynamic][2]f64, // latitude, longitude
+	speed:  f64, // m/s
 }
 Eval_Script :: struct {
 	script: string, // its ${...} run as JavaScript
@@ -174,6 +257,16 @@ Cmd_Data :: union {
 	Copy_Text,
 	Set_Clipboard,
 	Paste_Text,
+	Set_Permissions,
+	Input_Random,
+	Set_Orientation,
+	Device_Mode,
+	Assert_Screenshot,
+	Start_Recording,
+	Stop_Recording,
+	Add_Media,
+	Set_Location,
+	Travel,
 }
 
 Cmd :: struct {
@@ -423,17 +516,115 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 					d.stop_app = boolean(l, v) or_return
 				case "clearKeychain":
 					d.clear_keychain = boolean(l, v) or_return // iOS only; a no-op on Android, as in Maestro
+				case "permissions":
+					d.permissions = permissions(l, v) or_return
+					d.has_permissions = true
+				case "arguments":
+					d.arguments = launch_arguments(l, v) or_return
+					d.has_arguments = true
 				}
 			}
 			common(l, arg, &c) or_return
 		}
-		if arg != nil && arg.kind == .Map {
-			for key in arg.keys do if key == "permissions" || key == "arguments" {
-				fail(l, arg, "`launchApp.%s` is not supported yet", key)
+		c.data = d
+	case "setPermissions":
+		fields(l, arg, name, {"appId", "url", "permissions", "label", "optional"}) or_return
+		d := Set_Permissions {
+			app_id = l.app_id,
+		}
+		for key, i in arg.keys do if key == "appId" || key == "url" do d.app_id = str(l, arg.vals[i]) or_return
+		v := yaml_get(arg, "permissions")
+		if v == nil {
+			fail(l, arg, "setPermissions needs `permissions`")
+			return
+		}
+		d.permissions = permissions(l, v) or_return
+		common(l, arg, &c) or_return
+		c.data = d
+	case "inputRandomText", "inputRandomNumber", "inputRandomEmail", "inputRandomPersonName",
+	     "inputRandomCityName", "inputRandomCountryName", "inputRandomColorName":
+		d := Input_Random {
+			length = 8,
+		}
+		switch name {
+		case "inputRandomText":        d.kind = .TEXT
+		case "inputRandomNumber":      d.kind = .NUMBER
+		case "inputRandomEmail":       d.kind = .TEXT_EMAIL_ADDRESS
+		case "inputRandomPersonName":  d.kind = .TEXT_PERSON_NAME
+		case "inputRandomCityName":    d.kind = .TEXT_CITY_NAME
+		case "inputRandomCountryName": d.kind = .TEXT_COUNTRY_NAME
+		case "inputRandomColorName":   d.kind = .TEXT_COLOR
+		}
+		if arg != nil {
+			has_length := d.kind == .TEXT || d.kind == .NUMBER
+			fields(l, arg, name, {"length", "label", "optional"} if has_length else {"label", "optional"}) or_return
+			if v := yaml_get(arg, "length"); v != nil {
+				n := integer(l, v) or_return
+				if n > 0 do d.length = n // InputRandomCommand: 8 unless positive
+			}
+			common(l, arg, &c) or_return
+		}
+		if d.kind == .NUMBER && d.length > 18 {
+			fail(l, arg, "inputRandomNumber: `length` can be at most 18")
+			return
+		}
+		c.data = d
+	case "setOrientation":
+		d: Set_Orientation
+		if arg.kind == .Scalar {
+			d.orientation = arg.text
+		} else {
+			fields(l, arg, name, {"orientation", "label", "optional"}) or_return
+			v := yaml_get(arg, "orientation")
+			if v == nil {
+				fail(l, arg, "Missing required field 'orientation' in SetOrientation action")
+				return
+			}
+			d.orientation = str(l, v) or_return
+			common(l, arg, &c) or_return
+		}
+		// Checked here unless a script computes it (YamlSetOrientationDeserializer).
+		if !strings.contains(d.orientation, "${") {
+			if _, known := orientation_by_name(d.orientation); !known {
+				fail(l, arg, "%s", unknown_orientation(d.orientation, l.alloc))
 				return
 			}
 		}
 		c.data = d
+	case "setAirplaneMode", "setDarkMode":
+		airplane := name == "setAirplaneMode"
+		v := arg
+		if arg.kind == .Map {
+			fields(l, arg, name, {"value", "label", "optional"}) or_return
+			v = yaml_get(arg, "value")
+			common(l, arg, &c) or_return
+		}
+		value := v.text if v != nil && v.kind == .Scalar else ""
+		if value != "enabled" && value != "disabled" {
+			if airplane {
+				fail(l, arg, "setAirplaneMode command takes either: enabled, disabled, or `value: enabled|disabled`; found `%s`", value)
+			} else {
+				fail(l, arg, "setDarkMode command takes either: enabled, disabled, or `value: enabled|disabled`; found `%s`", value)
+			}
+			return
+		}
+		on := value == "enabled"
+		if airplane {
+			c.data = Device_Mode{.Airplane_On if on else .Airplane_Off}
+		} else {
+			c.data = Device_Mode{.Dark_On if on else .Dark_Off}
+		}
+	case "toggleAirplaneMode", "toggleDarkMode", "assertDarkMode", "assertLightMode":
+		if arg != nil {
+			fields(l, arg, name, {"label", "optional"}) or_return
+			common(l, arg, &c) or_return
+		}
+		switch name {
+		case "toggleAirplaneMode": c.data = Device_Mode{.Airplane_Toggle}
+		case "toggleDarkMode":     c.data = Device_Mode{.Dark_Toggle}
+		case "assertDarkMode":     c.data = Device_Mode{.Assert_Dark}
+		case "assertLightMode":    c.data = Device_Mode{.Assert_Light}
+		}
 	case "stopApp", "killApp", "clearState":
 		d := App_Cmd {
 			op     = .Stop if name == "stopApp" else .Kill if name == "killApp" else .Clear_State,
@@ -608,12 +799,8 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 		} else {
 			fields(l, arg, name, {"link", "browser", "autoVerify", "label", "optional"}) or_return
 			if v := yaml_get(arg, "link"); v != nil do d.link = str(l, v) or_return
-			for key in ([]string{"browser", "autoVerify"}) {
-				if v := yaml_get(arg, key); v != nil && (boolean(l, v) or_return) {
-					fail(l, v, "`openLink.%s: true` is not supported yet", key)
-					return
-				}
-			}
+			if v := yaml_get(arg, "browser"); v != nil do d.browser = boolean(l, v) or_return
+			if v := yaml_get(arg, "autoVerify"); v != nil do d.auto_verify = boolean(l, v) or_return
 			common(l, arg, &c) or_return
 		}
 		c.data = d
@@ -622,14 +809,124 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 		if arg.kind == .Scalar {
 			d.path = arg.text
 		} else {
-			fields(l, arg, name, {"path", "label", "optional"}) or_return
-			if yaml_get(arg, "cropOn") != nil {
-				fail(l, arg, "`takeScreenshot.cropOn` is not supported yet")
-				return
-			}
+			fields(l, arg, name, {"path", "cropOn", "label", "optional"}) or_return
 			if v := yaml_get(arg, "path"); v != nil do d.path = str(l, v) or_return
+			if v := yaml_get(arg, "cropOn"); v != nil do d.crop_on = selector(l, v, false) or_return
 			common(l, arg, &c) or_return
 		}
+		c.data = d
+	case "assertScreenshot":
+		d := Assert_Screenshot {
+			threshold = "95", // YamlAssertScreenshot's default
+			dir       = filepath.dir(l.file),
+		}
+		if arg.kind == .Scalar {
+			d.path = arg.text
+		} else {
+			fields(l, arg, name, {"path", "thresholdPercentage", "cropOn", "label", "optional"}) or_return
+			v := yaml_get(arg, "path")
+			if v == nil {
+				fail(l, arg, "assertScreenshot needs `path`")
+				return
+			}
+			d.path = str(l, v) or_return
+			if t := yaml_get(arg, "thresholdPercentage"); t != nil do d.threshold = str(l, t) or_return
+			if cv := yaml_get(arg, "cropOn"); cv != nil do d.crop_on = selector(l, cv, false) or_return
+			common(l, arg, &c) or_return
+		}
+		c.data = d
+	case "startRecording":
+		d: Start_Recording
+		if arg.kind == .Scalar {
+			d.path = arg.text
+		} else {
+			fields(l, arg, name, {"path", "label", "optional"}) or_return
+			v := yaml_get(arg, "path")
+			if v == nil {
+				fail(l, arg, "startRecording needs `path`")
+				return
+			}
+			d.path = str(l, v) or_return
+			common(l, arg, &c) or_return
+		}
+		c.data = d
+	case "stopRecording":
+		if arg != nil {
+			fields(l, arg, name, {"label", "optional"}) or_return
+			common(l, arg, &c) or_return
+		}
+		c.data = Stop_Recording{}
+	case "addMedia":
+		d: Add_Media
+		list := arg
+		if arg.kind == .Map {
+			fields(l, arg, name, {"files", "label", "optional"}) or_return
+			list = yaml_get(arg, "files")
+			common(l, arg, &c) or_return
+		}
+		if list == nil || list.kind != .Seq || len(list.items) == 0 {
+			fail(l, arg, "Invalid addMedia command: media files cannot be empty")
+			return
+		}
+		for item in list.items {
+			rel := str(l, item) or_return
+			path := rel
+			if !filepath.is_abs(path) do path, _ = filepath.join({filepath.dir(l.file), rel}, l.alloc)
+			if !os.exists(path) {
+				fail(l, item, "Media file at %s in flow file: %s not found", rel, l.file)
+				return
+			}
+			append(&d.files, path)
+		}
+		c.data = d
+	case "setLocation":
+		fields(l, arg, name, {"latitude", "longitude", "label", "optional"}) or_return
+		lat, lon := yaml_get(arg, "latitude"), yaml_get(arg, "longitude")
+		if lat == nil || lon == nil {
+			fail(l, arg, "setLocation needs `latitude` and `longitude`")
+			return
+		}
+		c.data = Set_Location{str(l, lat) or_return, str(l, lon) or_return}
+		common(l, arg, &c) or_return
+	case "travel":
+		fields(l, arg, name, {"points", "speed", "label", "optional"}) or_return
+		d := Travel {
+			speed = 4, // m/s (Orchestra.travelCommand)
+		}
+		v := yaml_get(arg, "points")
+		if v == nil || v.kind != .Seq {
+			fail(l, arg, "travel needs `points`, a list of \"latitude, longitude\"")
+			return
+		}
+		for item in v.items {
+			point := str(l, item) or_return
+			lat_s, comma, lon_s := strings.partition(point, ",")
+			if comma == "" || strings.contains(lon_s, ",") {
+				fail(l, item, "Invalid travel point: %s", point)
+				return
+			}
+			lat, lat_ok := strconv.parse_f64(strings.trim_space(lat_s))
+			if !lat_ok {
+				fail(l, item, "Invalid travel point latitude: %s", point)
+				return
+			}
+			lon, lon_ok := strconv.parse_f64(strings.trim_space(lon_s))
+			if !lon_ok {
+				fail(l, item, "Invalid travel point longitude: %s", point)
+				return
+			}
+			append(&d.points, [2]f64{lat, lon})
+		}
+		if sp := yaml_get(arg, "speed"); sp != nil {
+			text := str(l, sp) or_return
+			speed, ok := strconv.parse_f64(text)
+			if !ok {
+				fail(l, sp, "travel: `speed` must be a number (m/s), found `%s`", text)
+				return
+			}
+			d.speed = speed
+		}
+		common(l, arg, &c) or_return
 		c.data = d
 	case "runFlow":
 		d: Run_Flow
@@ -734,6 +1031,20 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 			common(l, arg, &c) or_return
 		}
 		c.data = d
+	case "action":
+		// The legacy spelling of five commands: `action: back` is `- back`.
+		word := str(l, arg) or_return
+		switch word {
+		case "back":          c.data = Navigate.Back
+		case "hideKeyboard":  c.data = Navigate.Hide_Keyboard
+		case "scroll":        c.data = Navigate.Scroll
+		case "clearKeychain": c.data = Navigate.Clear_Keychain
+		case "pasteText":     c.data = Paste_Text{}
+		case:
+			fail(l, arg, "Unknown navigation target: %s", word)
+			return
+		}
+		c.name = word
 	case "pasteText":
 		if arg != nil {
 			fields(l, arg, name, {"label", "optional"}) or_return
@@ -796,6 +1107,115 @@ condition :: proc(l: ^Loader, y: ^Yaml) -> (c: Condition, ok: bool) {
 	return c, true
 }
 
+// `permissions:` of launchApp and setPermissions: names (`all`, `camera`, an Android
+// permission...) to allow, deny or unset (iOS location: always, inuse, never).
+@(private = "file")
+permissions :: proc(l: ^Loader, y: ^Yaml) -> (list: [dynamic]Env_Pair, ok: bool) {
+	if y.kind != .Map {
+		fail(l, y, "`permissions` expects a map, e.g. `{all: deny, camera: allow}`")
+		return
+	}
+	for key, i in y.keys do append(&list, Env_Pair{key, str(l, y.vals[i]) or_return})
+	return list, true
+}
+
+// launchApp's `arguments:`, each with the type its value reads as (true/false, a whole
+// number, a decimal number, else a string; quoted values are strings).
+@(private = "file")
+launch_arguments :: proc(l: ^Loader, y: ^Yaml) -> (list: [dynamic]Launch_Arg, ok: bool) {
+	if y.kind != .Map {
+		fail(l, y, "`arguments` expects a map")
+		return
+	}
+	for key, i in y.keys {
+		v := y.vals[i]
+		if v.kind != .Scalar {
+			fail(l, v, "launch argument `%s` needs a value: text, a number or true/false", key)
+			return
+		}
+		a := Launch_Arg {
+			key   = key,
+			value = v.text,
+		}
+		if !v.quoted {
+			switch {
+			case v.text == "true" || v.text == "True" || v.text == "TRUE":
+				a.kind, a.value = .Bool, "true"
+			case v.text == "false" || v.text == "False" || v.text == "FALSE":
+				a.kind, a.value = .Bool, "false"
+			case:
+				if n, is_int := strconv.parse_i64(v.text, 10); is_int {
+					a.kind = .Int if n >= i64(min(i32)) && n <= i64(max(i32)) else .Long
+					a.value = fmt.aprintf("%d", n, allocator = l.alloc)
+				} else if is_decimal(v.text) {
+					f, _ := strconv.parse_f64(v.text)
+					a.kind, a.value = .Double, kotlin_double(f, l.alloc)
+				}
+			}
+		}
+		append(&list, a)
+	}
+	return list, true
+}
+
+// A YAML float as Jackson reads one: digits with a point or an exponent.
+@(private = "file")
+is_decimal :: proc(s: string) -> bool {
+	t := strings.trim_left(s, "+-")
+	if t == "" do return false
+	digits, point, exp := 0, false, false
+	for c, i in t {
+		switch {
+		case c >= '0' && c <= '9':
+			digits += 1
+		case c == '.' && !point && !exp:
+			point = true
+		case (c == 'e' || c == 'E') && !exp && digits > 0:
+			exp = true
+			if i + 1 < len(t) && (t[i + 1] == '+' || t[i + 1] == '-') do continue
+		case (c == '+' || c == '-') && exp && (t[i - 1] == 'e' || t[i - 1] == 'E'):
+		case:
+			return false
+		}
+	}
+	return digits > 0 && (point || exp)
+}
+
+// Kotlin's Double.toString for the description: 1.5, 2.0, 1.0E10.
+kotlin_double :: proc(f: f64, alloc: mem.Allocator) -> string {
+	a := f < 0 ? -f : f
+	if a != 0 && (a >= 1e7 || a < 1e-3) {
+		s := fmt.aprintf("%E", f, allocator = context.temp_allocator) // 1.000000E+10
+		mant, _, ex := strings.partition(s, "E")
+		mant = strings.trim_right(mant, "0")
+		if strings.has_suffix(mant, ".") do mant = strings.concatenate({mant, "0"}, context.temp_allocator)
+		e, _ := strconv.parse_int(ex)
+		return fmt.aprintf("%sE%d", mant, e, allocator = alloc)
+	}
+	s := strconv.write_float(make([]byte, 32, context.temp_allocator), f, 'f', -1, 64)
+	if s[0] == '+' do s = s[1:]
+	if !strings.contains(s, ".") do s = strings.concatenate({s, ".0"}, context.temp_allocator)
+	return strings.clone(s, alloc)
+}
+
+// DeviceOrientation.getByName: case and underscores ignored ("landscapeLeft", "LANDSCAPE_LEFT").
+ORIENTATIONS :: []string{"PORTRAIT", "LANDSCAPE_LEFT", "LANDSCAPE_RIGHT", "UPSIDE_DOWN"}
+
+orientation_by_name :: proc(name: string) -> (canonical: string, ok: bool) {
+	want, _ := strings.remove_all(strings.to_lower(name, context.temp_allocator), "_", context.temp_allocator)
+	for o in ORIENTATIONS {
+		have, _ := strings.remove_all(strings.to_lower(o, context.temp_allocator), "_", context.temp_allocator)
+		if have == want do return o, true
+	}
+	return "", false
+}
+
+unknown_orientation :: proc(name: string, alloc: mem.Allocator) -> string {
+	return fmt.aprintf(
+		"Unknown orientation: %s. Valid orientations are: [PORTRAIT, LANDSCAPE_LEFT, LANDSCAPE_RIGHT, UPSIDE_DOWN] \n(case insensitive, underscores optional, e.g 'landscape_left', 'landscapeLeft', and 'LANDSCAPE_LEFT' are all valid)",
+		name, allocator = alloc)
+}
+
 SELECTOR_FIELDS :: []string {
 	"text", "id", "width", "height", "tolerance", "optional", "retryTapIfNoChange",
 	"waitUntilVisible", "point", "below", "above", "leftOf", "rightOf", "containsChild",
@@ -850,13 +1270,23 @@ selector :: proc(l: ^Loader, y: ^Yaml, tap: bool) -> (s: ^Selector, ok: bool) {
 			for item in v.items do append(&s.contains_descendants, selector(l, item, false) or_return)
 		case "optional", "label":
 		// read by common()
-		case "waitUntilVisible":
-			if boolean(l, v) or_return {
-				fail(l, v, "`waitUntilVisible: true` is not supported yet")
-				return
+		case "waitUntilVisible":      s.wait_until_visible = boolean(l, v) or_return
+		case "traits":
+			// Names separated by spaces (`traits: text square`), `-` for `_`, any case.
+			text := str(l, v) or_return
+			for t in strings.split(text, " ", l.alloc) {
+				name, _ := strings.replace_all(strings.to_upper(t, l.alloc), "-", "_", l.alloc)
+				switch name {
+				case "TEXT":      append(&s.traits, Trait.TEXT)
+				case "SQUARE":    append(&s.traits, Trait.SQUARE)
+				case "LONG_TEXT": append(&s.traits, Trait.LONG_TEXT)
+				case:
+					fail(l, v, "unknown trait `%s`: text, square or long-text", t)
+					return
+				}
 			}
-		case "traits", "css":
-			fail(l, v, "the `%s` selector is not supported yet", key)
+		case "css":
+			fail(l, v, "the `css` selector is for web flows, which are not supported")
 			return
 		}
 	}
@@ -876,7 +1306,7 @@ has_criteria :: proc(s: ^Selector) -> bool {
 	_, h := s.height.?
 	return t || i || x || e || se || c || f || w || h || s.below != nil || s.above != nil ||
 		s.left_of != nil || s.right_of != nil || s.contains_child != nil || s.child_of != nil ||
-		len(s.contains_descendants) > 0
+		len(s.contains_descendants) > 0 || len(s.traits) > 0
 }
 
 @(private = "file")

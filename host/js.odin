@@ -38,21 +38,14 @@ foreign js_lib {
 
 @(private = "file")
 PRELUDE :: #load("js/prelude.js", string)
+// Datafaker's English word lists, for `faker` and inputRandom* (Apache-2.0, js/datafaker/LICENSE).
+@(private = "file")
+FAKER_DATA :: #load("js/datafaker/data.json", string)
 
 // Runs `script` in the flow's engine: its value as Maestro substitutes it for `${...}`
 // (GraalJS's Value.toString), or the message of what it threw.
 js_run :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
-	if r.js == nil {
-		msg: [^]u8
-		platform: cstring = "ios" if r.dev.platform == .IOS else "android"
-		r.js = sr_js_new(raw_data(PRELUDE), len(PRELUDE), platform, js_log, js_http, r, &msg)
-		if r.js == nil {
-			e := strings.clone(string(cstring(msg)), r.alloc) if msg != nil else "out of memory"
-			sr_js_free_text(msg)
-			return "", fmt.aprintf("cannot start the JavaScript engine: %s", e, allocator = r.alloc)
-		}
-		if t, ok := r.copied_text.?; ok do js_call(r, "setCopiedText", t) or_return
-	}
+	js_start(r) or_return
 	if r.js_env_gen != r.env_gen {
 		// Innermost scope wins, as in the runner's lookups.
 		flat := make(map[string]string, 16, context.temp_allocator)
@@ -63,6 +56,29 @@ js_run :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 		r.js_env_gen = r.env_gen
 	}
 	return js_call(r, "run", script)
+}
+
+// InputRandomCommand.genRandomString: a random value of that kind, from `faker`.
+js_random :: proc(r: ^Runner, kind: Random_Kind, length: int) -> (value: string, err: Err) {
+	js_start(r) or_return
+	return js_call(r, "random", fmt.tprintf("%v:%d", kind, length))
+}
+
+@(private = "file")
+js_start :: proc(r: ^Runner) -> Err {
+	if r.js == nil {
+		msg: [^]u8
+		platform: cstring = "ios" if r.dev.platform == .IOS else "android"
+		r.js = sr_js_new(raw_data(PRELUDE), len(PRELUDE), platform, js_log, js_http, r, &msg)
+		if r.js == nil {
+			e := strings.clone(string(cstring(msg)), r.alloc) if msg != nil else "out of memory"
+			sr_js_free_text(msg)
+			return fmt.aprintf("cannot start the JavaScript engine: %s", e, allocator = r.alloc)
+		}
+		_ = js_call(r, "setFakerData", FAKER_DATA) or_return
+		if t, ok := r.copied_text.?; ok do _ = js_call(r, "setCopiedText", t) or_return
+	}
+	return nil
 }
 
 js_stop :: proc(r: ^Runner) {

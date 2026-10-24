@@ -40,6 +40,7 @@ final class Screen {
             settled.at = 0 // once
         } else {
             let snapshot = try snapshotForeground()
+            Private.uiLandscape = snapshot.frame.width > snapshot.frame.height
             var hasher = Hasher()
             walk(snapshot, depth: 0, into: &nodes, count: &count, hasher: &hasher)
             lastSignature = hasher.finalize()
@@ -62,7 +63,9 @@ final class Screen {
         var hasher = Hasher()
         var nodes = Writer()
         var count: UInt32 = 0
-        walk(try snapshotForeground(), depth: 0, into: &nodes, count: &count, hasher: &hasher)
+        let snapshot = try snapshotForeground()
+        Private.uiLandscape = snapshot.frame.width > snapshot.frame.height
+        walk(snapshot, depth: 0, into: &nodes, count: &count, hasher: &hasher)
         let sig = hasher.finalize()
         lastSignature = sig
         settled = (nodes, count, DispatchTime.now().uptimeNanoseconds)

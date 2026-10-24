@@ -101,6 +101,11 @@ internal object AgentLog {
  *        runs as the shell user through UiAutomation (no shell syntax: the line is split on
  *        spaces). For app control: am force-stop, pm clear, pm grant, am start...
  *  14 SCREENSHOT                             -> bytes png
+ *  20 LOCATION str "providers lat lon interval_ms"
+ *                                            -> u8 providers set
+ *        test-provider location on each comma-separated provider, sent again every
+ *        interval_ms until the next LOCATION or the client leaving (MockLocation). No
+ *        providers only stops that. 0 set = not available here: use the shell commands.
  *   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms
  *                                            -> u8 status, u32 ui_done_us, u32 waited_us,
  *                                               u8 method, u32 frames, u32 probes, u32 probe_max_us,
@@ -134,6 +139,7 @@ private object Op {
     const val MARK = 12
     const val PRESS = 13
     const val SCREENSHOT = 14
+    const val LOCATION = 20
 }
 
 // SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
@@ -167,6 +173,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private val treeBuf = ByteArrayOutputStream(256 * 1024)
     private val tree = DataOutputStream(treeBuf)
     private val bounds = Rect()
+    private val mockLocation = MockLocation()
 
     init {
         val info = ua.serviceInfo
@@ -211,6 +218,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 } catch (e: IOException) {
                     AgentLog.i("client gone: $e")
                 } finally {
+                    mockLocation.stop()
                     sock.close()
                 }
             }
@@ -239,6 +247,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.MARK -> beginAction()
             Op.PRESS -> press(input.readInt().toFloat(), input.readInt().toFloat(), input.readInt())
             Op.SCREENSHOT -> screenshot()
+            Op.LOCATION -> location(readStr(input))
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -386,6 +395,18 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         }
         body.writeInt(out.size())
         out.writeTo(body)
+    }
+
+    private fun location(request: String) {
+        val parts = request.split(' ')
+        val providers = parts[0].split(',').filter { it.isNotEmpty() }
+        val count = if (providers.isEmpty() || parts.size < 4) {
+            mockLocation.stop()
+            0
+        } else {
+            mockLocation.set(providers, parts[1].toDouble(), parts[2].toDouble(), parts[3].toLong())
+        }
+        body.writeByte(count)
     }
 
     private fun screenshot() {

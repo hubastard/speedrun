@@ -32,6 +32,9 @@ Op :: enum u8 {
 	Quit       = 15, // iOS agent: stop the runner
 	Info       = 16, // iOS agent: simulator udid and name, build
 	Launched   = 17, // iOS agent: wait for a launched app to be ready
+	Orientation = 18, // iOS agent: rotate the device (UIDeviceOrientation)
+	Appearance  = 19, // iOS agent: read or set light/dark mode
+	Location    = 20, // Android agent: test-provider location, re-sent on a timer
 }
 
 KEYCODE_BACK :: 4
@@ -208,6 +211,40 @@ op_launched :: proc(c: ^Conn, app_id: string, timeout_ms: i32, alloc: mem.Alloca
 	body: []byte
 	body, _, ok = call(c, req[:])
 	return ok && len(body) > 0 && body[0] == 1, ok
+}
+
+// iOS: XCUIDevice.shared.orientation, a UIDeviceOrientation (1 portrait, 2 upside down,
+// 3 landscape left, 4 landscape right).
+op_orientation :: proc(c: ^Conn, orientation: i32) -> bool {
+	req: [5]byte
+	req[0] = u8(Op.Orientation)
+	put_i32(req[1:5], orientation)
+	_, _, ok := call(c, req[:])
+	return ok
+}
+
+// iOS: XCUIDevice.shared.appearance. `set` 0 only reads, 1 light, 2 dark; returns the
+// appearance after it (UIUserInterfaceStyle: 1 light, 2 dark, 0 unspecified).
+op_appearance :: proc(c: ^Conn, set: i32) -> (appearance: u8, ok: bool) {
+	req: [5]byte
+	req[0] = u8(Op.Appearance)
+	put_i32(req[1:5], set)
+	body: []byte
+	body, _, ok = call(c, req[:])
+	if !ok || len(body) < 1 do return 0, false
+	return body[0], true
+}
+
+// Android: `lat,lon` on each provider now and every interval_ms after, in the agent (one
+// binder call per provider). Returns how many it set: 0 means only the shell commands work
+// here. No providers stops the re-sending.
+op_location :: proc(c: ^Conn, providers: []string, latitude, longitude: string, interval_ms: int) -> (set: int, ok: bool) {
+	list := strings.join(providers, ",", context.temp_allocator)
+	req := str_request(.Location, fmt.tprintf("%s %s %s %d", list, latitude, longitude, interval_ms), context.temp_allocator)
+	body: []byte
+	body, _, ok = call(c, req)
+	if !ok || len(body) < 1 do return 0, false
+	return int(body[0]), true
 }
 
 op_quit :: proc(c: ^Conn) -> bool {

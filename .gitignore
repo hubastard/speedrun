@@ -1,6 +1,7 @@
-speedrun
+/speedrun
 .gradle
 .kotlin
 build
 .DS_Store
 apps/
+node_modules

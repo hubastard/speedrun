@@ -1,0 +1,66 @@
+# Device commands (permissions, launch arguments, dark mode, orientation, random input,
+# screenshots, recording, media, location) on Android's Settings app. Runs as is in Maestro
+# too: ./compare.sh flows/device/settings.yaml
+appId: com.android.settings
+---
+- stopApp: com.google.android.settings.intelligence # its search screen outlives Settings
+- launchApp:
+    permissions:
+      all: allow
+    arguments:
+      isE2E: true
+      user: "test user"
+      count: 3
+- setOrientation: landscapeLeft
+- assertVisible: Network & internet
+- setOrientation: PORTRAIT
+- takeScreenshot:
+    path: network
+    cropOn: Network & internet
+- assertScreenshot:
+    path: network
+    cropOn: Network & internet
+- startRecording: walkthrough
+- tapOn:
+    text: Network & internet
+    waitUntilVisible: true
+- back
+- stopRecording
+- addMedia:
+    - pic.png
+- setLocation:
+    latitude: 48.8584
+    longitude: 2.2945
+- travel:
+    points:
+      - 48.8584,2.2945
+      - 48.8600,2.3000
+    speed: 100
+- assertVisible:
+    text: Network & internet
+    traits: text
+- assertNotVisible:
+    text: Network & internet
+    traits: long-text
+- tapOn: Search Settings
+- inputRandomText
+- eraseText: 8
+- inputRandomNumber:
+    length: 5
+- eraseText: 5
+- inputRandomEmail
+- eraseText
+- inputRandomPersonName
+- eraseText
+- inputText: ${faker.name().firstName()}
+- action: back
+# Last: a dark mode switch makes apps restart, slowly on a busy emulator.
+- setPermissions:
+    appId: com.google.android.contacts
+    permissions:
+      all: deny
+      contacts: allow
+- setDarkMode: enabled
+- assertDarkMode
+- toggleDarkMode
+- assertLightMode

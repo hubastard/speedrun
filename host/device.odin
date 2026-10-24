@@ -211,18 +211,28 @@ simulator_description :: proc(model, runtime, udid: string) -> string {
 // Maestro's clearAppState on a simulator (LocalSimulatorUtils): stop the app, then reinstall
 // it from a copy of its installed bundle, the most reliable way to drop its data.
 ios_clear_state :: proc(udid, app: string) -> Err {
+	delete_key(&ios_location_set, fmt.tprintf("%s %s", udid, app)) // reinstalling resets it
 	simctl("terminate", udid, app)
 	installed, ok := simctl("get_app_container", udid, app)
 	if !ok do return fmt.aprintf("Could not find app binary for bundle %s: %s", app, strings.trim_space(installed))
 	tmp, _ := os.temp_directory(context.temp_allocator)
 	copy := fmt.tprintf("%s/%s-%d.app", strings.trim_right(tmp, "/"), app, os.get_pid())
-	if _, _, _, err := os.process_exec({command = {"cp", "-R", strings.trim_space(installed), copy}}, context.temp_allocator); err != nil {
-		return fmt.aprintf("could not copy %s: %v", app, err)
+	// An APFS clone (cp -c) when the temp folder is on the same volume: ~60 ms instead of
+	// ~150 ms for a 60 MB app. Otherwise a plain copy.
+	if !copy_app(strings.trim_space(installed), copy, clone = true) && !copy_app(strings.trim_space(installed), copy, clone = false) {
+		return fmt.aprintf("could not copy %s", strings.trim_space(installed))
 	}
 	defer os.remove_all(copy)
 	simctl("uninstall", udid, app)
 	if out, iok := simctl("install", udid, copy); !iok do return fmt.aprintf("could not reinstall %s: %s", app, out)
 	return nil
+}
+
+@(private = "file")
+copy_app :: proc(from, to: string, clone: bool) -> bool {
+	os.remove_all(to)
+	state, _, _, err := os.process_exec({command = {"cp", "-cR" if clone else "-R", from, to}}, context.temp_allocator)
+	return err == nil && state.exited && state.exit_code == 0
 }
 
 // Runs `xcrun simctl args`. out is its stdout, plus its stderr when it failed.

@@ -32,6 +32,9 @@ Flows:
 - `bench_rn.yaml` — a scenario for both tools: login, the API list, favorites (switch, long
   presses), scrolling down and up, text input in the showroom, tabs.
   `./compare.sh flows/ignite/bench_rn.yaml -e TIMES=3` (with `DEVICE=<udid>` on iOS).
+- `device.yaml` (iOS) — the device commands: launch arguments, permissions, dark mode,
+  cropped screenshots and `assertScreenshot`, recording, media, location, random input,
+  `hideKeyboard`. Every command passes in both tools (flow 40.0 s vs Maestro's 49.4 s).
 - Ignite's own, both pass: `./speedrun test -e MAESTRO_APP_ID=com.speedrun.ignitedemo
   apps/ignite/.maestro/flows` (`FavoritePodcast.yaml` copies a title with `copyTextFrom`,
   then long-presses and asserts `${maestro.copiedText}`: flow 27.3 s vs Maestro's 37.9 s).
@@ -47,3 +50,9 @@ not use a query snapshot, which retries for ~2.5 s when nothing matches.
 Last run (iOS simulator, `TIMES=1`): flow 55.0 s vs Maestro's 73.1 s, wall clock 57.9 s vs
 82.6 s. Slower per command: `launchApp` (speedrun waits there for the first screen; Maestro's
 first tap pays it) and Enter (the keyboard sliding away is waited for).
+
+`simctl addmedia` is done by the simulator's service, which needs macOS's permission to read
+a file under Downloads, Documents or Desktop: until the "would like to access files" prompt
+is answered, the command waits, and every simctl call after it (launch, terminate,
+screenshots) queues behind it, even across a simulator reboot. speedrun copies media to the
+temp folder first, so its `addMedia` never asks; Maestro passes the flow's own path.
