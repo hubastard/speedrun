@@ -7,6 +7,12 @@ final class Ops {
     let input = Input()
     lazy var settle = Settle(screen: screen, input: input)
     lazy var spike = Spike(screen: screen, input: input)
+    private(set) var quitRequested = false
+
+    /// A new client: nothing cached from the previous one's screens. Main thread.
+    func reset() {
+        screen.reset()
+    }
 
     func handle(op: UInt8, conn: Conn, out: inout Writer) throws {
         switch op {
@@ -40,6 +46,21 @@ final class Ops {
             try input.tap(x: x, y: y, holdMs: hold, out: &out)
         case 14: // SCREENSHOT
             out.bytes(onMain { XCUIScreen.main.screenshot().pngRepresentation })
+        case 15: // QUIT
+            quitRequested = true
+        case 17: // LAUNCHED
+            let id = try conn.readStr(), timeout = try conn.readI32()
+            out.u8(onMain { screen.waitLaunched(id, timeoutMs: Int(timeout)) } ? 1 : 0)
+        case 16: // INFO
+            let env = ProcessInfo.processInfo.environment
+            // Maestro's description of a simulator: "<model> - iOS <version> - <udid>".
+            let udid = env["SIMULATOR_UDID"] ?? ""
+            var parts = [env["SIMULATOR_DEVICE_NAME"] ?? "iOS simulator"]
+            if let version = env["SIMULATOR_RUNTIME_VERSION"] { parts.append("iOS \(version)") }
+            parts.append(udid)
+            out.str(udid)
+            out.str(parts.joined(separator: " - "))
+            out.str(env["SPEEDRUN_BUILD"] ?? "")
         case 40...49:
             try spike.handle(op: op, conn: conn, out: &out)
         default:

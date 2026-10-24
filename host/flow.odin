@@ -44,9 +44,10 @@ Env_Pair :: struct {
 }
 
 Launch_App :: struct {
-	app_id:      string,
-	clear_state: bool,
-	stop_app:    bool,
+	app_id:         string,
+	clear_state:    bool,
+	clear_keychain: bool, // iOS only
+	stop_app:       bool,
 }
 App_Op :: enum u8 {
 	Stop,
@@ -164,6 +165,9 @@ Cmd :: struct {
 Flow :: struct {
 	path, name, app_id:    string,
 	env:                   [dynamic]Env_Pair,
+	tags:                  [dynamic]string, // for --include-tags / --exclude-tags
+	files:                 [dynamic]string, // this file and every runFlow file it loads
+	properties:            [dynamic]Env_Pair, // reported in JUnit
 	on_start, on_complete: [dynamic]Cmd,
 	commands:              [dynamic]Cmd,
 }
@@ -217,6 +221,7 @@ Loader :: struct {
 	err:      string,
 	err_line: int,
 	depth:    int, // runFlow nesting, against cycles
+	files:    [dynamic]string, // every flow file loaded (watched by continuous mode)
 }
 
 @(private = "file")
@@ -232,6 +237,7 @@ load_flow :: proc(path: string, alloc: mem.Allocator) -> (flow: Flow, err: strin
 		alloc = alloc,
 	}
 	flow, _ = load_flow_file(&l, path, true)
+	flow.files = l.files
 	if l.err != "" {
 		return flow, fmt.aprintf("%s:%d: %s", l.file, l.err_line, l.err, allocator = alloc)
 	}
@@ -248,6 +254,7 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool) -> (flow: Flow, ok: 
 		fail(l, nil, "runFlow nested more than 20 levels deep (a cycle?)")
 		return
 	}
+	append(&l.files, path)
 	data, rerr := os.read_entire_file(path, l.alloc)
 	if rerr != nil {
 		fail(l, nil, "cannot read flow file: %v", rerr)
@@ -272,19 +279,27 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool) -> (flow: Flow, ok: 
 	}
 	flow.path = path
 	cfg := docs[0]
+	// This file's appId is the default of its launchApp, stopApp...: read it before the
+	// other keys (onFlowStart may come first), and only for this file (Maestro resolves a
+	// runFlow file's commands against that file's own appId).
+	if v := yaml_get(cfg, "appId"); v != nil do flow.app_id = str(l, v) or_return
+	saved_app_id := l.app_id
+	defer l.app_id = saved_app_id
+	l.app_id = flow.app_id
 	for key, i in cfg.keys {
 		v := cfg.vals[i]
 		switch key {
 		case "appId":
-			flow.app_id = str(l, v) or_return
+		// read above
 		case "name":
 			flow.name = str(l, v) or_return
 		case "env":
 			flow.env = env_map(l, v) or_return
 		case "onFlowStart", "onFlowComplete":
-			cmds := yaml_get(v, "commands") if v.kind == .Map else nil
+			// A list of commands (Maestro's main form), or a map with `commands:`.
+			cmds := v if v.kind == .Seq else (yaml_get(v, "commands") if v.kind == .Map else nil)
 			if cmds == nil {
-				fail(l, v, "`%s` takes `commands:`", key)
+				fail(l, v, "`%s` takes a list of commands", key)
 				return
 			}
 			list := commands(l, cmds) or_return
@@ -296,15 +311,22 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool) -> (flow: Flow, ok: 
 		case "url":
 			fail(l, v, "web flows (`url`) are not supported")
 			return
+		case "tags":
+			if v.kind == .Seq {
+				for t in v.items do append(&flow.tags, str(l, t) or_return)
+			} else if v.kind != .Null {
+				append(&flow.tags, str(l, v) or_return)
+			}
+		case "properties":
+			if v.kind != .Null do flow.properties = env_map(l, v) or_return
 		case:
-		// tags, properties and anything else Maestro keeps as metadata: not needed to run.
+		// Anything else Maestro keeps as metadata: not needed to run.
 		}
 	}
 	if flow.app_id == "" {
 		fail(l, cfg, "the config section needs `appId`")
 		return
 	}
-	if top do l.app_id = flow.app_id
 	flow.commands = commands(l, docs[1]) or_return
 	return flow, true
 }
@@ -377,7 +399,7 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 				case "stopApp":
 					d.stop_app = boolean(l, v) or_return
 				case "clearKeychain":
-					_ = boolean(l, v) or_return // iOS only; a no-op on Android, as in Maestro
+					d.clear_keychain = boolean(l, v) or_return // iOS only; a no-op on Android, as in Maestro
 				}
 			}
 			common(l, arg, &c) or_return

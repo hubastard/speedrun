@@ -105,7 +105,7 @@ OUT="$(mktemp -d -t speedrun_race.XXXXXX)"
 echo "== Race: $FLOW $*"
 echo "   speedrun on $SPEEDRUN_DEVICE, Maestro on $MAESTRO_DEVICE (each emulator window shows its port)"
 START=$(now_ms)
-./speedrun --device "$SPEEDRUN_DEVICE" --flow "$FLOW" "$@" --plain >"$OUT/speedrun.log" 2>&1 &
+./speedrun test --device "$SPEEDRUN_DEVICE" --plain "$@" "$FLOW" >"$OUT/speedrun.log" 2>&1 &
 S_PID=$!
 maestro --device "$MAESTRO_DEVICE" test "$@" "$FLOW" >"$OUT/maestro.log" 2>&1 &
 M_PID=$!

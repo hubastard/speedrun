@@ -1,0 +1,52 @@
+# React Native scenario on Ignite's demo app (apps/ignite, see flows/ignite/README.md):
+# login, a list fetched from an API, favorites, a switch, long presses, scrolling, text
+# input and tabs. Iterations come from TIMES (1 when not given).
+appId: com.speedrun.ignitedemo
+env:
+  TIMES: ${TIMES || 1}
+---
+- launchApp:
+    clearState: true
+- tapOn: "Tap to log in!"
+- tapOn: "Let's go!"
+- assertVisible: "Components to jump start your project!"
+- repeat:
+    times: ${TIMES}
+    commands:
+      # The podcast list, from Apple's iTunes API.
+      - tapOn: "Podcast"
+      - assertVisible: "RNR .*"
+      # Favorites: none, then one (long press), then none again.
+      - tapOn: "Switch on to only show favorites"
+      - assertVisible: "This looks a bit empty"
+      - tapOn: "Switch on to only show favorites"
+      - longPressOn: "RNR 375 .*"
+      - tapOn: "Switch on to only show favorites"
+      - assertVisible: "RNR 375 .*"
+      - longPressOn: "RNR 375 .*"
+      - assertVisible: "This looks a bit empty"
+      - tapOn: "Switch on to only show favorites"
+      # Scrolling down the list, then back up.
+      - scrollUntilVisible:
+          element:
+            text: "RNR 366 .*"
+          direction: DOWN
+      - scrollUntilVisible:
+          element:
+            text: "React Native Radio episodes"
+          direction: UP
+      # Text input in the component showroom.
+      - tapOn: "Components.*"
+      - scrollUntilVisible:
+          element:
+            text: "No Status, This is the default status"
+          direction: DOWN
+          centerElement: true # else it can stop under the tab bar, which takes the tap
+      # (React Native groups the field with its label: the typed value is not exposed to
+      # accessibility, so it cannot be asserted, in Maestro either.)
+      - tapOn: "No Status, This is the default status"
+      - inputText: "Speedrun RN"
+      - eraseText: 11
+      - pressKey: Enter
+      - tapOn: "Community.*"
+      - assertVisible: "Connect with the community"

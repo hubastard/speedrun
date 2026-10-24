@@ -51,6 +51,7 @@ Record :: struct {
 	status:      string `json:"status"`,
 	duration_ms: f64 `json:"duration_ms"`,
 	error:       string `json:"error,omitempty"`,
+	start_ms:    i64 `json:"start_ms"`, // Unix time
 }
 
 Runner :: struct {
@@ -82,53 +83,95 @@ Rx :: struct {
 Err :: Maybe(string)
 
 SKIPPED :: "\x00skipped" // a command whose condition was false
+SUB_FLOW_FAILED :: "a command in the sub-flow failed"
 
 // ---- entry ----------------------------------------------------------------------------
 
 // Loads and runs `path`; `env` holds `-e KEY=VALUE` pairs. Writes per-command timings as
 // JSON to `timings_path` if set. `plain`: one line per command even on a terminal.
 // Returns false if the flow failed.
-run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, cli_env: []Env_Pair, timings_path: string, plain := false) -> bool {
+Flow_Result :: struct {
+	name, file_path: string, // name: the flow's `name`, else its file name
+	passed:          bool,
+	error:           string, // the failing command's message
+	duration_ms:     f64,
+	start_unix_ms:   i64,
+	tags:            []string,
+	properties:      []Env_Pair,
+	steps:           []Step, // every command, for --format html-detailed
+}
+
+Step :: struct {
+	description, status, duration: string,
+}
+
+Run_Options :: struct {
+	env:          []Env_Pair, // -e values
+	device_id:    string, // MAESTRO_DEVICE_UDID
+	shard_index:  int, // MAESTRO_SHARD_INDEX (0 when not sharded)
+	timings_path: string, // --timings: this tool's per-command record
+	plain:        bool, // one line per command instead of the live view
+	silent:       bool, // a flow of a suite: no per-command output
+	flow_dir:     string, // debug output folder of this flow ("" for none)
+}
+
+// Runs one flow file. The result's strings live in `alloc`.
+run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options, alloc: mem.Allocator) -> (result: Flow_Result) {
+	result.file_path = strings.clone(path, alloc)
+	result.name = strings.clone(flow_file_name(path), alloc)
+	result.start_unix_ms = time.to_unix_nanoseconds(time.now()) / 1_000_000
 	arena: virtual.Arena
 	_ = virtual.arena_init_growing(&arena)
 	defer virtual.arena_destroy(&arena)
-	alloc := virtual.arena_allocator(&arena)
-	context.allocator = alloc
+	run_alloc := virtual.arena_allocator(&arena)
+	context.allocator = run_alloc
 
-	flow, err := load_flow(path, alloc)
+	flow, err := load_flow(path, run_alloc)
 	if err != "" {
-		fmt.eprintln(err)
-		return false
+		if !opts.silent do fmt.eprintln(err)
+		result.error = strings.clone(err, alloc)
+		return
 	}
+	if flow.name != "" do result.name = strings.clone(flow.name, alloc)
+	result.tags = make([]string, len(flow.tags), alloc)
+	for t, k in flow.tags do result.tags[k] = strings.clone(t, alloc)
+	result.properties = make([]Env_Pair, len(flow.properties), alloc)
+	for p, k in flow.properties do result.properties[k] = {strings.clone(p.key, alloc), strings.clone(p.value, alloc)}
+
 	r := Runner {
 		c     = c,
 		dev   = dev,
-		alloc = alloc,
-		debug = os.get_env("SPEEDRUN_DEBUG", alloc) != "",
+		alloc = run_alloc,
+		debug = os.get_env("SPEEDRUN_DEBUG", run_alloc) != "",
 	}
 	_ = virtual.arena_init_growing(&r.screen_arena)
 	defer virtual.arena_destroy(&r.screen_arena)
 
 	// Display size: the extent of all window roots, in the current orientation.
 	if !read_screen(&r) {
-		fmt.eprintln("could not read the screen")
-		return false
+		if !opts.silent do fmt.eprintln("could not read the screen")
+		result.error = strings.clone("could not read the screen", alloc)
+		return
 	}
 	for i in r.h.roots {
 		r.w = max(r.w, r.h.nodes[i].right)
 		r.h_px = max(r.h.nodes[i].bottom, r.h_px)
 	}
 
-	// Env: injected MAESTRO_* shell variables and -e values, then the flow's own `env:`.
+	// Env, Maestro's order: -e values, MAESTRO_* shell variables not given with -e, the
+	// defaults it sets for every flow, then the flow's own `env:` (define_env, below).
 	push_scope(&r)
 	scope := &r.env[0]
-	environ, _ := os.environ(alloc)
+	for e in opts.env do scope[e.key] = e.value
+	environ, _ := os.environ(run_alloc)
 	for e in environ {
-		if k, _, v := strings.partition(e, "="); strings.has_prefix(k, "MAESTRO_") do scope[k] = v
+		k, _, v := strings.partition(e, "=")
+		if strings.has_prefix(k, "MAESTRO_") && v != "" && k not_in scope do scope[k] = v
 	}
-	base := strings.trim_suffix(strings.trim_suffix(os_base(path), ".yaml"), ".yml")
-	scope["MAESTRO_FILENAME"] = base
-	for e in cli_env do scope[e.key] = e.value
+	scope["MAESTRO_FILENAME"] = flow_file_name(path)
+	if opts.device_id != "" do scope["MAESTRO_DEVICE_UDID"] = opts.device_id
+	scope["MAESTRO_SHARD_ID"] = fmt.aprintf("%d", opts.shard_index + 1)
+	scope["MAESTRO_SHARD_INDEX"] = fmt.aprintf("%d", opts.shard_index)
 
 	// "Running on <emulator or simulator name>", like Maestro.
 	device := dev.name
@@ -136,30 +179,130 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, cli_env: []Env_Pa
 		device = strings.trim_space(shell(&r, "getprop ro.boot.qemu.avd_name"))
 		if device == "" do device = strings.trim_space(shell(&r, "getprop ro.product.model"))
 	}
-	view_init(&r, &flow, flow.name if flow.name != "" else base, device, plain || r.debug)
+	view_init(&r, &flow, flow.name if flow.name != "" else flow_file_name(path), device, opts.plain || r.debug, opts.silent)
 
 	start := time.tick_now()
 	r.last_interaction = start
 	ok := true
 	if e, bad := define_env(&r, flow.env[:]).?; bad {
-		fmt.eprintln(e)
+		if !opts.silent do fmt.eprintln(e)
+		result.error = strings.clone(e, alloc)
 		ok = false
 	}
 	if ok && len(flow.on_start) > 0 do ok = run_list(&r, flow.on_start[:], "s")
 	if ok do ok = run_list(&r, flow.commands[:])
 	if len(flow.on_complete) > 0 do ok = run_list(&r, flow.on_complete[:], "c") && ok
 	total := us(start) / 1000
+	result.passed = ok
+	result.duration_ms = total
+	result.steps = make([]Step, len(r.records), alloc)
+	for rec, k in r.records {
+		// TestSuiteInteractor: "N. <description>", "850ms" / "1.2s".
+		d := fmt.tprintf("%.1fs", rec.duration_ms / 1000) if rec.duration_ms >= 1000 else fmt.tprintf("%dms", int(rec.duration_ms))
+		result.steps[k] = {
+			fmt.aprintf("%d. %s", k + 1, evaluated(&r, rec.description), allocator = alloc),
+			strings.clone(rec.status, alloc),
+			strings.clone(d, alloc),
+		}
+	}
+	// Maestro's message only: the lines after it describe the screen, for the console.
+	if !ok && result.error == "" {
+		first, _, _ := strings.partition(failure_message(&r), "\n")
+		result.error = strings.clone(first, alloc)
+	}
 
 	view_done(&r, fmt.tprintf(
 		"%s in %s · %d commands · %d hierarchy reads, %.1f ms each",
 		"✅ Flow passed" if ok else "❌ Flow failed", fmt_ms(total), len(r.records), int(r.reads),
 		r.read_ms_total / max(r.reads, 1),
 	))
-	if timings_path != "" {
-		data, merr := json.marshal(r.records[:], {pretty = true}, alloc)
-		if merr != nil || !write_file(timings_path, data) do fmt.eprintln("could not write", timings_path)
+	if opts.timings_path != "" {
+		data, merr := json.marshal(r.records[:], {pretty = true}, run_alloc)
+		if merr != nil || !write_file(opts.timings_path, data) do fmt.eprintln("could not write", opts.timings_path)
 	}
-	return ok
+	if opts.flow_dir != "" do write_flow_artifacts(&r, opts.flow_dir, ok)
+	return
+}
+
+// Maestro's names for the commands in its commands.json (the YAML name is `description`'s
+// source; tapOn with a point is tapOnPointV2Command in Maestro, tapOnElement here).
+@(private = "file")
+MAESTRO_COMMAND_NAMES :: [][2]string {
+	{"tapOn", "tapOnElement"}, {"doubleTapOn", "tapOnElement"}, {"longPressOn", "tapOnElement"},
+	{"assertVisible", "assertConditionCommand"}, {"assertNotVisible", "assertConditionCommand"},
+	{"extendedWaitUntil", "assertConditionCommand"}, {"back", "backPressCommand"},
+	{"hideKeyboard", "hideKeyboardCommand"}, {"hide keyboard", "hideKeyboardCommand"},
+	{"inputText", "inputTextCommand"}, {"eraseText", "eraseTextCommand"}, {"pressKey", "pressKeyCommand"},
+	{"scroll", "scrollCommand"}, {"scrollUntilVisible", "scrollUntilVisible"}, {"swipe", "swipeCommand"},
+	{"waitForAnimationToEnd", "waitForAnimationToEndCommand"}, {"openLink", "openLinkCommand"},
+	{"launchApp", "launchAppCommand"}, {"stopApp", "stopAppCommand"}, {"killApp", "killAppCommand"},
+	{"clearState", "clearStateCommand"}, {"clearKeychain", "clearKeychainCommand"},
+	{"runFlow", "runFlowCommand"}, {"repeat", "repeatCommand"}, {"retry", "retryCommand"},
+	{"takeScreenshot", "takeScreenshotCommand"},
+}
+
+// The flow's debug output, laid out as Maestro's artifacts bundle: commands.json (each
+// command under Maestro's name, with its status, start and duration), logs/maestro.log, and
+// on failure screenshots/final.png.
+@(private = "file")
+write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
+	if os.make_directory_all(fmt.tprintf("%s/logs", dir)) != nil {
+		fmt.eprintln("could not create", dir)
+		return
+	}
+	Meta :: struct {
+		status:         string `json:"status"`,
+		timestamp:      i64 `json:"timestamp"`,
+		duration:       i64 `json:"duration"`,
+		sequenceNumber: int `json:"sequenceNumber"`,
+		error:          string `json:"error,omitempty"`,
+	}
+	Entry :: struct {
+		command:  map[string]map[string]string `json:"command"`,
+		metadata: Meta `json:"metadata"`,
+	}
+	entries := make([]Entry, len(r.records), context.temp_allocator)
+	log := strings.builder_make(context.temp_allocator)
+	for rec, k in r.records {
+		name := rec.command
+		for pair in MAESTRO_COMMAND_NAMES do if pair[0] == rec.command do name = pair[1]
+		fields := make(map[string]string, 1, context.temp_allocator)
+		fields["description"] = rec.description
+		cmd := make(map[string]map[string]string, 1, context.temp_allocator)
+		cmd[name] = fields
+		entries[k] = {cmd, {rec.status, rec.start_ms, i64(rec.duration_ms), rec.seq, rec.error}}
+		fmt.sbprintf(&log, "%s%s %s (%.0f ms)\n", strings.repeat("  ", rec.depth, context.temp_allocator), rec.description, rec.status, rec.duration_ms)
+		if rec.error != "" do fmt.sbprintf(&log, "%s\n", rec.error)
+	}
+	if data, err := json.marshal(entries, {pretty = true}, context.temp_allocator); err == nil {
+		write_file(fmt.tprintf("%s/commands.json", dir), data)
+	}
+	write_file(fmt.tprintf("%s/logs/maestro.log", dir), transmute([]byte)strings.to_string(log))
+	if !passed {
+		if png, ok := op_screenshot(r.c, context.temp_allocator); ok {
+			os.make_directory_all(fmt.tprintf("%s/screenshots", dir))
+			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
+		}
+	}
+}
+
+// A description with its ${...} evaluated, as Maestro's messages show them (its live view
+// shows them as written); as written when they do not evaluate.
+@(private = "file")
+evaluated :: proc(r: ^Runner, description: string) -> string {
+	if v, err := eval(r, description); err == nil do return v
+	return description
+}
+
+// The message of the command that failed: the last failed one that is not a container
+// reporting its sub-command's failure.
+@(private = "file")
+failure_message :: proc(r: ^Runner) -> string {
+	msg := ""
+	for rec in r.records {
+		if rec.status == "FAILED" && rec.error != "" && rec.error != SUB_FLOW_FAILED do msg = rec.error
+	}
+	return msg
 }
 
 @(private = "file")
@@ -189,7 +332,10 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 			node.cmd, node.depth, node.desc = &c, r.depth, maestro_description(r, &c)
 		}
 		r.path = fmt.aprintf("%s/%s%d", parent, section, k, allocator = r.alloc)
-		append(&r.records, Record{seq = seq, path = r.path, depth = r.depth, command = c.name, description = node.desc})
+		append(&r.records, Record{
+			seq = seq, path = r.path, depth = r.depth, command = c.name, description = node.desc,
+			start_ms = time.to_unix_nanoseconds(time.now()) / 1_000_000,
+		})
 		view_started(r, node)
 		t := time.tick_now()
 		r.depth += 1
@@ -234,10 +380,20 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		if r.dev.platform == .IOS {
 			// Maestro: clearState through simctl, stopApp through its runner, launch through
 			// `simctl launch`. Its default `permissions: all: allow` is not applied here yet.
-			if d.clear_state do return false, "launchApp clearState is not supported on iOS yet"
+			if d.clear_state do ios_clear_state(r.dev.udid, app) or_return
+			if d.clear_keychain {
+				if out, ok := simctl("keychain", r.dev.udid, "reset"); !ok do return true, out
+			}
 			if d.stop_app do simctl("terminate", r.dev.udid, app)
+			// `simctl launch` returns once the process starts; Android's `am start -W` once
+			// it has launched. Wait for the app's UI, then settle: a tap during the launch
+			// would be ignored.
+			if !op_mark(r.c) do return true, "agent connection lost"
 			if out, ok := simctl("launch", r.dev.udid, app); !ok do return true, out
-			return true, nil
+			ready, ok := op_launched(r.c, app, 20_000, r.alloc)
+			if !ok do return true, "agent connection lost"
+			if !ready do return true, fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
+			return true, settle(r)
 		}
 		if d.clear_state do _ = shell(r, "pm clear %s", app)
 		grant_runtime_permissions(r, app)
@@ -250,7 +406,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		app := eval(r, d.app_id) or_return
 		if r.dev.platform == .IOS {
 			// killApp is stopApp on iOS, as in Maestro (no process death there).
-			if d.op == .Clear_State do return false, "clearState is not supported on iOS yet"
+			if d.op == .Clear_State do return true, ios_clear_state(r.dev.udid, app)
 			simctl("terminate", r.dev.udid, app)
 			return true, nil
 		}
@@ -266,7 +422,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		timeout := i64(LOOKUP_TIMEOUT_MS)
 		if t, has := d.timeout.?; has do timeout = parse_timeout(r, t) or_return
 		met := condition_met(r, d.cond, c.optional, timeout) or_return
-		if !met do return false, fmt.aprintf("Assertion is false: %s\n%s", condition_description(d.cond), screen_summary(r), allocator = r.alloc)
+		if !met do return false, fmt.aprintf("Assertion is false: %s\n%s", evaluated(r, condition_description(d.cond)), screen_summary(r), allocator = r.alloc)
 		return false, nil
 	case Input_Text:
 		text := eval(r, d.text) or_return
@@ -396,13 +552,18 @@ run_sub :: proc(r: ^Runner, s: Sub_Flow) -> (mutating: bool, err: Err) {
 	if ok do ok = run_list(r, s.commands[:])
 	if len(s.on_complete) > 0 do ok = run_list(r, s.on_complete[:], "c") && ok
 	for rec in r.records[before:] do if rec.status != "SKIPPED" do mutating = true
-	if !ok do return mutating, "a command in the sub-flow failed"
+	if !ok do return mutating, SUB_FLOW_FAILED
 	return mutating, nil
 }
 
 @(private = "file")
 tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	x, y: i32
+	// The tapped element as it was (strings copied: the hierarchy's arena is reset by reads).
+	tapped: struct {
+		text, desc: string,
+		flags:      Flags,
+	}
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
 		ok: bool
@@ -412,6 +573,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		el := find_element(r, d.sel, c.optional, -1) or_return
 		n := r.h.nodes[el]
 		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), n.flags}
 		if d.point != "" {
 			p := eval(r, d.point) or_return
 			ok: bool
@@ -435,7 +597,24 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if left > 0 do time.sleep(time.Duration(left * f64(time.Millisecond)))
 			}
 		}
-		if e := settle(r, d.settle_ms); e != nil do return e
+		settle(r, d.settle_ms) or_return
+		// The element moved between the lookup and the tap: an app that keeps laying out after
+		// it looked settled (Settings inserts a banner ~0.5 s after launch). If it is still
+		// there, unchanged (nothing reacted to the tap: a toggled switch would differ), the
+		// tap missed it: tap it where it is now. Once.
+		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
+			if !read_screen(r) do return "agent connection lost"
+			if el, found, _ := try_find(r, d.sel, 0); found {
+				n := r.h.nodes[el]
+				nx, ny := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+				same := n.text == tapped.text && n.desc == tapped.desc && n.flags == tapped.flags
+				if same && (abs(int(nx - x)) > 4 || abs(int(ny - y)) > 4) {
+					x, y = nx, ny
+					if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
+					settle(r, d.settle_ms) or_return
+				}
+			}
+		}
 		if !d.retry do break
 		if !read_screen(r) do return "agent connection lost"
 		if r.h.hash != before do break
@@ -475,7 +654,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		if e := swipe_points(r, cx, cy, ex, ey, i32(duration), d.settle_ms); e != nil do return e
 		if time.tick_now()._nsec >= end do break
 	}
-	return fmt.aprintf("No visible element found: %s\n%s", selector_description(d.sel), screen_summary(r), allocator = r.alloc)
+	return fmt.aprintf("No visible element found: %s\n%s", evaluated(r, selector_description(d.sel)), screen_summary(r), allocator = r.alloc)
 }
 
 @(private = "file")
@@ -544,10 +723,16 @@ edge_point :: proc(r: ^Runner, x, y: i32, dir: Swipe_Dir) -> (i32, i32) {
 
 @(private = "file")
 settle :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> Err {
+	_, err := settle_status(r, timeout_ms)
+	return err
+}
+
+settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> (Settle_Status, Err) {
 	timeout := i32(SETTLE_TIMEOUT_MS)
 	if t, has := timeout_ms.?; has do timeout = i32(t)
-	if _, ok := op_settle(r.c, SETTLE_QUIET_MS, SETTLE_NO_CHANGE_MS, timeout); !ok do return "agent connection lost"
-	return nil
+	res, ok := op_settle(r.c, SETTLE_QUIET_MS, SETTLE_NO_CHANGE_MS, timeout)
+	if !ok do return .Timeout, "agent connection lost"
+	return res.status, nil
 }
 
 // ---- conditions and lookups -----------------------------------------------------------
@@ -556,7 +741,7 @@ settle :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> Err {
 // shortened by the time since the last interaction.
 @(private = "file")
 condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64) -> (met: bool, err: Err) {
-	if p, has := cond.platform.?; has && !strings.equal_fold(p, "android") do return false, nil
+	if p, has := cond.platform.?; has && !strings.equal_fold(p, "ios" if r.dev.platform == .IOS else "android") do return false, nil
 	if s, has := cond.script.?; has {
 		v := eval(r, s) or_return
 		if v == "" || strings.equal_fold(v, "false") || v == "undefined" || v == "null" do return false, nil
@@ -590,7 +775,7 @@ find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
 	i, found := try_find(r, sel, limit) or_return
 	if !found {
-		return -1, fmt.aprintf("Element not found: %s\n%s", filter_description(sel), screen_summary(r), allocator = r.alloc)
+		return -1, fmt.aprintf("Element not found: %s\n%s", evaluated(r, filter_description(sel)), screen_summary(r), allocator = r.alloc)
 	}
 	return i, nil
 }

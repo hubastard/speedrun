@@ -3,8 +3,12 @@
 An XCUITest runner whose single test serves the Android agent's protocol (same ops, same
 responses) over TCP on `127.0.0.1:7778`: a simulator shares the Mac's loopback, so there is no
 forwarding. `./build.sh` builds it into `agent/ios/build`; `./speedrun --platform ios` starts it
-with `xcodebuild test-without-building` and stops it at exit. Only an XCTest runner may drive
-other apps on iOS, which is also how Maestro's iOS driver works.
+with `xcodebuild test-without-building` (3–6 s: ~2 s of xcodebuild itself, then installing and
+launching the runner and XCTest's session handshake). It then stays up for the next run, in
+its own session: a run that finds it serving this build on the chosen simulator (op INFO)
+starts in ~0.2 s. It stops on QUIT (`./speedrun --stop-agent`) or after SPEEDRUN_IDLE_S
+seconds without a client (600). Only an XCTest runner may drive other apps on iOS, which is
+also how Maestro's iOS driver works.
 
 - `SpeedrunAgentUITests/` — `Agent.swift` (server, protocol), `Screen.swift` (the hierarchy,
   with Maestro's iOS attribute mapping), `Input.swift` (taps, swipes, typing, keys),
@@ -23,13 +27,15 @@ How it does each part:
   (they cost as much as the app and change with the clock). A read right after SETTLE is
   served from settle's last snapshot (no action since, under 1 s old). ~70–90 ms otherwise.
 - **Input**: events synthesized through testmanagerd, as Maestro's runner does (a 100 ms tap,
-  Maestro's swipe shape). Text: the first character alone, then, once the focused field shows
+  Maestro's swipe, end hold included: holding 100 ms instead of 601 scrolled UIKit Settings
+  as far, but a React Native list 1200 points instead of 510). Text: the first character alone, then, once the focused field shows
   it (at most 0.5 s), the rest at 100 characters per second; Maestro types at 30 after a fixed
   0.5 s. Deleting from an empty field does not wait.
 - **Settle**: XCTest's quiescence (event loop, then animations, idle), then the screen's
   signature: it must differ from what the flow last read (quiescence once reported idle
   before a push had begun), and two signatures in a row must agree. "No change" after
-  `no_change_ms`, as on Android.
+  `no_change_ms`, as on Android. After a swipe, quiescence leaves out animations (the content
+  stops at lift-up; the scroll indicator's fade does not matter).
 
 To time the building blocks by hand:
 

@@ -22,6 +22,13 @@ final class Screen {
     private static let statusBarsMaxAgeNs: UInt64 = 5_000_000_000
     private var statusBars = (nodes: Writer(), count: UInt32(0), at: UInt64(0))
 
+    /// Forgets every cached read (a new client). Main thread.
+    func reset() {
+        lastSignature = nil
+        settled.at = 0
+        statusBars.at = 0
+    }
+
     /// lastActionNs: when the last action began (a settled snapshot older than it is stale).
     func read(lastActionNs: UInt64, out: inout Writer) throws {
         var nodes = Writer()
@@ -32,7 +39,7 @@ final class Screen {
             count = settled.count
             settled.at = 0 // once
         } else {
-            let snapshot = try foregroundApp().snapshot()
+            let snapshot = try snapshotForeground()
             var hasher = Hasher()
             walk(snapshot, depth: 0, into: &nodes, count: &count, hasher: &hasher)
             lastSignature = hasher.finalize()
@@ -55,11 +62,33 @@ final class Screen {
         var hasher = Hasher()
         var nodes = Writer()
         var count: UInt32 = 0
-        walk(try foregroundApp().snapshot(), depth: 0, into: &nodes, count: &count, hasher: &hasher)
+        walk(try snapshotForeground(), depth: 0, into: &nodes, count: &count, hasher: &hasher)
         let sig = hasher.finalize()
         lastSignature = sig
         settled = (nodes, count, DispatchTime.now().uptimeNanoseconds)
         return sig
+    }
+
+    /// A snapshot of the foreground app. An app being relaunched (launchApp) can fail it
+    /// ("Application ... is not running"): find the foreground app again and retry once, then
+    /// fall back to SpringBoard rather than failing the read.
+    private func snapshotForeground() throws -> XCUIElementSnapshot {
+        if let s = try? foregroundApp().snapshot() { return s }
+        foreground = nil
+        foregroundID = ""
+        if let s = try? foregroundApp().snapshot() { return s }
+        return try springboard.snapshot()
+    }
+
+    /// After `simctl launch`: waits until the app runs in the foreground, then snapshots it once
+    /// (XCTest waits there until its UI can be read), and makes it the foreground app.
+    func waitLaunched(_ id: String, timeoutMs: Int) -> Bool {
+        let app = XCUIApplication(bundleIdentifier: id)
+        guard app.wait(for: .runningForeground, timeout: TimeInterval(timeoutMs) / 1000) else { return false }
+        foreground = app
+        foregroundID = id
+        _ = try? app.snapshot()
+        return true
     }
 
     /// The app in the foreground, SpringBoard when none is (home screen). The last one found

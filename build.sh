@@ -22,4 +22,4 @@ else
   echo "== No Xcode: skipping the iOS agent"
 fi
 
-echo "Done: ./speedrun --flow <file.yaml>"
+echo "Done: ./speedrun test <flow file or folder>"

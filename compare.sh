@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...
-# Runs the same Maestro flow file with speedrun (./speedrun --flow) and with Maestro, each
+# Runs the same Maestro flow file with speedrun (./speedrun test) and with Maestro, each
 # after a fresh start of the flow's app, then lines the two runs up command by command and
 # prints the median time per command (repeat iterations grouped), then the totals: the flow,
 # the time each tool spends outside it (start-up and shutdown: a slow tool costs that on
@@ -35,8 +35,16 @@ else
   PLATFORM=android
   export ANDROID_SERIAL="$DEVICE"
 fi
-APP="$(sed -n 's/^appId:[[:space:]]*//p' "$FLOW" | head -1 | tr -d "\"'\r")"
-[ -n "$APP" ] || { echo "no appId in $FLOW"; exit 1; }
+APP="$(sed -n 's/^appId:[[:space:]]*//p' "$FLOW" | head -1 | sed 's/[[:space:]]*#.*//' | tr -d "\"'\r")"
+# appId: ${NAME} -> the value given with -e NAME=...
+if [[ "$APP" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$ ]]; then
+  name="${BASH_REMATCH[1]}"; APP=""
+  args=("$@")
+  for ((k = 0; k < ${#args[@]}; k++)); do
+    case "${args[k]}" in -e|--env) [[ "${args[k+1]:-}" == "$name="* ]] && APP="${args[k+1]#*=}" ;; esac
+  done
+fi
+[ -n "$APP" ] || { echo "no appId in $FLOW (or its -e value)"; exit 1; }
 
 # Stop the app and open it again: both tools start from the same screen.
 restart_app() {
@@ -53,12 +61,16 @@ restart_app() {
   sleep 1
 }
 
-echo "== speedrun: ./speedrun --flow $FLOW $*"
+echo "== speedrun: ./speedrun test $* $FLOW"
+# On iOS speedrun keeps its agent running between runs; stop it so this run starts cold, as
+# Maestro's does (a warm start would hide ~3 s of start-up).
+[ "$PLATFORM" = ios ] && ./speedrun --stop-agent >/dev/null && sleep 1
 restart_app
 # speedrun stops its agent at exit, so Maestro's driver can take the UiAutomation slot after it.
 s0=$(now_ms)
-./speedrun --device "$DEVICE" --flow "$FLOW" "$@" --timings "$OUT/speedrun.json"
+./speedrun test --device "$DEVICE" --timings "$OUT/speedrun.json" "$@" "$FLOW"
 s1=$(now_ms)
+[ "$PLATFORM" = ios ] && ./speedrun --stop-agent >/dev/null
 
 # Maestro draws its live view from the top of the screen, over whatever is there: start it on
 # a clear screen. Scrollback keeps speedrun's run (no \e[3J).

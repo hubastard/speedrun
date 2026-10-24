@@ -57,19 +57,52 @@ same files.
 Maestro flow files run as they are:
 
 ```
-./speedrun --flow bench_scenario.yaml -e TIMES=5    # speedrun only
+./speedrun test bench_scenario.yaml -e TIMES=5      # speedrun only
 ./compare.sh bench_scenario.yaml -e TIMES=5         # speedrun, then Maestro, side by side
 ./compare.sh flows/features.yaml                     # both tools must agree on every command
 ./race.sh bench_scenario.yaml -e TIMES=3            # both at once on two emulators, to watch
 
-./speedrun --platform ios --flow bench_scenario_ios.yaml -e TIMES=5   # iOS simulator
+./speedrun test -p ios bench_scenario_ios.yaml -e TIMES=5   # iOS simulator
 DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
 ```
 
 speedrun picks a connected Android device, else the one booted simulator; `--platform` and
 `--device` (a serial or a simulator UDID) choose. On iOS it starts the agent's runner with
-`xcodebuild test-without-building` (about 4 s; one still serving from an earlier run is
-reused) and controls apps with `xcrun simctl`, as Maestro does.
+`xcodebuild test-without-building`, which takes 3–6 s, so the runner outlives the run: the
+next run on that simulator reuses it and starts in ~0.2 s (a runner of an older build is
+replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
+`./speedrun --stop-agent`. Apps are controlled with `xcrun simctl`, as Maestro does.
+
+### A drop-in for `maestro test`
+
+`speedrun test` takes `maestro test`'s arguments, so `maestro test …` becomes
+`speedrun test …` (global options such as `-p` and `--device` may come before `test`, as with
+`maestro`). Ported from Maestro 2.11.0 and checked against it on the same flows:
+
+- One flow file runs with the live view (`--no-ansi`/`--plain` for plain lines) and, when it
+  fails, prints the debug output folder. Several files, folders, or any `--format` run as a
+  suite: `Waiting for flows to complete...`, a `[Passed]`/`[Failed] name (time) (error)` line
+  per flow, then `N/M Flows Passed in Xs` or `N/M Flows Failed`, exit status 1 on a failure.
+- Folders and `config.yaml` (or `--config`): `flows` globs (default `*`, the top level; `**`
+  for subfolders; `!` excludes), `includeTags`/`excludeTags` with `--include-tags` /
+  `--exclude-tags`, `executionOrder` (`flowsOrder`, `continueOnFailure`), `testOutputDir`.
+  Flows run in Maestro's order and its error messages are kept.
+- `-e`, and the variables Maestro sets for every flow: `MAESTRO_FILENAME`,
+  `MAESTRO_DEVICE_UDID`, `MAESTRO_SHARD_ID`, `MAESTRO_SHARD_INDEX`, `MAESTRO_*` from the shell.
+- `--format junit|html|html-detailed` with `--output` and `--test-suite-name` (default
+  `report.xml` / `report.html`), with flow `tags` and `properties` (`junitId`,
+  `junitClassname`).
+- The debug output: `~/.maestro/tests/<yyyy-MM-dd_HHmmss>/<flow>/` with `commands.json`,
+  `logs/maestro.log` and, on a failure, `screenshots/final.png`; `--debug-output`,
+  `--flatten-debug-output`, `--test-output-dir` as in Maestro.
+- `--shard-split N` / `--shard-all N` across connected devices (or `--device a,b`): one
+  speedrun per device, `[shard N]` lines, a merged report and Maestro's summary box.
+- `-c` / `--continuous`: reruns the flow when it or a flow it runs changes, or on Enter.
+
+Accepted and ignored: `--headless`, `--screen-size` (web), `--api-url`, `--api-key`,
+`--reinstall-driver`; `--analyze` (AI) says it is not supported; `--apple-team-id` (real iOS
+devices) is an error. With several devices connected and no `--device`, Maestro asks which
+one; speedrun takes a connected Android device, else the one booted simulator.
 
 The latency breakdown (open the Settings app on the emulator first):
 
@@ -86,8 +119,9 @@ changes). `compare.sh` starts the flow's app fresh before each tool, lines the t
 command by command (warning if their command sequences or statuses differ) and prints
 medians per command, repeat iterations grouped. Then three totals per tool: the flow, the
 time outside it (start-up and shutdown, measured as the whole run's wall clock minus the
-flow: a slow tool costs that on every run) and the wall clock, all included. It needs
-`maestro` and `python3` on PATH.
+flow: a slow tool costs that on every run) and the wall clock, all included. On iOS it stops
+speedrun's kept-alive agent first, so both tools start cold. It needs `maestro` and
+`python3` on PATH.
 `--timings out.json` makes speedrun write its per-command record.
 
 `race.sh` is the demo: it starts speedrun on one emulator and Maestro on another at the same
@@ -120,7 +154,7 @@ Agent logs: `adb logcat -s SpeedrunAgent`.
    - *settle declared* — when the agent concluded it was settled. The gap to the line above
      is pure detection overhead.
    - *WHOLE STEP* — the number to put in the pitch.
-4. **Flows** (`--flow`) — printed like `maestro test`. In a terminal, the live view: the
+4. **Flows** (`speedrun test`) — printed like `maestro test`. In a terminal, the live view: the
    whole flow as a list (🔲 pending, ⏳ running, ✅ done, ⚠️ warned, ⚪️ skipped, ❌ failed),
    redrawn in place, with the commands of a running repeat, retry or sub-flow nested under
    it and each finished command's time on the right. A flow longer than the terminal shows a
@@ -172,11 +206,15 @@ Not supported yet (an error naming it): other JavaScript (`&&`, `??`, calls, ari
 On iOS (simulators), the same commands run, with Maestro's iOS behavior: `back` does nothing
 (use the navigation bar's `BackButton`), `killApp` is `stopApp`, only ENTER, BACKSPACE, HOME and
 LOCK keys act, and the hierarchy is the foreground app plus the status bars with Maestro's
-attribute mapping. Not on iOS yet (an error naming it): `clearState`, `hideKeyboard`, real
-devices, and `launchApp`'s default permission grants; Safari web views and cross-process
-window offsets are not added to the hierarchy. How differs from Maestro's runner: settle is
-XCTest's quiescence checked against the screen instead of comparing screenshots, and text is
-typed at 100 characters per second after the first (Maestro: 30, after a fixed 0.5 s pause).
+attribute mapping; `clearState` reinstalls the app, as Maestro does. Not on iOS yet (an error
+naming it): `hideKeyboard`, real devices, and `launchApp`'s default permission grants; Safari
+web views and cross-process window offsets are not added to the hierarchy. How differs from
+Maestro's runner: settle is XCTest's quiescence checked against the screen instead of
+comparing screenshots, and after the first character the rest of the text is typed as soon as
+the field shows it, at 100 characters per second (Maestro: a fixed 0.5 s pause, then 30). A
+field that does not expose its value (React Native groups it with its label) gets Maestro's
+pacing.
+Swipes are Maestro's exactly, end hold included: how far content scrolls depends on it.
 
 Known differences in how, not what:
 

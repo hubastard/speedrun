@@ -32,6 +32,7 @@ View_Node :: struct {
 
 View :: struct {
 	live:                     bool, // stdout is a terminal: redraw in place
+	silent:                   bool, // a flow of a suite: Maestro prints one line per flow only
 	device, flow_name:        string,
 	main, on_start, on_comp:  [dynamic]^View_Node,
 	nodes:                    map[^Cmd]^View_Node,
@@ -51,15 +52,17 @@ DIM :: "\x1b[2m"
 @(private = "file")
 RESET :: "\x1b[0m"
 
-view_init :: proc(r: ^Runner, flow: ^Flow, flow_name, device: string, plain: bool) {
+view_init :: proc(r: ^Runner, flow: ^Flow, flow_name, device: string, plain: bool, silent := false) {
 	v := &r.view
-	v.live = !plain && os.is_tty(os.stdout)
+	v.silent = silent
+	v.live = !plain && !silent && os.is_tty(os.stdout)
 	v.flow_name, v.device = flow_name, device
 	v.nodes = make(map[^Cmd]^View_Node, 64, r.alloc)
 	v.on_start = view_nodes(r, flow.on_start[:], 0)
 	v.main = view_nodes(r, flow.commands[:], 0)
 	v.on_comp = view_nodes(r, flow.on_complete[:], 0)
 	v.rows, v.cols = terminal_size()
+	if silent do return
 	if v.live {
 		view_render(r)
 	} else {
@@ -69,7 +72,7 @@ view_init :: proc(r: ^Runner, flow: ^Flow, flow_name, device: string, plain: boo
 
 // Plain mode: Maestro's section headers before a list of commands runs.
 view_section :: proc(r: ^Runner, section: string) {
-	if r.view.live do return
+	if r.view.live || r.view.silent do return
 	switch section {
 	case "s": fmt.printf("%s  > On Flow Start\n", pad(r.depth))
 	case "c": fmt.printf("%s  > On Flow Complete\n", pad(r.depth))
@@ -115,6 +118,7 @@ view_reset :: proc(nodes: []^View_Node) {
 
 view_started :: proc(r: ^Runner, n: ^View_Node) {
 	n.status = .Running
+	if r.view.silent do return
 	if r.view.live {
 		view_render(r)
 	} else if is_container(n) {
@@ -123,6 +127,7 @@ view_started :: proc(r: ^Runner, n: ^View_Node) {
 }
 
 view_finished :: proc(r: ^Runner, n: ^View_Node) {
+	if r.view.silent do return
 	if r.view.live {
 		view_render(r)
 		return
@@ -135,6 +140,7 @@ view_finished :: proc(r: ^Runner, n: ^View_Node) {
 
 view_done :: proc(r: ^Runner, footer: string) {
 	r.view.footer = footer
+	if r.view.silent do return
 	if r.view.live {
 		view_render(r)
 		// As Maestro does, the failure's message in full below the view.

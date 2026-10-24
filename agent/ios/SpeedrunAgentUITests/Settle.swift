@@ -5,6 +5,9 @@
 //   2. while it still equals the screen the flow last read, nothing has happened yet: poll
 //      until it differs, or report "no change" once no_change_ms have passed since the action;
 //   3. once it differs, settled when two signatures in a row, each after quiescence, agree.
+// After a swipe, quiescence leaves out animations: the content stops at lift-up, and what is
+// left (the scroll indicator fading) does not matter to a flow; content still moving shows up
+// as differing signatures.
 // Times are measured from the last action. quiet_ms is unused: quiescence is the quiet signal.
 import XCTest
 
@@ -34,7 +37,7 @@ final class Settle {
 
         while true {
             let q = DispatchTime.now().uptimeNanoseconds
-            try Private.waitForQuiescence(screen.foregroundApp())
+            try Private.waitForQuiescence(screen.foregroundApp(), animations: !input.lastWasSwipe)
             waits += 1
             longest = max(longest, micros(since: q))
             let sig = try screen.signature()

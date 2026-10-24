@@ -138,16 +138,16 @@ enum Private {
 
     /// XCTest's own wait for the app to be idle: its event loop, then its animations. Must
     /// run on the main thread (it spins the run loop).
-    static func waitForQuiescence(_ app: XCUIApplication) throws {
+    static func waitForQuiescence(_ app: XCUIApplication, animations: Bool = true) throws {
         let process = try applicationProcess(app)
         let withPreEvent = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:isPreEvent:")
         let plain = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:")
         if process.responds(to: withPreEvent) {
             typealias Wait = @convention(c) (NSObject, Selector, Bool, Bool) -> Void
-            unsafeBitCast(process.method(for: withPreEvent), to: Wait.self)(process, withPreEvent, true, false)
+            unsafeBitCast(process.method(for: withPreEvent), to: Wait.self)(process, withPreEvent, animations, false)
         } else if process.responds(to: plain) {
             typealias Wait = @convention(c) (NSObject, Selector, Bool) -> Void
-            unsafeBitCast(process.method(for: plain), to: Wait.self)(process, plain, true)
+            unsafeBitCast(process.method(for: plain), to: Wait.self)(process, plain, animations)
         } else {
             throw AgentError(message: "XCUIApplicationProcess.waitForQuiescenceIncludingAnimationsIdle: is missing")
         }

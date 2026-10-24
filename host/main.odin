@@ -29,6 +29,9 @@ Op :: enum u8 {
 	Mark       = 12,
 	Press      = 13,
 	Screenshot = 14,
+	Quit       = 15, // iOS agent: stop the runner
+	Info       = 16, // iOS agent: simulator udid and name, build
+	Launched   = 17, // iOS agent: wait for a launched app to be ready
 }
 
 KEYCODE_BACK :: 4
@@ -192,6 +195,34 @@ op_ping :: proc(c: ^Conn) -> (agent_us: u32, ok: bool) {
 	req := [1]byte{u8(Op.Ping)}
 	_, agent_us, ok = call(c, req[:])
 	return
+}
+
+// iOS: waits until the app runs in the foreground with a readable UI.
+op_launched :: proc(c: ^Conn, app_id: string, timeout_ms: i32, alloc: mem.Allocator) -> (ready, ok: bool) {
+	req := make([dynamic]byte, 0, len(app_id) + 8, alloc)
+	append(&req, u8(Op.Launched), u8(len(app_id) >> 8), u8(len(app_id)))
+	append(&req, ..transmute([]byte)app_id)
+	t: [4]byte
+	put_i32(t[:], timeout_ms)
+	append(&req, ..t[:])
+	body: []byte
+	body, _, ok = call(c, req[:])
+	return ok && len(body) > 0 && body[0] == 1, ok
+}
+
+op_quit :: proc(c: ^Conn) -> bool {
+	_, _, ok := call(c, []byte{u8(Op.Quit)})
+	return ok
+}
+
+// Strings in `alloc`.
+op_info :: proc(c: ^Conn, alloc: mem.Allocator) -> (udid, name, build: string, ok: bool) {
+	body: []byte
+	body, _, ok = call(c, []byte{u8(Op.Info)})
+	if !ok do return
+	r := Reader{b = body, ok = true}
+	udid, name, build = rd_str(&r, alloc), rd_str(&r, alloc), rd_str(&r, alloc)
+	return udid, name, build, r.ok
 }
 
 // Strings live in `str_alloc` (the per-step arena); the node columns are reused across steps.
@@ -707,6 +738,7 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 USAGE :: `usage:
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
+  speedrun --stop-agent        stop the iOS agent kept running between runs
 options:
   --device <id>       the device: an Android serial ("adb devices") or a booted iOS
                       simulator's UDID ("xcrun simctl list devices booted")
@@ -714,17 +746,43 @@ options:
                       booted simulator)
   --port <n>          the agent's port (default 7777 on Android, 7778 on iOS)
   --instrument        Android: run the agent as an instrumentation (~60 ms slower per action)
-Starts the agent on the device, runs, then stops it. On Android, animations are turned off,
-as for any UI test, and stay off.`
+Starts the agent on the device, runs, then stops it; on iOS the agent stays up for the next
+run (starting it takes seconds) and stops after 10 idle minutes (SPEEDRUN_IDLE_S). On Android,
+animations are turned off, as for any UI test, and stay off.`
 
 // --flow runs a Maestro flow file; exit status 0 if it passed. On a terminal the output is a
 // live view like Maestro's; --plain (or a pipe) prints one line per command instead.
 // --bench prints the latency breakdown, after a `uiautomator dump` baseline.
 run_cli :: proc(args: []string) -> int {
+	// Maestro's form: [-p <platform>] [--device <id>] [--no-ansi] [--verbose] test [options] <flows>...
+	{
+		platform, device := "", ""
+		for i := 0; i < len(args); i += 1 {
+			a := args[i]
+			name, eq, inline := strings.partition(a, "=")
+			value := inline if eq != "" else (args[i + 1] if i + 1 < len(args) else "")
+			switch name {
+			case "test":
+				return run_test_cli(args[i + 1:], platform, device)
+			case "-p", "--platform":
+				platform = value
+				if eq == "" do i += 1
+				continue
+			case "--device", "--udid":
+				device = value
+				if eq == "" do i += 1
+				continue
+			case "--no-ansi", "--ansi", "--verbose":
+				continue
+			}
+			break
+		}
+	}
 	Mode :: enum {
 		None,
 		Flow,
 		Bench,
+		Stop_Agent,
 	}
 	mode: Mode
 	timings, platform, device := "", "", ""
@@ -743,6 +801,8 @@ run_cli :: proc(args: []string) -> int {
 			mode = .Flow
 		case a == "--bench":
 			mode = .Bench
+		case a == "--stop-agent":
+			mode = .Stop_Agent
 		case a == "-h" || a == "--help":
 			fmt.println(USAGE)
 			return 0
@@ -780,6 +840,15 @@ run_cli :: proc(args: []string) -> int {
 
 	file, target := "", ""
 	iters := 10
+	if mode == .Stop_Agent {
+		port := dev.port if port_given else IOS_PORT
+		if ios_quit(port) {
+			fmt.printf("Stopped the iOS agent on port %d.\n", port)
+		} else {
+			fmt.printf("No iOS agent is running on port %d.\n", port)
+		}
+		return 0
+	}
 	if mode != .None {
 		if err := device_select(&dev, platform, device, port_given); err != "" {
 			fmt.eprintln(err)
@@ -787,7 +856,7 @@ run_cli :: proc(args: []string) -> int {
 		}
 	}
 	switch mode {
-	case .None:
+	case .None, .Stop_Agent:
 		fmt.eprintln(USAGE)
 		return 2
 	case .Flow:
@@ -795,15 +864,22 @@ run_cli :: proc(args: []string) -> int {
 			fmt.eprintln("--flow needs one flow file")
 			return 2
 		}
-		file = positional[0]
-		// Syntax and support errors first, without needing a device.
-		arena: virtual.Arena
-		_ = virtual.arena_init_growing(&arena)
-		defer virtual.arena_destroy(&arena)
-		if _, err := load_flow(file, virtual.arena_allocator(&arena)); err != "" {
-			fmt.eprintln(err)
-			return 2
+		// `--flow <file>` is `test <file>`.
+		o := Test_Options {
+			platform   = platform,
+			timings    = timings,
+			plain      = plain,
+			port       = dev.port,
+			port_given = port_given,
+			instrument = dev.instrument,
 		}
+		append(&o.inputs, positional[0])
+		if device != "" do append(&o.devices, device)
+		for e in env {
+			k, _, v := strings.partition(e, "=")
+			append(&o.env, Env_Pair{k, v})
+		}
+		return run_test(&o)
 	case .Bench:
 		if dev.platform == .IOS {
 			fmt.eprintln("--bench is Android-only for now (on iOS: agent/ios/spike/measure.py)")
@@ -844,14 +920,7 @@ run_cli :: proc(args: []string) -> int {
 	}
 	defer net.close(c.sock)
 
-	if mode == .Bench do return run_bench(&c, target, iters)
-	pairs := make([]Env_Pair, len(env))
-	defer delete(pairs)
-	for e, i in env {
-		k, _, v := strings.partition(e, "=")
-		pairs[i] = {k, v}
-	}
-	return 0 if run_maestro_flow(&c, &dev, file, pairs, timings, plain) else 1
+	return run_bench(&c, target, iters)
 }
 
 // The classic way to read the screen, for comparison: `uiautomator dump`, then read the file.

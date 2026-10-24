@@ -1,6 +1,9 @@
 // Speedrun's iOS agent: an XCUITest runner whose single test serves the agent protocol over
 // TCP until it is stopped. Only an XCTest runner may drive other apps on iOS; on a simulator
 // it listens on the Mac's own loopback, so no port forwarding is needed.
+// Starting it (xcodebuild test-without-building) takes seconds, so it outlives a run: the
+// next one reuses it. It stops on QUIT, or after SPEEDRUN_IDLE_S seconds (default 600)
+// without a client. Each new client starts from fresh state (no cached screen).
 //
 // Wire protocol (big-endian), the Android agent's framing:
 //   request  = u8 op, then op-specific fields
@@ -21,6 +24,12 @@
 //  12 MARK                                  -> (empty)
 //   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms -> as on Android (Settle.swift)
 //  14 SCREENSHOT                            -> bytes png
+//  15 QUIT                                  -> (empty), then the runner stops
+//  17 LAUNCHED str bundle_id, i32 timeout_ms -> u8 ok
+//        after `simctl launch`: the app runs in the foreground and its UI can be read
+//  16 INFO                                  -> str simulator udid, str description, str build
+//        description: Maestro's "<model> - iOS <version> - <udid>"
+//        build = SPEEDRUN_BUILD as given at launch: the host restarts a runner of another build
 // Measurement ops from the spike (Spike.swift; agent/ios/README.md):
 //  40 APP    str bundle_id                  -> u8 state               (target of 41-43)
 //  41 SNAP   u8 mode                        -> u32 count, u32 snapshot_us, u32 walk_us, count * node
@@ -45,12 +54,15 @@ import Darwin
 
 final class SpeedrunAgentUITests: XCTestCase {
     func testServe() throws {
-        let port = UInt16(ProcessInfo.processInfo.environment["SPEEDRUN_PORT"] ?? "") ?? 7778
-        let server = try Server(port: port)
+        let env = ProcessInfo.processInfo.environment
+        let port = UInt16(env["SPEEDRUN_PORT"] ?? "") ?? 7778
+        let idle = TimeInterval(env["SPEEDRUN_IDLE_S"] ?? "") ?? 600
+        let server = try Server(port: port, idleSeconds: idle)
         Thread.detachNewThread { server.run() }
         NSLog("speedrun: listening on 127.0.0.1:\(port)")
         // XCTest APIs belong on the main thread: requests hop here, so keep its run loop going.
-        while true { RunLoop.current.run(until: Date(timeIntervalSinceNow: 1)) }
+        while !server.stopped { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5)) }
+        NSLog("speedrun: stopped")
     }
 }
 
@@ -60,8 +72,12 @@ struct AgentError: Error { let message: String }
 final class Server {
     private let listener: Int32
     private let ops = Ops()
+    private let idleNs: UInt64
+    /// Set by the server thread (QUIT, idle), read by the main thread.
+    private(set) var stopped = false
 
-    init(port: UInt16) throws {
+    init(port: UInt16, idleSeconds: TimeInterval) throws {
+        idleNs = UInt64(max(idleSeconds, 1) * 1_000_000_000)
         listener = socket(AF_INET, SOCK_STREAM, 0)
         var one: Int32 = 1
         setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
@@ -80,15 +96,27 @@ final class Server {
     }
 
     func run() {
-        while true {
+        var lastClient = DispatchTime.now().uptimeNanoseconds
+        while !stopped {
+            var pfd = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+            if poll(&pfd, 1, 1000) <= 0 {
+                if DispatchTime.now().uptimeNanoseconds - lastClient > idleNs {
+                    NSLog("speedrun: idle for \(idleNs / 1_000_000_000) s, stopping")
+                    stopped = true
+                }
+                continue
+            }
             let fd = accept(listener, nil, nil)
             if fd < 0 { continue }
             var one: Int32 = 1
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
             setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+            onMain { ops.reset() }
             serve(Conn(fd: fd))
             close(fd)
+            lastClient = DispatchTime.now().uptimeNanoseconds
         }
+        close(listener)
     }
 
     private func serve(_ conn: Conn) {
@@ -106,6 +134,10 @@ final class Server {
             head.u32(UInt32(body.data.count + 4))
             head.u32(us)
             guard conn.write(head.data + body.data) else { return }
+            if ops.quitRequested {
+                stopped = true
+                return
+            }
         }
     }
 }
