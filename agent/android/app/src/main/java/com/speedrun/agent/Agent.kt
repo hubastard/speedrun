@@ -5,6 +5,7 @@ import android.app.UiAutomation
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.SystemClock
@@ -91,7 +92,9 @@ internal object AgentLog {
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u32 skipped
  *        key events into the focused field (virtual keyboard map, like `adb shell input
- *        text`); skipped = characters with no key sequence, which were not typed.
+ *        text`). Text with a character no key produces (most non-ASCII) is inserted at the
+ *        focused field's cursor instead, whole (insertText). skipped = characters not typed:
+ *        those with no key sequence when no editable field has the input focus.
  *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        count DEL key presses.
  *  12 MARK                                   -> (empty)
@@ -101,6 +104,8 @@ internal object AgentLog {
  *        runs as the shell user through UiAutomation (no shell syntax: the line is split on
  *        spaces). For app control: am force-stop, pm clear, pm grant, am start...
  *  14 SCREENSHOT                             -> bytes png
+ *  21 LABEL    str package                     -> str label ("" when unknown)
+ *        the app's name in the device's language (AppLabel).
  *  20 LOCATION str "providers lat lon interval_ms"
  *                                            -> u8 providers set
  *        test-provider location on each comma-separated provider, sent again every
@@ -140,6 +145,7 @@ private object Op {
     const val PRESS = 13
     const val SCREENSHOT = 14
     const val LOCATION = 20
+    const val LABEL = 21
 }
 
 // SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
@@ -248,6 +254,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.PRESS -> press(input.readInt().toFloat(), input.readInt().toFloat(), input.readInt())
             Op.SCREENSHOT -> screenshot()
             Op.LOCATION -> location(readStr(input))
+            Op.LABEL -> writeStr(AppLabel.of(readStr(input)) ?: "")
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -418,6 +425,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         png.writeTo(body)
     }
 
+    private fun writeStr(s: String) {
+        val b = s.toByteArray(Charsets.UTF_8)
+        val n = minOf(b.size, 0xFFFF)
+        body.writeShort(n)
+        body.write(b, 0, n)
+    }
+
     private fun readStr(input: DataInputStream): String {
         val b = ByteArray(input.readUnsignedShort())
         input.readFully(b)
@@ -540,10 +554,44 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                     keys += e
                 }
             }
+            if (skipped > 0 && insertText(text)) {
+                skipped = 0
+                return@timedAction
+            }
             // Keys reach the app in order, so once the last one is handled, all are.
             keys.forEachIndexed { i, e -> injector.inject(e, sync = i == keys.lastIndex) }
         }
         body.writeInt(skipped)
+    }
+
+    /**
+     * Text no key events can type: replaces the focused field's selection (the cursor), and
+     * the cursor goes after it, as an input method's commitText would (Maestro switches to its
+     * own IME for this). One accessibility action, served on the app's main thread, so the
+     * text is in when it returns. False when no editable field has the input focus.
+     */
+    private fun insertText(text: String): Boolean {
+        val node = ua.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        if (!node.isEditable) return false
+        val current = if (node.isShowingHintText) "" else node.text?.toString() ?: ""
+        var start = node.textSelectionStart
+        var end = node.textSelectionEnd
+        if (start !in 0..current.length || end !in 0..current.length) {
+            start = current.length
+            end = current.length
+        }
+        if (start > end) start = end.also { end = start }
+        val args = Bundle()
+        args.putCharSequence(
+            AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+            current.substring(0, start) + text + current.substring(end),
+        )
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false
+        val cursor = Bundle()
+        cursor.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, start + text.length)
+        cursor.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, start + text.length)
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, cursor)
+        return true
     }
 
     // The last DEL waits until the app has handled it (and so every DEL before it). The IME

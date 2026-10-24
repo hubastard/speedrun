@@ -20,7 +20,16 @@ DEFAULT_PERMISSIONS :: []Env_Pair{{"all", "allow"}}
 set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 	values := make([]Env_Pair, len(perms), context.temp_allocator)
 	for p, i in perms do values[i] = {p.key, eval(r, p.value) or_return}
-	if r.dev.platform == .IOS do return ios_set_permissions(r, app, values)
+	if r.dev.platform == .IOS {
+		// The runner keeps the last permissions it was given (XCTestIOSDevice.setPermissions):
+		// `notifications`, else `all`, is how it answers the notification alert.
+		r.notifications = ""
+		for p in values do if p.key == "all" do r.notifications = p.value
+		for p in values do if p.key == "notifications" do r.notifications = p.value
+		if r.notifications != "allow" && r.notifications != "deny" do r.notifications = ""
+		r.notifications = strings.clone(r.notifications, r.alloc)
+		return ios_set_permissions(r, app, values)
+	}
 	for p in values do if p.key == "all" do android_set_all_permissions(r, app, p.value)
 	for p in values {
 		if p.key == "all" do continue
@@ -196,8 +205,8 @@ IOS_TCC_SERVICES :: [][2]string {
 ios_location_set: map[string]string
 
 // LocalSimulatorUtils.setAppleSimutilsPermissions (through the TCC database, as applesimutils
-// does) and setSimctlPermissions (location). Notifications are not handled: Maestro's runner
-// answers their alert when it shows.
+// does) and setSimctlPermissions (location). Notifications have no setting there: their alert
+// is answered when a read shows it (answer_notification_alert).
 @(private = "file")
 ios_set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 	tcc := make(map[string]string, 16, context.temp_allocator) // service -> allow/deny/unset/limited
@@ -262,6 +271,38 @@ ios_set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 		ios_location_set[strings.clone(key)] = location
 	}
 	return nil
+}
+
+// SystemPermissionHelper + PermissionButtonFinder (Maestro's iOS runner): when the screen
+// holds "… Would Like to Send You Notifications", tap its button for r.notifications. allow:
+// "Allow" or "Continue", else the second button; deny: "Don't Allow" (straight apostrophe, as
+// Maestro compares it) or "Cancel", else the first. Buttons in the foreground app's tree only.
+answer_notification_alert :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
+	if len(r.h.roots) == 0 do return false, true
+	root := r.h.roots[0]
+	end := r.h.roots[1] if len(r.h.roots) > 1 else len(r.h.nodes)
+	alert := false
+	buttons := make([dynamic]int, 0, 4, context.temp_allocator)
+	for i in root ..< end {
+		n := r.h.nodes[i]
+		if strings.contains(strings.to_lower(n.desc, context.temp_allocator), "would like to send you notifications") do alert = true
+		if n.class == "Button" do append(&buttons, i)
+	}
+	if !alert || len(buttons) == 0 do return false, true
+	pick := -1
+	for b in buttons {
+		label := strings.to_lower(r.h.nodes[b].desc, context.temp_allocator)
+		if r.notifications == "allow" && (label == "allow" || label == "continue") ||
+		   r.notifications == "deny" && (strings.contains(label, "don't allow") || label == "cancel") {
+			pick = b
+			break
+		}
+	}
+	if pick < 0 do pick = buttons[1] if r.notifications == "allow" && len(buttons) > 1 else buttons[0]
+	n := r.h.nodes[pick]
+	if r.debug do fmt.printf("      [notification alert: tapping %q]\n", n.desc)
+	if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return false, false
+	return true, true
 }
 
 @(private = "file")
@@ -777,14 +818,26 @@ maestro_distance :: proc(a, b: [2]f64) -> f64 {
 
 // ---- openLink autoVerify (Android) ----------------------------------------------------------
 
-// AndroidDriver.autoVerifyApp. Choosing the app in Android's "Open with" dialog needs the
-// app's name, which this runner cannot read yet: that case is an error. Then Chrome's first
-// run: accept its terms, decline the sign-in.
-auto_verify :: proc(r: ^Runner) -> Err {
-	if !read_screen(r) do return "agent connection lost"
-	for &n in r.h.nodes do if n.kept && n.id == "android:id/button_once" {
-		return "openLink autoVerify: picking the app in Android's \"Open with\" dialog is not supported yet"
+// AndroidDriver.autoVerifyApp. Android's "Open with" dialog: the flow's app, by its name (a
+// regex, as Maestro uses it), then "Just once"; when only a longer text holds the name (the
+// dialog's title for a single app), "Just once" alone. Then Chrome's first run: accept its
+// terms, decline the sign-in.
+auto_verify :: proc(r: ^Runner, app: string) -> Err {
+	if label, ok := op_label(r.c, app, context.temp_allocator); app != "" && ok && label != "" {
+		if r.debug do fmt.printf("      [autoVerify: %s is named %q]\n", app, label)
+		if !read_screen(r) do return "agent connection lost"
+		if el := deepest_text_match(r, compile(r, label) or_return); el >= 0 {
+			n := r.h.nodes[el]
+			if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return "agent connection lost"
+			_ = tap_id(r, "android:id/button_once") or_return
+		} else if deepest_text_match(r, compile(r, fmt.tprintf(".*%s.*", label)) or_return) >= 0 {
+			_ = tap_id(r, "android:id/button_once") or_return
+		}
 	}
+	_ = tap_id(r, "com.android.chrome:id/terms_accept") or_return
+	_ = tap_id(r, "com.android.chrome:id/negative_button") or_return
+	return nil
+
 	tap_id :: proc(r: ^Runner, id: string) -> (tapped: bool, err: Err) {
 		if !read_screen(r) do return false, "agent connection lost"
 		for &n in r.h.nodes do if n.kept && n.id == id && has_bounds(n) {
@@ -793,7 +846,24 @@ auto_verify :: proc(r: ^Runner) -> Err {
 		}
 		return false, nil
 	}
-	_ = tap_id(r, "com.android.chrome:id/terms_accept") or_return
-	_ = tap_id(r, "com.android.chrome:id/negative_button") or_return
-	return nil
+}
+
+// Filters.deepestMatchingElement over text, hint and description: the first match in the
+// hierarchy none of whose descendants match too. -1 when none.
+@(private = "file")
+deepest_text_match :: proc(r: ^Runner, rx: ^Rx) -> int {
+	matches := make([dynamic]int, 0, 8, context.temp_allocator)
+	for i in r.h.order {
+		n := r.h.nodes[i]
+		if has_bounds(n) && (rx_full(rx, n.text) || rx_full(rx, n.hint) || rx_full(rx, n.desc)) do append(&matches, i)
+	}
+	outer: for m in matches {
+		for other in matches {
+			for p := r.h.nodes[other].parent; p >= 0; p = r.h.nodes[p].parent {
+				if p == m do continue outer
+			}
+		}
+		return m
+	}
+	return -1
 }

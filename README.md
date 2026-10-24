@@ -46,7 +46,8 @@ same files.
 - `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
   the supported Maestro commands, each tap checked by an assertion; `flows/javascript` (no
   app needed), `flows/device/settings.yaml` (Android) and `flows/ignite/device.yaml` (iOS)
-  cover scripts and the device commands.
+  cover scripts and the device commands; `flows/notifications` the iOS notification alert
+  (its test app: `flows/notifications/install.sh`).
 - `compare.sh` — runs one flow file with both tools and prints them side by side.
 
 ## Setup
@@ -233,10 +234,11 @@ Supported:
 - YAML as Maestro's parser reads it: a plain (unquoted) value containing `: ` is an error
   ("mapping values are not allowed here"); quote it.
 
-Not supported (an error naming it): AI commands, web flows (`url:`, the `css` selector),
-non-ASCII `inputText` on Android, and picking the app in Android's "Open with" dialog for
-`openLink: autoVerify` (it needs the app's display name; the rest of `autoVerify`, Chrome's
-first-run screens, is done).
+Not supported (an error naming it): AI commands and web flows (`url:`, the `css` selector).
+
+`openLink: autoVerify` on Android picks the flow's app in the "Open with" dialog by its name,
+as Maestro does; the agent reads that name on the device (the app's label in the device's
+language) where Maestro pulls and parses the APK. Then Chrome's first-run screens.
 
 On iOS (simulators), the same commands run, with Maestro's iOS behavior: `back` does nothing
 (use the navigation bar's `BackButton`), `killApp` is `stopApp`, only ENTER, BACKSPACE, HOME and
@@ -245,8 +247,11 @@ attribute mapping; `clearState` reinstalls the app, as Maestro does; `hideKeyboa
 Maestro's does; airplane mode does nothing (no simulator has it). Permissions (`launchApp`
 grants all by default, as in Maestro) are written to the simulator's privacy database the
 way Maestro's `applesimutils` does, so neither is needed; location goes through
-`simctl privacy`. Not yet: answering the notification-permission alert (Maestro's runner taps
-it on its next read), real devices; Safari web views and cross-process window offsets are not
+`simctl privacy`. The notification-permission alert is answered as Maestro's runner does: a
+read that shows it taps Allow or Don't Allow, after the last permissions given (a flow's
+`notifications:`, else `all:`, `allow` by default with `launchApp`); reads come from SpringBoard
+while it is the only active app, so the alert is in the hierarchy, as in Maestro. Not yet:
+real devices; Safari web views and cross-process window offsets are not
 added to the hierarchy. How differs from
 Maestro's runner: settle is XCTest's quiescence checked against the screen instead of
 comparing screenshots, and after the first character the rest of the text is typed as soon as
@@ -297,8 +302,11 @@ Known differences in how, not what:
   first MOVE waits about one frame for the app (a scroll container must intercept it). Flows
   fling like `adb shell input swipe`, as Maestro does; without the fling flag the pointer
   stops before lifting and the content moves by the drag distance.
-- **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`: characters with
-  no key sequence (most non-ASCII) are reported and the command fails. Key events go through
+- **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`. Text with a
+  character no key produces (most non-ASCII, emoji) goes in whole through accessibility
+  instead: it replaces the focused field's selection and the cursor moves after it, as the
+  IME Maestro switches to for such text commits it, without switching IMEs (~10 ms instead of
+  several hundred). With no focused editable field the command fails. Key events go through
   the IME before the field, about 60 ms per key on the emulator, for Maestro too. The last
   key of `TYPE` and `ERASE` waits until the app has handled it: the IME applies DELs
   asynchronously, and spare DELs once deleted the first characters typed next.

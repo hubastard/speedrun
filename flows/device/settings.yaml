@@ -53,6 +53,8 @@ appId: com.android.settings
 - inputRandomPersonName
 - eraseText
 - inputText: ${faker.name().firstName()}
+- inputText: " Café 日本 😀" # no key types these: inserted through accessibility
+- assertVisible: ".* Café 日本 😀"
 - action: back
 # Last: a dark mode switch makes apps restart, slowly on a busy emulator.
 - setPermissions:

@@ -86,6 +86,7 @@ Runner :: struct {
 	flow_dir:             string, // this flow's debug output folder ("" for none)
 	recording:            Recording, // startRecording's, until stopRecording or the end
 	location:             Location_Mock, // Android's mock location (setLocation, travel)
+	notifications:        string, // iOS: "allow" or "deny" answers the notification alert (system.odin)
 }
 
 Rx :: struct {
@@ -542,7 +543,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		}
 		_ = shell(r, "am start -a android.intent.action.VIEW -d %s %s", link, browser)
 		settle(r) or_return
-		if d.auto_verify do auto_verify(r) or_return
+		if d.auto_verify do auto_verify(r, eval(r, d.app_id) or_return) or_return
 		return true, nil
 	case Run_Flow:
 		if cond, has := d.cond.?; has {
@@ -663,7 +664,7 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 	_, skipped, ok := op_type(r.c, text, r.alloc)
 	if !ok do return "agent connection lost"
 	if skipped > 0 {
-		return fmt.aprintf("%d characters of \"%s\" have no key sequence (non-ASCII text is not supported yet)", skipped, text, allocator = r.alloc)
+		return fmt.aprintf("Could not type \"%s\": %d characters have no key sequence, and no editable field has the input focus to insert them into", text, skipped, allocator = r.alloc)
 	}
 	return settle(r)
 }
@@ -1313,7 +1314,6 @@ text_match :: proc(rx: ^Rx, value: string) -> bool {
 }
 
 // regex.matches(value) || regex.pattern == value
-@(private = "file")
 rx_full :: proc(rx: ^Rx, value: string) -> bool {
 	if rx.literal do return strings.equal_fold(rx.pattern, value)
 	if value == rx.pattern do return true
@@ -1325,7 +1325,6 @@ rx_full :: proc(rx: ^Rx, value: string) -> bool {
 // Java patterns Odin's regex engine lacks: rejected rather than matched differently.
 JAVA_ONLY_REGEX :: []string{"(?=", "(?!", "(?<=", "(?<!", "(?<", "(?i", "(?s", "(?m", "(?u", "(?x", "\\p{", "\\P{", "\\Q", "\\k<", "++", "*+", "?+", "}+"}
 
-@(private = "file")
 compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	if cached, ok := &r.regexes[pattern]; ok do return cached, nil
 	for j in JAVA_ONLY_REGEX do if strings.contains(pattern, j) {
@@ -1519,6 +1518,21 @@ script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 
 // Reads every window into r.h and applies Maestro's bounds filter.
 read_screen :: proc(r: ^Runner) -> bool {
+	if !read_screen_once(r) do return false
+	// Maestro's iOS runner answers the notification alert on its hierarchy reads.
+	if r.dev.platform == .IOS && r.notifications != "" {
+		tapped, ok := answer_notification_alert(r)
+		if !ok do return false
+		if tapped {
+			if settle(r) != nil do return false
+			return read_screen_once(r)
+		}
+	}
+	return true
+}
+
+@(private = "file")
+read_screen_once :: proc(r: ^Runner) -> bool {
 	virtual.arena_free_all(&r.screen_arena)
 	alloc := virtual.arena_allocator(&r.screen_arena)
 	t := time.tick_now()

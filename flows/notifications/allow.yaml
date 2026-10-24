@@ -1,0 +1,7 @@
+# The notification-permission alert, answered as Maestro's iOS runner does (launchApp's
+# default permissions, all: allow). NotifTest: ./flows/notifications/install.sh
+appId: com.speedrun.notiftest
+---
+- launchApp:
+    clearState: true # iOS asks again only after a reinstall
+- assertVisible: "Granted"

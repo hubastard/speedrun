@@ -94,12 +94,23 @@ final class Screen {
         return true
     }
 
-    /// The app in the foreground, SpringBoard when none is (home screen). The last one found
-    /// is checked first (one state query); otherwise XCTest's accessibility client lists the
-    /// active apps and testmanagerd names them.
+    /// The app in the foreground, SpringBoard when none is: XCTest's accessibility client lists
+    /// the active apps (~3 ms; testmanagerd names each process once). SpringBoard alone is the
+    /// home screen, or one of its alerts over the app (a permission request): Maestro reads
+    /// SpringBoard then, which shows the alert, and answers a notification request there.
+    /// The last app found is kept while it is listed.
     func foregroundApp() -> XCUIApplication {
-        if let app = foreground, app.state == .runningForeground { return app }
-        let ids = Private.activeBundleIDs().filter { $0 != "com.apple.springboard" }
+        let active = Private.activeBundleIDs()
+        if active == ["com.apple.springboard"] {
+            foreground = nil
+            foregroundID = ""
+            return springboard
+        }
+        if let app = foreground {
+            if active.contains(foregroundID) { return app }
+            if active.isEmpty && app.state == .runningForeground { return app } // no list: as before
+        }
+        let ids = active.filter { $0 != "com.apple.springboard" }
         for id in ids {
             let app = XCUIApplication(bundleIdentifier: id)
             if ids.count > 1 && app.state != .runningForeground { continue }

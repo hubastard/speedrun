@@ -171,6 +171,7 @@ Open_Link :: struct {
 	link:        string,
 	auto_verify: bool,
 	browser:     bool,
+	app_id:      string, // the flow's: autoVerify picks it in Android's "Open with" dialog
 }
 Sub_Flow :: struct {
 	commands:    [dynamic]Cmd,
@@ -793,7 +794,7 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 		}
 		c.data = d
 	case "openLink":
-		d: Open_Link
+		d := Open_Link{app_id = l.app_id}
 		if arg.kind == .Scalar {
 			d.link = arg.text
 		} else {

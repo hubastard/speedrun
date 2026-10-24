@@ -35,6 +35,7 @@ Op :: enum u8 {
 	Orientation = 18, // iOS agent: rotate the device (UIDeviceOrientation)
 	Appearance  = 19, // iOS agent: read or set light/dark mode
 	Location    = 20, // Android agent: test-provider location, re-sent on a timer
+	Label       = 21, // Android agent: an app's name in the device's language
 }
 
 KEYCODE_BACK :: 4
@@ -245,6 +246,16 @@ op_location :: proc(c: ^Conn, providers: []string, latitude, longitude: string, 
 	body, _, ok = call(c, req)
 	if !ok || len(body) < 1 do return 0, false
 	return int(body[0]), true
+}
+
+// Android: the app's name as the launcher shows it, "" when unknown. In `alloc`.
+op_label :: proc(c: ^Conn, app: string, alloc: mem.Allocator) -> (label: string, ok: bool) {
+	body: []byte
+	body, _, ok = call(c, str_request(.Label, app, context.temp_allocator))
+	if !ok do return
+	r := Reader{b = body, ok = true}
+	label = rd_str(&r, alloc)
+	return label, r.ok
 }
 
 op_quit :: proc(c: ^Conn) -> bool {
