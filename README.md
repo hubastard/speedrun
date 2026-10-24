@@ -33,8 +33,10 @@ same files.
     stops it at exit (Ctrl-C too).
   - `yaml.odin`, `flow.odin`, `maestro.odin`, `console.odin`: runs Maestro flow files and
     prints them like Maestro does (see below).
-- `build.sh` — builds the agent APK, then `./speedrun` around it. Run it once (and after
-  changing `agent/android/` or `host/`); nothing rebuilds at run time.
+  - `js.odin`, `js/`: JavaScript for flows, on QuickJS-ng (vendored in `js/quickjs-ng`, MIT):
+    `engine.c` wraps it, `prelude.js` sets up what Maestro's scripts see.
+- `build.sh` — builds the agent APK and the JavaScript engine, then `./speedrun` around them.
+  Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
 - `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
   the supported Maestro commands, each tap checked by an assertion.
 - `compare.sh` — runs one flow file with both tools and prints them side by side.
@@ -44,13 +46,15 @@ same files.
 1. Android: the SDK with `adb` on PATH, an emulator running (or a device with USB debugging).
    iOS: Xcode (27 tested) and a booted simulator.
 2. To build: JDK 17 (Gradle comes from the wrapper in `agent/android/`, 8.14.3, downloaded on first
-   run) and Odin on PATH; Xcode for the iOS agent (skipped without it). Then, once:
+   run), Odin and a C compiler (`cc`) on PATH; Xcode for the iOS agent (skipped without it).
+   Then, once:
 
 ```
 ./build.sh
 ```
 
-`./speedrun` then needs only `adb` (Android) or Xcode's command-line tools (iOS).
+`./speedrun` then needs only `adb` (Android) or Xcode's command-line tools (iOS), and `curl`
+for flows whose scripts make HTTP requests.
 
 ## Run
 
@@ -184,7 +188,8 @@ Supported:
   `scroll`, `scrollUntilVisible`, `swipe` (direction, from an element, start/end in pixels
   or percent), `waitForAnimationToEnd`, `openLink`, `takeScreenshot`, `clearKeychain`
   (a no-op on Android), `runFlow` (file or commands, `when`, `env`), `repeat` (`times`,
-  `while`), `retry`. Every command takes `label` and `optional`.
+  `while`), `retry`, `evalScript`, `runScript` (`file`, `env`, `when`), `assertTrue`,
+  `copyTextFrom`, `setClipboard`, `pasteText`. Every command takes `label` and `optional`.
 - Selectors: `text` and `id` (case-insensitive regexes over the whole value; text also
   matches hint, content description and error; id also matches after the `/`), `index`,
   `enabled`, `selected`, `checked`, `focused`, `width`/`height`/`tolerance`, `below`,
@@ -192,13 +197,24 @@ Supported:
   also `point`, `repeat`, `delay`, `retryTapIfNoChange`, `waitToSettleTimeoutMs`.
 - Conditions: `visible`, `notVisible`, `platform`, `true`.
 - Env: `-e KEY=VALUE`, `MAESTRO_*` shell variables and `MAESTRO_FILENAME`, then the flow's
-  `env:`, which wins (Maestro's order); sub-flows get their own scope. A default that `-e`
-  can override is written as in Maestro: `env: { TIMES: ${TIMES || 1} }`. `${...}` takes a
-  variable name, or `||` fallbacks over names and number or string literals.
+  `env:`, which wins (Maestro's order); sub-flows get their own scope, with the caller's
+  `env:` defined before the file's own. The values of one `env:` are evaluated before any is
+  defined, so they do not see each other. A default that `-e` can override is written as in
+  Maestro: `env: { TIMES: ${TIMES || 1} }`.
+- JavaScript, as Maestro runs it on GraalJS, here on QuickJS-ng (one engine per flow):
+  `${...}` anywhere in a command is a script whose value replaces it (`\${...}` stays as
+  written); each command's scripts run once, before it does. Undeclared names are
+  `undefined`, env variables are global strings, a script's own variables and globals do not
+  outlive it; `output` and `maestro` (`platform`, `copiedText`) do. Also `json()`,
+  `relativePoint()`, `console.log` (its lines show under the command, in `--plain` output
+  too) and `http.get/post/put/delete/request` with okhttp's rules (`headers`, a string
+  `body`, `multipartForm`; the reply's `ok`, `status`, `body`, lowercased `headers`), sent
+  through `curl`. `faker` is not there yet: using it fails the command, naming the call.
+- YAML as Maestro's parser reads it: a plain (unquoted) value containing `: ` is an error
+  ("mapping values are not allowed here"); quote it.
 
-Not supported yet (an error naming it): other JavaScript (`&&`, `??`, calls, arithmetic;
-`evalScript`, `runScript`, `assertTrue`, `copyTextFrom`), `inputRandom*`, `setClipboard`,
-`pasteText`, `setPermissions` and `launchApp.permissions`/`arguments`, `setLocation`,
+Not supported yet (an error naming it): `faker` in scripts, `inputRandom*`,
+`setPermissions` and `launchApp.permissions`/`arguments`, `setLocation`,
 `travel`, `setOrientation`, recording, `addMedia`, airplane and dark mode, AI commands,
 `assertScreenshot`, `takeScreenshot.cropOn`, `openLink` with `browser`/`autoVerify`,
 `traits`/`css` selectors, `waitUntilVisible: true`, non-ASCII `inputText`, web flows.

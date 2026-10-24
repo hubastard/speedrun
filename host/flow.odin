@@ -112,7 +112,8 @@ Open_Link :: struct {
 }
 Sub_Flow :: struct {
 	commands:    [dynamic]Cmd,
-	env:         [dynamic]Env_Pair,
+	call_env:    [dynamic]Env_Pair, // the caller's `env:` (runFlow, retry), defined first
+	env:         [dynamic]Env_Pair, // a file's own `env:`
 	on_start:    [dynamic]Cmd, // a file's onFlowStart/onFlowComplete
 	on_complete: [dynamic]Cmd,
 	source:      string, // file name, if any
@@ -133,6 +134,23 @@ Retry :: struct {
 Screenshot :: struct {
 	path: string,
 }
+Eval_Script :: struct {
+	script: string, // its ${...} run as JavaScript
+}
+Run_Script :: struct {
+	file:   string, // as written
+	dir:    string, // http multipart files resolve from it
+	script: string, // the file's JavaScript, read at load time as Maestro does
+	env:    [dynamic]Env_Pair,
+	cond:   Maybe(Condition),
+}
+Copy_Text :: struct {
+	sel: ^Selector,
+}
+Set_Clipboard :: struct {
+	text: string,
+}
+Paste_Text :: struct {}
 
 Cmd_Data :: union {
 	Launch_App,
@@ -151,6 +169,11 @@ Cmd_Data :: union {
 	Repeat,
 	Retry,
 	Screenshot,
+	Eval_Script,
+	Run_Script,
+	Copy_Text,
+	Set_Clipboard,
+	Paste_Text,
 }
 
 Cmd :: struct {
@@ -641,6 +664,82 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 		if v := yaml_get(arg, "maxRetries"); v != nil do d.max_retries = str(l, v) or_return
 		common(l, arg, &c) or_return
 		c.data = d
+	case "evalScript":
+		d: Eval_Script
+		if arg.kind == .Scalar {
+			d.script = arg.text
+		} else {
+			fields(l, arg, name, {"script", "label", "optional"}) or_return
+			if v := yaml_get(arg, "script"); v != nil do d.script = str(l, v) or_return
+			// YamlEvalScript's map form reads `script` and `label` only: `optional` is ignored.
+			if v := yaml_get(arg, "label"); v != nil do c.label = str(l, v) or_return
+		}
+		c.data = d
+	case "runScript":
+		d: Run_Script
+		if arg.kind == .Scalar {
+			d.file = arg.text
+		} else {
+			fields(l, arg, name, {"file", "env", "when", "label", "optional"}) or_return
+			v := yaml_get(arg, "file")
+			if v == nil {
+				fail(l, arg, "runScript needs `file`")
+				return
+			}
+			d.file = str(l, v) or_return
+			if e := yaml_get(arg, "env"); e != nil do d.env = env_map(l, e) or_return
+			if w := yaml_get(arg, "when"); w != nil do d.cond = condition(l, w) or_return
+			common(l, arg, &c) or_return
+		}
+		path := d.file
+		if !filepath.is_abs(path) do path, _ = filepath.join({filepath.dir(l.file), d.file}, l.alloc)
+		data, rerr := os.read_entire_file(path, l.alloc)
+		if rerr != nil {
+			fail(l, arg, "Script file does not exist: %s", path)
+			return
+		}
+		append(&l.files, path)
+		d.script, d.dir = string(data), filepath.dir(path)
+		c.data = d
+	case "assertTrue":
+		d: Assert
+		cond: string
+		if arg.kind == .Scalar {
+			cond = arg.text
+		} else {
+			fields(l, arg, name, {"condition", "label", "optional"}) or_return
+			if v := yaml_get(arg, "condition"); v != nil do cond = str(l, v) or_return
+			common(l, arg, &c) or_return
+		}
+		d.cond.script = cond
+		c.data = d
+	case "copyTextFrom":
+		d := Copy_Text {
+			sel = selector(l, arg, false) or_return,
+		}
+		if arg.kind == .Map do common(l, arg, &c) or_return
+		c.data = d
+	case "setClipboard":
+		d: Set_Clipboard
+		if arg.kind == .Scalar {
+			d.text = arg.text
+		} else {
+			fields(l, arg, name, {"text", "label", "optional"}) or_return
+			v := yaml_get(arg, "text")
+			if v == nil {
+				fail(l, arg, "setClipboard needs `text`")
+				return
+			}
+			d.text = str(l, v) or_return
+			common(l, arg, &c) or_return
+		}
+		c.data = d
+	case "pasteText":
+		if arg != nil {
+			fields(l, arg, name, {"label", "optional"}) or_return
+			common(l, arg, &c) or_return
+		}
+		c.data = Paste_Text{}
 	case:
 		fail(l, y, "`%s` is a Maestro command this runner does not support yet", name)
 		return
@@ -661,13 +760,9 @@ sub_flow :: proc(l: ^Loader, arg: ^Yaml, name: string) -> (s: Sub_Flow, ok: bool
 	} else {
 		s.commands = commands(l, cmds) or_return
 	}
-	if v := yaml_get(arg, "env"); v != nil {
-		// Maestro defines the caller's `env:` first, then the sub-flow file's own `env:`,
-		// which therefore wins on the same name.
-		env := env_map(l, v) or_return
-		append(&env, ..s.env[:])
-		s.env = env
-	}
+	// Maestro defines the caller's `env:` first, then the sub-flow file's own `env:`,
+	// which therefore wins on the same name and sees the caller's values.
+	if v := yaml_get(arg, "env"); v != nil do s.call_env = env_map(l, v) or_return
 	return s, true
 }
 

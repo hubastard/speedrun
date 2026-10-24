@@ -32,9 +32,9 @@ Flows:
 - `bench_rn.yaml` — a scenario for both tools: login, the API list, favorites (switch, long
   presses), scrolling down and up, text input in the showroom, tabs.
   `./compare.sh flows/ignite/bench_rn.yaml -e TIMES=3` (with `DEVICE=<udid>` on iOS).
-- Ignite's own: `./speedrun test -e MAESTRO_APP_ID=com.speedrun.ignitedemo
-  apps/ignite/.maestro/flows/Login.yaml`. `FavoritePodcast.yaml` uses `copyTextFrom` and
-  `${maestro.copiedText}`, not supported yet.
+- Ignite's own, both pass: `./speedrun test -e MAESTRO_APP_ID=com.speedrun.ignitedemo
+  apps/ignite/.maestro/flows` (`FavoritePodcast.yaml` copies a title with `copyTextFrom`,
+  then long-presses and asserts `${maestro.copiedText}`: flow 27.3 s vs Maestro's 37.9 s).
 
 Learned on it: on this React Native list a swipe's end hold changes how far it scrolls (510,
 700 and 1200 points for 601, 300 and 100 ms), so swipes stay exactly Maestro's; a field's

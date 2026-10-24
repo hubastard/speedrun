@@ -94,7 +94,7 @@ theirs = [e for e in report
 # Maestro's internal command names for the YAML commands speedrun runs.
 NAMES = {
     "tapOnElement": {"tapOn", "doubleTapOn", "longPressOn"}, "tapOnPointV2Command": {"tapOn", "doubleTapOn", "longPressOn"},
-    "assertConditionCommand": {"assertVisible", "assertNotVisible", "extendedWaitUntil"},
+    "assertConditionCommand": {"assertVisible", "assertNotVisible", "extendedWaitUntil", "assertTrue"},
     "backPressCommand": {"back"}, "hideKeyboardCommand": {"hideKeyboard"},
     "inputTextCommand": {"inputText"}, "eraseTextCommand": {"eraseText"}, "pressKeyCommand": {"pressKey"},
     "scrollCommand": {"scroll"}, "scrollUntilVisible": {"scrollUntilVisible"}, "swipeCommand": {"swipe"},
@@ -102,7 +102,9 @@ NAMES = {
     "launchAppCommand": {"launchApp"}, "stopAppCommand": {"stopApp"}, "killAppCommand": {"killApp"},
     "clearStateCommand": {"clearState"}, "clearKeychainCommand": {"clearKeychain"},
     "runFlowCommand": {"runFlow"}, "repeatCommand": {"repeat"}, "retryCommand": {"retry"},
-    "takeScreenshotCommand": {"takeScreenshot"},
+    "takeScreenshotCommand": {"takeScreenshot"}, "evalScriptCommand": {"evalScript"},
+    "runScriptCommand": {"runScript"}, "copyTextCommand": {"copyTextFrom"},
+    "setClipboardCommand": {"setClipboard"}, "pasteTextCommand": {"pasteText"},
 }
 
 # Both tools record commands in the order they start, containers before their children.

@@ -52,6 +52,8 @@ Record :: struct {
 	duration_ms: f64 `json:"duration_ms"`,
 	error:       string `json:"error,omitempty"`,
 	start_ms:    i64 `json:"start_ms"`, // Unix time
+	logs:        [dynamic]string `json:"logs,omitempty"`, // console.log lines of its scripts
+	evaluated:   string `json:"evaluated,omitempty"`, // description with its ${...} values
 }
 
 Runner :: struct {
@@ -71,6 +73,15 @@ Runner :: struct {
 	debug:                bool, // SPEEDRUN_DEBUG: print every hierarchy read and shell command
 	view:                 View, // console output (console.odin)
 	reads, read_ms_total: f64,
+	// JavaScript (js.odin)
+	js:                   ^Js, // started on the first script
+	env_gen, js_env_gen:  int, // env changes; the last one the engine has
+	evals:                [dynamic]map[string]string, // ${...} values of each running command
+	log_rec:              int, // record of the running command, for console.log (-1: none)
+	log_node:             ^View_Node,
+	script_dir:           string, // of the running runScript
+	copied_text:          Maybe(string), // maestro.copiedText
+	http_seq:             int,
 }
 
 Rx :: struct {
@@ -139,13 +150,16 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 	for p, k in flow.properties do result.properties[k] = {strings.clone(p.key, alloc), strings.clone(p.value, alloc)}
 
 	r := Runner {
-		c     = c,
-		dev   = dev,
-		alloc = run_alloc,
-		debug = os.get_env("SPEEDRUN_DEBUG", run_alloc) != "",
+		c       = c,
+		dev     = dev,
+		alloc   = run_alloc,
+		debug   = os.get_env("SPEEDRUN_DEBUG", run_alloc) != "",
+		env_gen = 1,
+		log_rec = -1,
 	}
 	_ = virtual.arena_init_growing(&r.screen_arena)
 	defer virtual.arena_destroy(&r.screen_arena)
+	defer js_stop(&r)
 
 	// Display size: the extent of all window roots, in the current orientation.
 	if !read_screen(&r) {
@@ -200,7 +214,7 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 		// TestSuiteInteractor: "N. <description>", "850ms" / "1.2s".
 		d := fmt.tprintf("%.1fs", rec.duration_ms / 1000) if rec.duration_ms >= 1000 else fmt.tprintf("%dms", int(rec.duration_ms))
 		result.steps[k] = {
-			fmt.aprintf("%d. %s", k + 1, evaluated(&r, rec.description), allocator = alloc),
+			fmt.aprintf("%d. %s", k + 1, rec.evaluated if rec.evaluated != "" else rec.description, allocator = alloc),
 			strings.clone(rec.status, alloc),
 			strings.clone(d, alloc),
 		}
@@ -238,7 +252,10 @@ MAESTRO_COMMAND_NAMES :: [][2]string {
 	{"launchApp", "launchAppCommand"}, {"stopApp", "stopAppCommand"}, {"killApp", "killAppCommand"},
 	{"clearState", "clearStateCommand"}, {"clearKeychain", "clearKeychainCommand"},
 	{"runFlow", "runFlowCommand"}, {"repeat", "repeatCommand"}, {"retry", "retryCommand"},
-	{"takeScreenshot", "takeScreenshotCommand"},
+	{"takeScreenshot", "takeScreenshotCommand"}, {"evalScript", "evalScriptCommand"},
+	{"runScript", "runScriptCommand"}, {"assertTrue", "assertConditionCommand"},
+	{"copyTextFrom", "copyTextCommand"}, {"setClipboard", "setClipboardCommand"},
+	{"pasteText", "pasteTextCommand"},
 }
 
 // The flow's debug output, laid out as Maestro's artifacts bundle: commands.json (each
@@ -272,6 +289,7 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 		cmd[name] = fields
 		entries[k] = {cmd, {rec.status, rec.start_ms, i64(rec.duration_ms), rec.seq, rec.error}}
 		fmt.sbprintf(&log, "%s%s %s (%.0f ms)\n", strings.repeat("  ", rec.depth, context.temp_allocator), rec.description, rec.status, rec.duration_ms)
+		for line in rec.logs do fmt.sbprintf(&log, "JsConsole: %s\n", line)
 		if rec.error != "" do fmt.sbprintf(&log, "%s\n", rec.error)
 	}
 	if data, err := json.marshal(entries, {pretty = true}, context.temp_allocator); err == nil {
@@ -339,9 +357,20 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 		view_started(r, node)
 		t := time.tick_now()
 		r.depth += 1
+		// Maestro evaluates a command's scripts once, before running it: its ${...} values are
+		// kept while it runs (a lookup polling the screen does not run them again).
+		append(&r.evals, nil)
+		saved_rec, saved_node := r.log_rec, r.log_node
+		r.log_rec, r.log_node = seq, node
 		mutating, err := exec(r, &c)
-		r.depth -= 1
 		rec := &r.records[seq]
+		// evalScript's description is its script as written (EvalScriptCommand keeps it).
+		if _, is_eval := c.data.(Eval_Script); !is_eval && strings.contains(rec.description, "${") {
+			rec.evaluated = evaluated(r, rec.description)
+		}
+		r.log_rec, r.log_node = saved_rec, saved_node
+		pop(&r.evals)
+		r.depth -= 1
 		rec.duration_ms = us(t) / 1000
 		msg, failed := err.?
 		switch {
@@ -425,13 +454,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		if !met do return false, fmt.aprintf("Assertion is false: %s\n%s", evaluated(r, condition_description(d.cond)), screen_summary(r), allocator = r.alloc)
 		return false, nil
 	case Input_Text:
-		text := eval(r, d.text) or_return
-		_, skipped, ok := op_type(r.c, text, r.alloc)
-		if !ok do return true, "agent connection lost"
-		if skipped > 0 {
-			return true, fmt.aprintf("%d characters of \"%s\" have no key sequence (non-ASCII text is not supported yet)", skipped, text, allocator = r.alloc)
-		}
-		return true, settle(r)
+		return true, type_text(r, eval(r, d.text) or_return)
 	case Erase_Text:
 		if _, ok := op_erase(r.c, i32(d.count)); !ok do return true, "agent connection lost"
 		return true, settle(r)
@@ -502,6 +525,8 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		node := r.view.nodes[c]
 		for runs < max_runs {
 			if cond, has := d.cond.?; has {
+				// RepeatCommand.checkCondition evaluates its scripts again each time.
+				clear(&r.evals[len(r.evals) - 1])
 				met := condition_met(r, cond, c.optional, -1) or_return
 				if !met do break
 			}
@@ -536,15 +561,60 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		if !ok do return false, "agent connection lost"
 		if !write_file(fmt.aprintf("%s.png", path, allocator = r.alloc), png) do return false, "cannot write the screenshot"
 		return false, nil
+	case Eval_Script:
+		// Scripts can make requests that change the app: mutating, as in Maestro.
+		_ = eval(r, d.script) or_return
+		return true, nil
+	case Run_Script:
+		if cond, has := d.cond.?; has {
+			met := condition_met(r, cond, c.optional, -1) or_return
+			if !met do return false, SKIPPED
+		}
+		// Its env on top of the current one, for this script only (runInSubScope).
+		push_scope(r)
+		defer pop_scope(r)
+		define_env(r, d.env[:]) or_return
+		saved := r.script_dir
+		r.script_dir = d.dir
+		defer r.script_dir = saved
+		_ = js_run(r, d.script) or_return
+		return true, nil
+	case Copy_Text:
+		el := find_element(r, d.sel, c.optional, -1) or_return
+		n := r.h.nodes[el]
+		// Orchestra.resolveText: text, hint, accessibility text, error (else empty).
+		text := n.text
+		if text == "" do text = n.hint
+		if text == "" do text = n.desc
+		if text == "" do text = n.error
+		return false, set_copied_text(r, strings.clone(text, r.alloc))
+	case Set_Clipboard:
+		return false, set_copied_text(r, eval(r, d.text) or_return)
+	case Paste_Text:
+		text, has := r.copied_text.?
+		if !has do return true, nil
+		return true, type_text(r, text)
 	}
 	return false, "unhandled command"
 }
 
-// A sub-flow: its own env scope, its env pairs, then onFlowStart, commands, onFlowComplete.
+@(private = "file")
+type_text :: proc(r: ^Runner, text: string) -> Err {
+	_, skipped, ok := op_type(r.c, text, r.alloc)
+	if !ok do return "agent connection lost"
+	if skipped > 0 {
+		return fmt.aprintf("%d characters of \"%s\" have no key sequence (non-ASCII text is not supported yet)", skipped, text, allocator = r.alloc)
+	}
+	return settle(r)
+}
+
+// A sub-flow: its own env scope, the caller's env then its own, then onFlowStart, commands,
+// onFlowComplete.
 @(private = "file")
 run_sub :: proc(r: ^Runner, s: Sub_Flow) -> (mutating: bool, err: Err) {
 	push_scope(r)
-	defer pop(&r.env)
+	defer pop_scope(r)
+	if e := define_env(r, s.call_env[:]); e != nil do return false, e
 	if e := define_env(r, s.env[:]); e != nil do return false, e
 	before := len(r.records)
 	ok := true
@@ -744,7 +814,7 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 	if p, has := cond.platform.?; has && !strings.equal_fold(p, "ios" if r.dev.platform == .IOS else "android") do return false, nil
 	if s, has := cond.script.?; has {
 		v := eval(r, s) or_return
-		if v == "" || strings.equal_fold(v, "false") || v == "undefined" || v == "null" do return false, nil
+		if strings.trim_space(v) == "" || strings.equal_fold(v, "false") || v == "undefined" || v == "null" do return false, nil
 		if f, ok := strconv.parse_f64(v); ok && f == 0 do return false, nil
 	}
 	limit := timeout if timeout >= 0 else OPTIONAL_LOOKUP_TIMEOUT_MS
@@ -1166,91 +1236,99 @@ parse_timeout :: proc(r: ^Runner, raw: string) -> (ms: i64, err: Err) {
 push_scope :: proc(r: ^Runner) {
 	m := make(map[string]string, 8, r.alloc)
 	append(&r.env, m)
+	r.env_gen += 1
 }
 
 @(private = "file")
+pop_scope :: proc(r: ^Runner) {
+	pop(&r.env)
+	r.env_gen += 1
+}
+
+// DefineVariablesCommand: every value is evaluated first, then all are defined (a value
+// does not see the keys before it in the same `env:`).
+@(private = "file")
 define_env :: proc(r: ^Runner, pairs: []Env_Pair) -> Err {
-	for p in pairs {
-		v := eval(r, p.value) or_return
-		r.env[len(r.env) - 1][p.key] = v
-	}
+	if len(pairs) == 0 do return nil
+	append(&r.evals, nil)
+	defer pop(&r.evals)
+	values := make([]string, len(pairs), context.temp_allocator)
+	for p, k in pairs do values[k] = eval(r, p.value) or_return
+	for p, k in pairs do r.env[len(r.env) - 1][p.key] = values[k]
+	r.env_gen += 1
 	return nil
 }
 
-// Replaces `${NAME}` with the variable's value (`\${` stays literal). Maestro evaluates
-// `${...}` as JavaScript. Supported here: a variable name, and `||` fallbacks over variable
-// names and number or string literals (`${TIMES || 1}`, Maestro's way to give a default).
-// Anything else is an error rather than a wrong value.
-@(private = "file")
+// Env.evaluateScripts: each `${script}` is replaced by the script's value (JavaScript, see
+// js.odin), an escaped `\${...}` stays as written without its backslash. Maestro's regexes
+// exactly: a script runs to the last `}` before the next `$`; a blank one gives "".
 eval :: proc(r: ^Runner, s: string) -> (out: string, err: Err) {
 	if !strings.contains(s, "${") do return s, nil
 	b := strings.builder_make(r.alloc)
 	i := 0
-	for i < len(s) {
-		if s[i] == '\\' && strings.has_prefix(s[i + 1:], "${") {
-			strings.write_string(&b, "${")
-			i += 3
+	for {
+		j := strings.index(s[i:], "${")
+		if j < 0 do break
+		at := i + j
+		script, ok := script_at(s, at + 2)
+		if !ok || (at > 0 && s[at - 1] == '\\') {
+			strings.write_string(&b, s[i:at + 1])
+			i = at + 1
 			continue
 		}
-		if !strings.has_prefix(s[i:], "${") {
-			strings.write_byte(&b, s[i])
-			i += 1
-			continue
-		}
-		close := strings.index_byte(s[i:], '}')
-		if close < 0 {
-			strings.write_string(&b, s[i:])
-			break
-		}
-		expr := strings.trim_space(s[i + 2:i + close])
-		i += close + 1
-		if expr == "" do continue
-		strings.write_string(&b, eval_expr(r, expr) or_return)
+		strings.write_string(&b, s[i:at])
+		if strings.trim_space(script) != "" do strings.write_string(&b, script_value(r, script) or_return)
+		i = at + 2 + len(script) + 1
 	}
+	strings.write_string(&b, s[i:])
+	done := strings.to_string(b)
+	if !strings.contains(done, "\\${") do return done, nil
+
+	// Then `\${...}` loses its backslash.
+	b = strings.builder_make(r.alloc)
+	i = 0
+	for {
+		j := strings.index(done[i:], "\\${")
+		if j < 0 do break
+		at := i + j
+		script, ok := script_at(done, at + 3)
+		if !ok {
+			strings.write_string(&b, done[i:at + 1])
+			i = at + 1
+			continue
+		}
+		strings.write_string(&b, done[i:at])
+		end := at + 3 + len(script) + 1
+		strings.write_string(&b, done[at + 1:end])
+		i = end
+	}
+	strings.write_string(&b, done[i:])
 	return strings.to_string(b), nil
 }
 
-// `a || b || ...`: the first operand that is defined and truthy (JavaScript's `||`; env values
-// are strings, so only "" is falsy among them), else the last one.
+// `([^$]*)}` from `start`: up to the last `}` before the next `$`.
 @(private = "file")
-eval_expr :: proc(r: ^Runner, expr: string) -> (out: string, err: Err) {
-	// (not fmt below: it reads `{` as a format directive)
-	unsupported := strings.concatenate(
-		{"`${", expr, "}`: JavaScript expressions are not supported, only `${NAME}` and `${NAME || default}`"},
-		r.alloc,
-	)
-	operands := strings.split(expr, "||", r.alloc)
-	for raw, k in operands {
-		op := strings.trim_space(raw)
-		value, defined, truthy := "", false, false
-		switch {
-		case op == "":
-			return "", unsupported
-		case len(op) >= 2 && (op[0] == '\'' || op[0] == '"') && op[len(op) - 1] == op[0]:
-			value = op[1:len(op) - 1]
-			if strings.index_byte(value, op[0]) >= 0 || strings.index_byte(value, '\\') >= 0 do return "", unsupported
-			defined, truthy = true, value != ""
-		case (op[0] >= '0' && op[0] <= '9') || op[0] == '-' || op[0] == '.':
-			f, ok := strconv.parse_f64(op)
-			if !ok do return "", unsupported
-			// JavaScript prints integral numbers without a fraction.
-			value = fmt.aprintf("%d", i64(f), allocator = r.alloc) if f == math.trunc(f) && math.abs(f) < 1e15 else fmt.aprintf("%v", f, allocator = r.alloc)
-			defined, truthy = true, f != 0
-		case:
-			for c in op {
-				if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) do return "", unsupported
-			}
-			#reverse for scope in r.env {
-				if v, ok := scope[op]; ok {
-					value, defined, truthy = v, true, v != ""
-					break
-				}
-			}
-		}
-		if truthy || (k == len(operands) - 1 && defined) do return value, nil
+script_at :: proc(s: string, start: int) -> (script: string, ok: bool) {
+	rest := s[start:]
+	if d := strings.index_byte(rest, '$'); d >= 0 do rest = rest[:d]
+	close := strings.last_index_byte(rest, '}')
+	if close < 0 do return "", false
+	return rest[:close], true
+}
+
+// A script's value, run once per command (see run_list).
+@(private = "file")
+script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
+	if len(r.evals) > 0 {
+		if v, ok := r.evals[len(r.evals) - 1][script]; ok do return v, nil
 	}
-	// Maestro would print "undefined" here; a typo in a name should not type that.
-	return "", strings.concatenate({"`${", expr, "}`: variable is not defined"}, r.alloc)
+	value = js_run(r, script) or_return
+	if len(r.evals) > 0 {
+		top := &r.evals[len(r.evals) - 1]
+		if top^ == nil do top^ = make(map[string]string, 4, r.alloc)
+		top[strings.clone(script, r.alloc)] = value
+	}
+	return value, nil
 }
 
 // ---- device ---------------------------------------------------------------------------

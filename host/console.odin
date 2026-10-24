@@ -25,6 +25,7 @@ View_Node :: struct {
 	runs:                  int, // repeat iterations done
 	ms:                    f64,
 	error:                 string,
+	logs:                  [dynamic]string, // console.log lines of its scripts
 	depth:                 int,
 	children:              [dynamic]^View_Node, // runFlow / repeat / retry commands
 	on_start, on_complete: [dynamic]^View_Node, // a sub-flow file's hooks
@@ -98,7 +99,8 @@ view_nodes :: proc(r: ^Runner, cmds: []Cmd, depth: int) -> (out: [dynamic]^View_
 		case Repeat:
 			n.children = view_nodes(r, d.commands[:], depth + 1)
 		case Launch_App, App_Cmd, Tap, Assert, Input_Text, Erase_Text, Key_Press, Navigate,
-		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot:
+		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot, Eval_Script, Run_Script,
+		     Copy_Text, Set_Clipboard, Paste_Text:
 		}
 		r.view.nodes[&c] = n
 		append(&out, n)
@@ -110,6 +112,7 @@ view_nodes :: proc(r: ^Runner, cmds: []Cmd, depth: int) -> (out: [dynamic]^View_
 view_reset :: proc(nodes: []^View_Node) {
 	for n in nodes {
 		n.status, n.runs, n.ms, n.error = .Pending, 0, 0, ""
+		clear(&n.logs)
 		view_reset(n.children[:])
 		view_reset(n.on_start[:])
 		view_reset(n.on_complete[:])
@@ -135,6 +138,10 @@ view_finished :: proc(r: ^Runner, n: ^View_Node) {
 	// Plain: the line Maestro prints, then this tool's time.
 	runs := fmt.tprintf(" (completed %d %s)", n.runs, "time" if n.runs == 1 else "times") if n.runs > 0 else ""
 	fmt.printf("%s%s... %s%s  %s\n", pad(n.depth), n.desc, status_word(n.status), runs, fmt_ms(n.ms))
+	if len(n.logs) > 0 {
+		fmt.printf("%s    Log messages:\n", pad(n.depth))
+		for line in n.logs do fmt.printf("%s      %s\n", pad(n.depth), line)
+	}
 	if own_error(n) != "" do print_error(n)
 }
 
@@ -220,6 +227,11 @@ render_nodes :: proc(v: ^View, nodes: []^View_Node, lines: ^[dynamic]string, foc
 	for n in nodes {
 		if n.status == .Running do focus^ = len(lines)
 		append(lines, command_line(v, n))
+		// AnsiResultView.printLogMessages
+		if len(n.logs) > 0 {
+			append(lines, fmt.tprintf(" ║    %s     %sLog messages:%s", pad(n.depth), YELLOW, RESET))
+			for line in n.logs do append(lines, fmt.tprintf(" ║    %s       %s", pad(n.depth), line))
+		}
 		// First line of the error under the command; a failure's full text follows the last frame.
 		if e := own_error(n); e != "" && (n.status == .Failed || n.status == .Warned) {
 			first, _, _ := strings.partition(e, "\n")
@@ -404,7 +416,10 @@ maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 	case Key_Press:
 		for k in KEYS do if k.code == d.keycode do s = fmt.tprintf("Press %s key", k.name)
 	case Launch_App:
-		s = fmt.tprintf("Launch app \"%s\"%s%s", d.app_id, " with clear state" if d.clear_state else "", " without stopping app" if !d.stop_app else "")
+		s = fmt.tprintf(
+			"Launch app \"%s\"%s%s%s", d.app_id, " with clear state" if d.clear_state else "",
+			" and clear keychain" if d.clear_keychain else "", " without stopping app" if !d.stop_app else "",
+		)
 	case App_Cmd:
 		switch d.op {
 		case .Stop:        s = fmt.tprintf("Stop %s", d.app_id)
@@ -437,6 +452,17 @@ maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 		if t, has := d.timeout.?; has do s = fmt.tprintf("%s within %s ms", s, t)
 	case Open_Link:
 		s = fmt.tprintf("Open %s", d.link)
+	case Eval_Script:
+		s = fmt.tprintf("Run %s", d.script)
+	case Run_Script:
+		s = fmt.tprintf("Run %s", d.file)
+		if cond, has := d.cond.?; has do s = fmt.tprintf("%s when %s", s, condition_description(cond))
+	case Copy_Text:
+		s = fmt.tprintf("Copy text from element with %s", selector_description(d.sel))
+	case Set_Clipboard:
+		s = fmt.tprintf("Set Maestro clipboard to %s", d.text)
+	case Paste_Text:
+		s = "Paste text"
 	}
 	return strings.clone(s, r.alloc)
 }

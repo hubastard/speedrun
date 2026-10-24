@@ -1,0 +1,47 @@
+# Coverage of JavaScript in flows: env defaults, output, conditions, runScript scopes, the
+# clipboard, console.log and escapes. Each check is an assertTrue; it passes with Maestro
+# too. It touches no app, so it runs on any device:
+#   ./speedrun test flows/javascript/javascript.yaml
+appId: com.android.settings
+env:
+  NAME: ${NAME || 'world'}
+  COUNT: ${1 + 2}
+  SEES_NAME: ${typeof NAME} # one env block is evaluated before any of it is defined
+---
+- evalScript: ${output.greeting = 'hello ' + NAME}
+- assertTrue: ${output.greeting == 'hello world'}
+- assertTrue: ${COUNT === '3' && SEES_NAME == 'undefined'}
+- assertTrue: ${typeof UNDEFINED_THING == 'undefined'}
+- assertTrue: ${maestro.platform == 'android' || maestro.platform == 'ios'}
+- evalScript: ${output.n = 0}
+- repeat:
+    while:
+      true: ${output.n < 3}
+    commands:
+      - evalScript: ${output.n = output.n + 1}
+- assertTrue: ${output.n === 3}
+- runScript:
+    file: scripts/script.js
+    env:
+      WHO: script
+- assertTrue: ${output.fromScript == 'hi script'}
+# The script's env, variables and globals are gone after it.
+- assertTrue: ${typeof WHO == 'undefined' && typeof local == 'undefined' && typeof leaked == 'undefined'}
+- runFlow:
+    when:
+      true: ${output.n > 2}
+    commands:
+      - evalScript: ${output.ranWhen = true}
+- assertTrue: ${output.ranWhen}
+- runFlow:
+    file: scripts/sub.yaml
+    env:
+      PARENT: from-parent
+- assertTrue: ${output.sub == 'from-parent/sub-from-parent'}
+- setClipboard: copied ${NAME}
+- assertTrue: ${maestro.copiedText == 'copied world'}
+- assertTrue: ${relativePoint(0.5, 0.25) == '50%,25%'}
+- assertTrue: '${json(''{"a": 2}'').a == 2}'
+- evalScript: "${console.log('a log line', 1, {a: 1, b: 'x'}, [1, 'x'])}"
+- setClipboard: ${'x'} and ${'y'} \${z} $${'w'}
+- assertTrue: ${maestro.copiedText == 'x and y $' + '{z} $w'}

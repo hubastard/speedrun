@@ -1,0 +1,6 @@
+# Run by ../javascript.yaml with env PARENT: the caller's env is defined first.
+appId: com.android.settings
+env:
+  CHILD: sub-${PARENT}
+---
+- evalScript: ${output.sub = PARENT + '/' + CHILD}

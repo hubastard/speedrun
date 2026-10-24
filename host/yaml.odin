@@ -298,6 +298,15 @@ parse_value :: proc(p: ^Parser, rest: string, indent: int, no: int) -> ^Yaml {
 		text = strings.concatenate({text, " ", p.lines[p.i].content}, p.alloc)
 		p.i += 1
 	}
+	// SnakeYAML (Maestro's parser): in a plain scalar, `: ` or a final `:` starts a mapping.
+	if text[0] != '"' && text[0] != '\'' {
+		for i := 0; i < len(text); i += 1 {
+			if text[i] == ':' && (i + 1 == len(text) || text[i + 1] == ' ' || text[i + 1] == '\t') {
+				fail(p, no, "mapping values are not allowed here: quote a value that contains `: `")
+				return nil
+			}
+		}
+	}
 	return parse_scalar(p, text, no)
 }
 
