@@ -109,8 +109,8 @@ enum Private {
     }
 
     /// Text typed through the keyboard as key events (XCPointerEventPath typeText), at
-    /// charactersPerSecond.
-    static func typeText(_ text: String, charactersPerSecond: Int) throws {
+    /// charactersPerSecond; with wait false, returns once sent (see unconfirmed).
+    static func typeText(_ text: String, charactersPerSecond: Int, wait: Bool = true) throws {
         guard let pathClass = NSClassFromString("XCPointerEventPath") as? NSObject.Type else {
             throw AgentError(message: "XCPointerEventPath is missing")
         }
@@ -124,7 +124,7 @@ enum Private {
         }
         typealias TypeText = @convention(c) (NSObject, Selector, NSString, TimeInterval, UInt64, Bool) -> Void
         unsafeBitCast(path.method(for: type), to: TypeText.self)(path, type, text as NSString, 0, UInt64(max(charactersPerSecond, 1)), false)
-        try synthesize(try record(with: path))
+        try synthesize(try record(with: path), wait: wait)
     }
 
     /// The side (lock) button. Main thread.
@@ -169,18 +169,28 @@ enum Private {
         try callWithCompletion(try daemonProxy(), "_XCT_synthesizeEvent:completion:", record, wait: wait)
     }
 
-    /// A synthesize not waited for: testmanagerd confirms one ~250 ms after its last event.
+    /// A synthesize not waited for: testmanagerd confirms one ~200-250 ms after its last
+    /// event (on a background thread), once the app has had them all.
     private static var unconfirmed: (done: DispatchSemaphore, failure: Box)?
     private final class Box { var error: Error? }
 
     /// Waits for the synthesize not waited for, if any, and throws its error: before the next
-    /// one (events overlapping in time could mix) and before a settle (the events must have
-    /// played). Not on the main thread.
+    /// one, as events overlapping in time could mix.
     static func confirmPending() throws {
         guard let pending = unconfirmed else { return }
         unconfirmed = nil
         _ = pending.done.wait(timeout: .now() + 10)
         if let error = pending.failure.error { throw error }
+    }
+
+    /// Whether the synthesize not waited for, if any, is confirmed (its error thrown), without
+    /// waiting: a settle concludes only once it is, so never before the last event played.
+    static func pendingConfirmed() throws -> Bool {
+        guard let pending = unconfirmed else { return true }
+        guard pending.done.wait(timeout: .now()) == .success else { return false }
+        unconfirmed = nil
+        if let error = pending.failure.error { throw error }
+        return true
     }
 
     /// target.selector(offset), for XCPointerEventPath's offset setters.

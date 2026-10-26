@@ -8,6 +8,8 @@
 // After a swipe, quiescence leaves out animations: the content stops at lift-up, and what is
 // left (the scroll indicator fading) does not matter to a flow; content still moving shows up
 // as differing signatures.
+// Typing and drags return before testmanagerd confirms their events: settle checks the
+// screen meanwhile, but concludes (settled or no change) only once they are confirmed.
 // Times are measured from the last action. quiet_ms is unused: quiescence is the quiet signal.
 import XCTest
 
@@ -45,13 +47,13 @@ final class Settle {
             let now = DispatchTime.now().uptimeNanoseconds
             if !changed && sig != before { changed = true }
             if changed {
-                if sig == previous {
+                if sig == previous, try Private.pendingConfirmed() {
                     status = 0
                     break
                 }
                 previous = sig
                 doneAt = now
-            } else if now >= noChangeUntil {
+            } else if now >= noChangeUntil, try Private.pendingConfirmed() {
                 status = 1
                 doneAt = start
                 break

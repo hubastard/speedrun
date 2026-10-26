@@ -123,7 +123,13 @@ final class Screen {
         return springboard
     }
 
-    private func walk(_ s: XCUIElementSnapshot, depth: Int, into w: inout Writer, count: inout UInt32, hasher: inout Hasher) {
+    /// The keyboard's assistant bar (typing predictions): it updates on its own a few hundred
+    /// ms after a key, so signatures leave it out (reads keep it) and a settle after typing
+    /// does not wait for the suggestions.
+    private static let unsettledID = "SystemInputAssistantView"
+
+    private func walk(_ s: XCUIElementSnapshot, depth: Int, into w: inout Writer, count: inout UInt32, hasher: inout Hasher,
+                      hashed: Bool = true) {
         let value = s.value as? String ?? ""
         let text = s.title.isEmpty ? value : s.title
         let checkable = s.elementType == .checkBox || s.elementType == .switch || s.elementType == .toggle
@@ -144,10 +150,13 @@ final class Screen {
         w.str(text); w.str(s.label); w.str(s.identifier); w.str(Self.typeName(s.elementType))
         w.str(s.placeholderValue ?? ""); w.str("")
         count += 1
-        hasher.combine(depth); hasher.combine(l); hasher.combine(t); hasher.combine(rr); hasher.combine(b)
-        hasher.combine(flags); hasher.combine(text); hasher.combine(s.label); hasher.combine(s.identifier)
+        let hashed = hashed && s.identifier != Self.unsettledID
+        if hashed {
+            hasher.combine(depth); hasher.combine(l); hasher.combine(t); hasher.combine(rr); hasher.combine(b)
+            hasher.combine(flags); hasher.combine(text); hasher.combine(s.label); hasher.combine(s.identifier)
+        }
 
-        for c in s.children { walk(c, depth: depth + 1, into: &w, count: &count, hasher: &hasher) }
+        for c in s.children { walk(c, depth: depth + 1, into: &w, count: &count, hasher: &hasher, hashed: hashed) }
     }
 
     private static func typeName(_ t: XCUIElement.ElementType) -> String {

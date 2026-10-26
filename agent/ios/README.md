@@ -35,7 +35,10 @@ How it does each part:
   signature: it must differ from what the flow last read (quiescence once reported idle
   before a push had begun), and two signatures in a row must agree. "No change" after
   `no_change_ms`, as on Android. After a swipe, quiescence leaves out animations (the content
-  stops at lift-up; the scroll indicator's fade does not matter).
+  stops at lift-up; the scroll indicator's fade does not matter). Typing and drags return
+  before testmanagerd confirms their events: a settle concludes only once it has. The
+  signature leaves out the keyboard's assistant bar (`SystemInputAssistantView`, the typing
+  predictions), which updates on its own a few hundred ms after each key.
 
 To time the building blocks by hand:
 
@@ -129,6 +132,16 @@ What it means:
     content is still ~50 ms after it: the drag returns 100 ms after the lift, and the next
     event or settle waits for the confirmation. scrollUntilVisible in Settings: 2.7 -> 2.4 s
     down, 2.2 -> 1.4 s up; in the React Native demo 6.1 -> 3.9, 6.2 -> 3.8, 7.0 -> 5.4 s.
+- Later (2026-10-25), typing: TYPE spent ~125 ms finding the focused field, ~215 ms on the
+  first character (most of it testmanagerd's confirmation, ~200 ms after the key), ~330 ms
+  until the field showed it (Settings busy with its search) and ~330 ms on the 13 others
+  (130 ms of keys, then the confirmation). Keys are now sent without waiting and the settle
+  checks the screen meanwhile, concluding once they are confirmed. Settings' search did not
+  gain (1.41 -> 1.36 s for TYPE + SETTLE: it works ~65 ms per key); React Native's field went
+  from 1.8 to 1.2 s and eraseText from ~0.86 to ~0.65 s in Settings. The keyboard's
+  suggestions then held up whichever settle came next (they change ~200-500 ms after the
+  last key): left out of the signature. A single key (pressKey) still waits: sent without
+  waiting, the settle's polling during the keyboard's dismissal made Enter ~100 ms slower.
 - Start-up: 3.7 s here against ~10 s for Maestro, before keeping the runner alive between
   runs.
 

@@ -82,7 +82,9 @@ final class Input {
     }
 
     /// Text through the keyboard of the focused field ("\u{8}" deletes): the first character
-    /// alone, then the rest at Maestro's rate once the field has taken the first one.
+    /// alone, then the rest at Maestro's rate once the field has taken the first one. Returns
+    /// once the keys are sent: the settle that follows concludes only after testmanagerd has
+    /// confirmed them (~200 ms after the last), checking the screen meanwhile.
     func type(_ text: String, screen: Screen, out: inout Writer) throws {
         let typed = try type(text, screen: screen, firstRate: 30, restRate: Self.charactersPerSecond, waitCapMs: Self.firstCharacterWaitMs)
         Self.action(inject: typed ? micros(since: lastActionNs) : 0, path: typed ? Self.injectPath : Self.injectNone, out: &out)
@@ -105,17 +107,19 @@ final class Input {
         let before = field.map(Self.shownValue)
         // Deleting from an empty field changes nothing: no change to wait for, so one event.
         if text.allSatisfy({ $0 == "\u{8}" }) && (before?.isEmpty ?? true) {
-            try Private.typeText(text, charactersPerSecond: restRate)
+            try Private.typeText(text, charactersPerSecond: restRate, wait: false)
             return true
         }
-        try Private.typeText(String(first), charactersPerSecond: firstRate)
+        // The field's change is the sign the first key landed: watched from the start, not
+        // after testmanagerd's confirmation.
+        try Private.typeText(String(first), charactersPerSecond: firstRate, wait: false)
         let rest = String(text.dropFirst())
         guard !rest.isEmpty else { return true }
         guard before != nil else {
             // No focused element reports its value (React Native groups a field with its
             // label): nothing to watch, so Maestro's pacing, its fixed wait and its rate.
             Thread.sleep(forTimeInterval: Double(Self.firstCharacterWaitMs) / 1000)
-            try Private.typeText(rest, charactersPerSecond: Self.maestroCharactersPerSecond)
+            try Private.typeText(rest, charactersPerSecond: Self.maestroCharactersPerSecond, wait: false)
             return true
         }
         let cap = waitCapMs
@@ -124,7 +128,7 @@ final class Input {
             if let now = onMain({ Self.focusedField(screen).map(Self.shownValue) }), now != before { break }
             Thread.sleep(forTimeInterval: 0.02)
         }
-        try Private.typeText(rest, charactersPerSecond: restRate)
+        try Private.typeText(rest, charactersPerSecond: restRate, wait: false)
         return true
     }
 

@@ -297,8 +297,10 @@ Known differences in how, not what:
   tapped text elsewhere, as iOS titles a pushed screen with the row that opened it: that is
   no miss.
 - After `inputText` and `eraseText`, a screen that shows no change is taken as settled after
-  300 ms (1 s after taps): the keys were delivered when the agent returned, and a field that
-  does not expose its text (React Native) shows none.
+  300 ms (1 s after taps): the keys have been delivered by then (on iOS the settle concludes
+  only once testmanagerd has confirmed them), and a field that does not expose its text
+  (React Native) shows none. On iOS the keyboard's suggestion bar is left out of what a
+  settle compares: it updates on its own a few hundred ms after each key (reads include it).
 - `scrollUntilVisible` settles only once the element is on screen: until then it reads the
   screen while the list still drifts and swipes again as soon as the last swipe has played
   out (the touch stops the drift). Maestro settles and polls 500 ms after every swipe. The

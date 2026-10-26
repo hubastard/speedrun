@@ -26,7 +26,6 @@ final class Ops {
             try input.key(try conn.readI32(), out: &out)
         case 5: // SETTLE
             let quiet = try conn.readI32(), noChange = try conn.readI32(), timeout = try conn.readI32()
-            try Private.confirmPending()
             try onMain { try settle.run(quietMs: Int(quiet), noChangeMs: Int(noChange), timeoutMs: Int(timeout), out: &out) }
         case 7: // SWIPE
             let x1 = try conn.readI32(), y1 = try conn.readI32(), x2 = try conn.readI32(), y2 = try conn.readI32()

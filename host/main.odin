@@ -46,9 +46,9 @@ KEYCODE_BACK :: 4
 // every ~100 ms); on Android 12+ frame stats stay empty, so events are what it mostly sees.
 SETTLE_QUIET_MS     :: 34
 SETTLE_NO_CHANGE_MS :: 1000 // only paid when a tap really does nothing
-// After typing: the keys were delivered when the op returned, so an app reacting late is
-// less of a worry; paid where the field's text is not exposed (React Native groups it with
-// its label), where nothing a flow can read changes.
+// After typing: the keys were delivered when the op returned (iOS: before the settle
+// concludes), so an app reacting late is less of a worry; paid where the field's text is not
+// exposed (React Native groups it with its label), where nothing a flow can read changes.
 SETTLE_TYPED_NO_CHANGE_MS :: 300
 SETTLE_TIMEOUT_MS   :: 10_000
 
