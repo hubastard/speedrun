@@ -20,38 +20,53 @@ maestro test flows/      →      speedrun test flows/
 
 ## Benchmark
 
-The same scenario in each tool, on the Android Settings app: it goes two screens deep,
-scrolls down and back up, and types into a dialog. That is 14 steps per lap, 3 laps. Times
+The same scenario in each tool, on the Settings app: it goes two screens deep, scrolls down
+and back up, and types into a field (14 steps per lap on Android, 12 on iOS), 3 laps. Times
 are wall clock, from starting the command to its exit, so each tool's start-up counts.
+
+Android emulator:
 
 | Tool | Wall clock | speedrun is |
 |---|---:|---:|
 | **speedrun** | **11 s** | — |
+| tester-army e2e 0.17 | 32 s | 2.9x faster |
 | UI Automator 2.3 (Google, native) | 49 s | 4.4x faster |
 | Appium 3.8 (UiAutomator2 driver) | 53 s | 4.7x faster |
 | Maestro 2.11 | 91 s | 8.2x faster |
 
+iOS simulator:
+
+| Tool | Wall clock | speedrun is |
+|---|---:|---:|
+| **speedrun** | **31 s** | — |
+| tester-army e2e 0.17 | 65 s | 2.1x faster |
+| Maestro 2.11 | 93 s | 3.0x faster |
+
 How the numbers were taken:
 
-- The flow is [`bench_scenario.yaml`](bench_scenario.yaml), run as it is by
-  `speedrun test` and `maestro test`.
-- Appium (WebdriverIO) and UI Automator (a Kotlin instrumentation test) ran the same steps,
-  each written the way that tool is normally used.
-- Appium's time runs from starting the Appium server to stopping it. UI Automator's is
-  `./gradlew connectedDebugAndroidTest`, with the test already built and Gradle's daemon
-  running.
+- The flows are [`bench_scenario.yaml`](bench_scenario.yaml) and its iOS version
+  [`bench_scenario_ios.yaml`](bench_scenario_ios.yaml), run as they are by `speedrun test`
+  and `maestro test`.
+- The other tools ran the same steps, each written the way that tool is normally used:
+  tester-army's e2e as a TypeScript test with locators and no AI steps
+  ([`bench/tester-army`](bench/tester-army)), Appium with WebdriverIO, UI Automator as a
+  Kotlin instrumentation test.
+- e2e's time is `e2e run`, with the helper it leaves running from the previous run (its
+  first run takes 12–24 s more). Appium's runs from starting the Appium server to stopping
+  it. UI Automator's is `./gradlew connectedDebugAndroidTest`, with the test already built
+  and Gradle's daemon running. speedrun's iOS time includes starting its agent.
 - Each time is the median of 2–5 runs on a quiet machine.
-- Measured on 2026-10-26: Apple M1 Pro with 16 GB, Android 17 emulator.
+- Measured on 2026-10-26: Apple M1 Pro with 16 GB, Android 17 emulator, iPhone 17 Pro
+  simulator (iOS 26.2).
 - Espresso and Detox run inside the app under test, so they cannot drive a system app like
-  Settings.
+  Settings. Appium and XCUITest were not measured on iOS.
 
-Against Maestro on other flows (wall clock):
+Against Maestro on a React Native app (wall clock):
 
-| Flow | speedrun | Maestro | speedrun is |
+| Platform | speedrun | Maestro | speedrun is |
 |---|---:|---:|---:|
-| Settings app, iOS simulator | 31 s | 93 s | 3.0x faster |
-| React Native app, Android | 32 s | 196 s | 6.2x faster |
-| React Native app, iOS simulator | 60 s | 180 s | 3.0x faster |
+| Android emulator | 32 s | 196 s | 6.2x faster |
+| iOS simulator | 60 s | 180 s | 3.0x faster |
 
 speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds
 and tells exactly when the app has settled, instead of comparing screenshots or sleeping.

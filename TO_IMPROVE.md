@@ -78,6 +78,14 @@ from starting its server to stopping it; UI Automator's `./gradlew connectedDebu
 | UI Automator 2.3 (Kotlin, `UiObject2` + `Until`) | 48.9 s | 44.4, 53.4 | 35.1, 36.6 s |
 | Appium 3.8, UiAutomator2 driver 8.7, WebdriverIO | 52.7 s | 51.8, 53.5 | 48.3, 48.9 s |
 | Maestro 2.11.0 | 90.7 s | 87.5, 90.7, 96.5 | 88.0 s (the third) |
+| tester-army e2e 0.17.0 (agent-device 0.21.20), `bench/tester-army` | 32.0 s | 32.0, 32.5 (47.8 cold) | 29.4, 29.9 s |
+
+On iOS (`bench_scenario_ios.yaml`, iPhone 17 Pro simulator, the emulator running): speedrun
+32.9 s cold, 26.8–27.4 s warm (compare.sh: 31.0 s); e2e 63.0, 64.3, 65.4, 71.4 s with its
+runner kept from the previous run (48.0 s for one lap cold, 23.7 s of it starting the
+runner); Maestro 92.9 s. e2e per step on iOS: taps 0.8–1.3 s, back 1.0–1.2 s, scrolls 1.6–1.8 s,
+`clear` 2.2 s and `fill` 3.7–3.9 s (speedrun: 0.5–1.2, 0.58, 0.8, 0.67 and 1.26 s). On
+Android: scrolls 1.0–1.5 s, `clear` and `fill` ~1.1 s each, back 0.5–0.7 s, taps 0.2–0.8 s.
 
 Earlier the same day, with VS Code and macOS's ANECompilerService busy (load 3–5), the
 flows alone took: speedrun 12.6–20.3 s, UI Automator 35.9–47.5 s, Appium 57.4–60.1 s,

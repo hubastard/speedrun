@@ -1,0 +1,13 @@
+{
+  "name": "speedrun-bench-tester-army",
+  "private": true,
+  "description": "bench_scenario.yaml and bench_scenario_ios.yaml ported to tester-army's e2e runner, to compare with speedrun",
+  "scripts": {
+    "android": "E2E_TELEMETRY_DISABLED=1 e2e run --target android tests/settings.android.e2e.ts",
+    "ios": "E2E_TELEMETRY_DISABLED=1 e2e run --target ios tests/settings.ios.e2e.ts"
+  },
+  "dependencies": {
+    "@e2e-dev/mobile": "0.9.2",
+    "e2e": "0.17.0"
+  }
+}
