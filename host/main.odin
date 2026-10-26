@@ -64,6 +64,7 @@ Flag :: enum u8 {
 	Checked,
 	Visible,
 	Selected,
+	Restless, // iOS: moving on every read, an endless animation (its frame is left out of the hash)
 }
 Flags :: bit_set[Flag; u8]
 

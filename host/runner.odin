@@ -94,6 +94,7 @@ Runner :: struct {
 	settle_due:           bool, // a change's settle put off until a command needs the screen
 	launch_due:           string, // the app launched, its UI not waited for yet (exec)
 	long_press_ms:        i32, // how long longPressOn holds (long_press_ms proc), 0 until known
+	condition_ms:         i64, // how long a `when:` waits (condition_timeout proc), 0 until known
 }
 
 Rx :: struct {
@@ -1203,8 +1204,8 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 
 // ---- conditions and lookups -----------------------------------------------------------
 
-// A condition (`when:`, runFlow/repeat). `timeout` < 0: the default for conditions (7 s), always
-// shortened by the time since the last interaction.
+// A condition (`when:`, runFlow/repeat). `timeout` < 0: the default for conditions (7 s, or
+// SPEEDRUN_CONDITION_TIMEOUT_MS), always shortened by the time since the last interaction.
 @(private = "file")
 condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64) -> (met: bool, err: Err) {
 	if p, has := cond.platform.?; has && !strings.equal_fold(p, "ios" if r.dev.platform == .IOS else "android") do return false, nil
@@ -1213,7 +1214,7 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 		if strings.trim_space(v) == "" || strings.equal_fold(v, "false") || v == "undefined" || v == "null" do return false, nil
 		if f, ok := strconv.parse_f64(v); ok && f == 0 do return false, nil
 	}
-	limit := timeout if timeout >= 0 else OPTIONAL_LOOKUP_TIMEOUT_MS
+	limit := timeout if timeout >= 0 else condition_timeout(r)
 	if cond.visible != nil {
 		_, found := try_find(r, cond.visible, adjusted(r, limit)) or_return
 		if !found do return false, nil
@@ -1227,6 +1228,19 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 		}
 	}
 	return true, nil
+}
+
+// How long a `when:` waits for its element to show (or go): 7 s, or less with
+// SPEEDRUN_CONDITION_TIMEOUT_MS, for flows full of "dismiss it if it shows" checks whose
+// popups come early or not at all: each check after an action otherwise waits out the 7 s.
+@(private = "file")
+condition_timeout :: proc(r: ^Runner) -> i64 {
+	if r.condition_ms > 0 do return r.condition_ms
+	r.condition_ms = OPTIONAL_LOOKUP_TIMEOUT_MS
+	if v, ok := strconv.parse_i64(os.get_env("SPEEDRUN_CONDITION_TIMEOUT_MS", context.temp_allocator)); ok && v >= 0 {
+		r.condition_ms = max(v, 1) // 1 ms: a single read
+	}
+	return r.condition_ms
 }
 
 @(private = "file")
@@ -1819,7 +1833,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		append(&r.h.nodes, n)
 		if d == 0 do append(&r.h.roots, k)
 		append(&stack, k)
-		for v in ([]i32{n.left, n.top, n.right, n.bottom}) do hash = (hash ~ u64(u32(v))) * 1099511628211
+		if .Restless not_in n.flags do for v in ([]i32{n.left, n.top, n.right, n.bottom}) do hash = (hash ~ u64(u32(v))) * 1099511628211
 		for c in transmute([]u8)n.text do hash = (hash ~ u64(c)) * 1099511628211
 	}
 	r.h.hash = hash

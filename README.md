@@ -196,6 +196,7 @@ Environment variables:
 | `SPEEDRUN_IDLE_S` | iOS: seconds of inactivity before the agent stops (default 600). |
 | `SPEEDRUN_DEBUG=1` | Print every screen read and shell command with its time. |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
+| `SPEEDRUN_CONDITION_TIMEOUT_MS` | How long a `when: visible` (or `notVisible`) waits for its element (default 7000, as Maestro). See [Conditions](#conditions-take-up-to-7-s). |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |
 
 speedrun exits with status 1 when a flow fails. A suite prints one line per flow, then
@@ -268,6 +269,26 @@ yet. So a flow that loads runs as written; nothing is skipped silently.
   bounds are cut to the scrolling area around it, and taps aim at the part that shows.
   Maestro counts an element as visible when its frame is on screen, even if the list hides it.
 - **Not in the screen hierarchy:** Android toasts, and iOS Safari web views.
+- **iOS screens with an endless animation settle anyway.** An element that moves on every
+  read (a looping animation, a marquee) while the rest of the screen holds still is left
+  out of the wait.
+
+### Conditions take up to 7 s
+
+A `when: visible` whose element is not there waits up to 7 s for it to show, as in
+Maestro, counted from the end of the last command that touched the app. Several checks in a
+row share that wait: the first one waits it out, the next ones read the screen once.
+
+Flows that dismiss popups "if they show" (notification prompts, ratings, surveys) after
+every action spend most of their time there. If your popups show up early or not at all,
+shorten the wait, then rerun the suite a few times to check that no popup is missed:
+
+```sh
+SPEEDRUN_CONDITION_TIMEOUT_MS=2000 speedrun test .maestro/
+```
+
+`assertVisible`, `extendedWaitUntil` and the lookups of `tapOn` and the like keep their own
+timeouts.
 
 ## Troubleshooting
 

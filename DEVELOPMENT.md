@@ -315,6 +315,20 @@ Known differences in how, not what:
   `_XCTSetApplicationStateTimeout`, as WebDriverAgent does), then the settle waits for the
   event loop only and compares signatures: under an open context menu animations never
   finish, and XCTest waited 60 s after every long press that opened one.
+- iOS screens with an endless animation: an element moving on every read (an Animated or
+  Reanimated loop updates the model layer every frame, so its accessibility frame changes)
+  kept signatures from ever agreeing, and each settle ran to its 10 s timeout. Screen tracks
+  each node by identity (depth, type, flags, texts, id; the n-th alike told apart by order)
+  and when it began moving on every read; one moving for 500 ms while at most a third of
+  the nodes move is restless: its frame is left out of the signature and its node carries
+  flag 128 (`Restless`), which the host's hash skips too. A scroll or a JS-driven
+  transition moves most nodes and is still waited for. Core Animation loops (spinners,
+  Lottie) never counted: the model layer does not move and XCTest's quiescence ignores
+  repeating animations. Measured on a test app: 14.3 s to 6.1 s for 10 commands, the
+  same as with no animation.
+- `SPEEDRUN_CONDITION_TIMEOUT_MS` replaces the 7 s of a `when:` check (not of an
+  assertion or a lookup): flows that dismiss popups "if they show" after every action
+  otherwise wait 7 s after each.
 - `scrollUntilVisible` drags without a fling on both platforms, so the content stops as
   the touch lifts (Android: 50 ms, then still for 60 ms; iOS: see above). It reads the
   screen right after each drag and drags again as soon as the element is not on screen,

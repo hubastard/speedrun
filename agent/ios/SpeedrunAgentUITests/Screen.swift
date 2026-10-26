@@ -8,6 +8,11 @@
 // has just seen the screen hold still, and the flow reads it right away. iOS has no "visible
 // to user" attribute: every node is flagged visible and the host drops those mostly off
 // screen.
+// An endless animation moves a few elements on every read (a Reanimated or Animated loop, a
+// marquee): the screen would never hold still. An element seen moving on every read for
+// restlessNs, while most of the screen holds still, is restless: the signature leaves its
+// frame out, and its node carries the restless flag (128) so the host's hash does too. A
+// scroll or a screen transition moves most of the screen, and is waited for.
 import XCTest
 
 final class Screen {
@@ -21,12 +26,21 @@ final class Screen {
     private static let settledMaxAgeNs: UInt64 = 1_000_000_000
     private static let statusBarsMaxAgeNs: UInt64 = 5_000_000_000
     private var statusBars = (nodes: Writer(), count: UInt32(0), at: UInt64(0))
+    /// A hashed node of a walk: identity (what it is and says), frame, and where its flags byte is.
+    struct Mark { var id: Int; var frame: SIMD4<Int32>; var flagsAt: Int }
+    private static let restlessNs: UInt64 = 500_000_000
+    private static let restlessFlag: UInt8 = 128
+    /// The last digest's frames and, for each node moving on every read since, when it began.
+    private var lastFrames: [Int: SIMD4<Int32>] = [:]
+    private var movingSince: [Int: UInt64] = [:]
 
     /// Forgets every cached read (a new client). Main thread.
     func reset() {
         lastSignature = nil
         settled.at = 0
         statusBars.at = 0
+        lastFrames = [:]
+        movingSince = [:]
     }
 
     /// lastActionNs: when the last action began (a settled snapshot older than it is stale).
@@ -41,14 +55,14 @@ final class Screen {
         } else {
             let snapshot = try snapshotForeground()
             Private.uiLandscape = snapshot.frame.width > snapshot.frame.height
-            var hasher = Hasher()
-            walk(snapshot, depth: 0, into: &nodes, count: &count, hasher: &hasher)
-            lastSignature = hasher.finalize()
+            var marks: [Mark] = []
+            walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks)
+            lastSignature = digest(marks, nodes: &nodes)
         }
         if statusBars.at == 0 || now - statusBars.at > Self.statusBarsMaxAgeNs {
-            var bars = Writer(), barCount: UInt32 = 0, ignored = Hasher()
+            var bars = Writer(), barCount: UInt32 = 0, ignored: [Mark] = []
             for bar in (try? springboard.statusBars.allElementsBoundByIndex.map { try $0.snapshot() }) ?? [] {
-                walk(bar, depth: 0, into: &bars, count: &barCount, hasher: &ignored)
+                walk(bar, depth: 0, into: &bars, count: &barCount, marks: &ignored)
             }
             statusBars = (bars, barCount, now)
         }
@@ -60,16 +74,47 @@ final class Screen {
     /// A hash of the foreground app's elements (frames, labels, values, identifiers): equal
     /// hashes mean the screen did not change in any way a flow can see.
     func signature() throws -> Int {
-        var hasher = Hasher()
         var nodes = Writer()
         var count: UInt32 = 0
+        var marks: [Mark] = []
         let snapshot = try snapshotForeground()
         Private.uiLandscape = snapshot.frame.width > snapshot.frame.height
-        walk(snapshot, depth: 0, into: &nodes, count: &count, hasher: &hasher)
-        let sig = hasher.finalize()
+        walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks)
+        let sig = digest(marks, nodes: &nodes)
         lastSignature = sig
         settled = (nodes, count, DispatchTime.now().uptimeNanoseconds)
         return sig
+    }
+
+    /// The signature of a walk's marks, restless frames left out (see the top), and the
+    /// restless flag set on their nodes in `nodes`.
+    private func digest(_ marks: [Mark], nodes: inout Writer) -> Int {
+        let now = DispatchTime.now().uptimeNanoseconds
+        var ids = [Int](repeating: 0, count: marks.count)
+        var seen = [Int: Int](minimumCapacity: marks.count)
+        var frames = [Int: SIMD4<Int32>](minimumCapacity: marks.count)
+        var moving = [Int: UInt64]()
+        for (k, m) in marks.enumerated() {
+            // Same identity twice (rows alike): told apart by their order.
+            let n = seen[m.id, default: 0]
+            seen[m.id] = n + 1
+            ids[k] = n == 0 ? m.id : m.id &+ n &* 0x9E37_79B9
+            frames[ids[k]] = m.frame
+            if let f = lastFrames[ids[k]], f != m.frame { moving[ids[k]] = movingSince[ids[k]] ?? now }
+        }
+        lastFrames = frames
+        movingSince = moving
+        let few = moving.count * 3 <= marks.count
+        var hasher = Hasher()
+        for (k, m) in marks.enumerated() {
+            hasher.combine(ids[k])
+            if few, let since = moving[ids[k]], now - since >= Self.restlessNs {
+                nodes.data[m.flagsAt] |= Self.restlessFlag
+            } else {
+                hasher.combine(m.frame)
+            }
+        }
+        return hasher.finalize()
     }
 
     /// A snapshot of the foreground app. An app being relaunched (launchApp) can fail it
@@ -148,7 +193,7 @@ final class Screen {
         return unsafeBitCast(o.method(for: keyboardFocusSel), to: Get.self)(o, keyboardFocusSel)
     }
 
-    private func walk(_ s: XCUIElementSnapshot, depth: Int, into w: inout Writer, count: inout UInt32, hasher: inout Hasher,
+    private func walk(_ s: XCUIElementSnapshot, depth: Int, into w: inout Writer, count: inout UInt32, marks: inout [Mark],
                       hashed: Bool = true) {
         let value = s.value as? String ?? ""
         let text = s.title.isEmpty ? value : s.title
@@ -166,17 +211,20 @@ final class Screen {
 
         w.u16(UInt16(min(depth, 0xffff)))
         w.i32(l); w.i32(t); w.i32(rr); w.i32(b)
+        let flagsAt = w.data.count
         w.u8(flags)
         w.str(text); w.str(s.label); w.str(s.identifier); w.str(Self.typeName(s.elementType))
         w.str(s.placeholderValue ?? ""); w.str("")
         count += 1
         let hashed = hashed && s.identifier != Self.unsettledID
         if hashed {
-            hasher.combine(depth); hasher.combine(l); hasher.combine(t); hasher.combine(rr); hasher.combine(b)
-            hasher.combine(flags); hasher.combine(text); hasher.combine(s.label); hasher.combine(s.identifier)
+            var id = Hasher()
+            id.combine(depth); id.combine(s.elementType.rawValue); id.combine(flags)
+            id.combine(text); id.combine(s.label); id.combine(s.identifier)
+            marks.append(Mark(id: id.finalize(), frame: SIMD4(l, t, rr, b), flagsAt: flagsAt))
         }
 
-        for c in s.children { walk(c, depth: depth + 1, into: &w, count: &count, hasher: &hasher, hashed: hashed) }
+        for c in s.children { walk(c, depth: depth + 1, into: &w, count: &count, marks: &marks, hashed: hashed) }
     }
 
     private static func typeName(_ t: XCUIElement.ElementType) -> String {
