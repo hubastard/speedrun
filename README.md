@@ -29,7 +29,7 @@ are wall clock, from starting the command to its exit, so each tool's start-up c
 | **speedrun** | **11 s** | — |
 | UI Automator 2.3 (Google, native) | 49 s | 4.4x faster |
 | Appium 3.8 (UiAutomator2 driver) | 53 s | 4.7x faster |
-| Maestro 2.11 | 89 s | 8.0x faster |
+| Maestro 2.11 | 91 s | 8.2x faster |
 
 How the numbers were taken:
 
@@ -50,7 +50,7 @@ Against Maestro on other flows (wall clock):
 | Flow | speedrun | Maestro | speedrun is |
 |---|---:|---:|---:|
 | Settings app, iOS simulator | 31 s | 93 s | 3.0x faster |
-| React Native app, Android | 31 s | 205 s | 6.5x faster |
+| React Native app, Android | 32 s | 196 s | 6.2x faster |
 | React Native app, iOS simulator | 60 s | 180 s | 3.0x faster |
 
 speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds

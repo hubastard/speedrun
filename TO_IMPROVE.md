@@ -40,9 +40,9 @@ the simulator again and runs `simctl diagnose`, which stalled an Android run.
 
 | flow | device | speedrun | Maestro | ratio |
 |---|---|---|---|---|
-| `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 10.7 s | 96.8 s | 9.0x |
+| `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 10.5 s | 88.0 s | 8.4x |
 | `bench_scenario_ios.yaml`, TIMES=3 (2026-10-26) | iPhone 17 Pro simulator, iOS 26.2 | 26.9 s | 78.8 s | 2.9x |
-| `flows/ignite/bench_rn.yaml`, TIMES=3 (speedrun 2026-10-26, Maestro 10-25) | Android emulator, `-gpu host` | 30.5 s | 195.9 s | 6.4x |
+| `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-26) | Android emulator, `-gpu host` | 31.2 s | 188.1 s | 6.0x |
 | `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-26) | iPhone 17 Pro simulator | 57.4 s | 169.4 s | 3.0x |
 | `flows/ignite/device.yaml` | iOS simulator | 40.0 s | 49.4 s | 1.2x |
 | Ignite's own flows (`apps/ignite/.maestro/flows`) | iOS simulator | 27.3 s | 37.9 s | 1.4x |
@@ -55,13 +55,13 @@ Maestro 9–13 s. The `device.yaml` and Ignite rows predate the iOS speedups of 
 
 | command | speedrun | Maestro |
 |---|---|---|
-| tap (Display & touch / Display size & text / About / Device name / Cancel) | 157–319 | 2583–3785 |
-| back | 121–176 | 759–898 |
-| `scrollUntilVisible` down / up | 328 / 330 (828 / 801 with flinging swipes) | 2492 / 2452 |
-| `eraseText: 25` | 350 | 2115 |
-| `inputText` (14 characters) | 248 | 3570 |
-| `assertVisible` | 4–64 | 84–509 |
-| `launchApp` | 120 (then the next command waits for the app's window) | 1015 (405) |
+| tap (Display & touch / Display size & text / About / Device name / Cancel) | 161–328 | 2073–3817 |
+| back | 118–193 | 733–842 |
+| `scrollUntilVisible` down / up | 334 / 324 (828 / 801 with flinging swipes) | 2305 / 2383 |
+| `eraseText: 25` | 446 | 2060 |
+| `inputText` (14 characters) | 255 | 2932 |
+| `assertVisible` | 4–47 | 87–120 |
+| `launchApp` | 121 (then the next command waits for the app's window) | 744 |
 
 `bench_scenario_ios.yaml` per command (median ms):
 
@@ -86,7 +86,7 @@ from starting its server to stopping it; UI Automator's `./gradlew connectedDebu
 | speedrun | 11.2 s | 10.8, 11.1, 11.2, 11.3, 11.3 | 10.4–10.9 s |
 | UI Automator 2.3 (Kotlin, `UiObject2` + `Until`) | 48.9 s | 44.4, 53.4 | 35.1, 36.6 s |
 | Appium 3.8, UiAutomator2 driver 8.7, WebdriverIO | 52.7 s | 51.8, 53.5 | 48.3, 48.9 s |
-| Maestro 2.11.0 | 89.1 s | 87.5, 90.7 | |
+| Maestro 2.11.0 | 90.7 s | 87.5, 90.7, 96.5 | 88.0 s (the third) |
 
 Earlier the same day, with VS Code and macOS's ANECompilerService busy (load 3–5), the
 flows alone took: speedrun 12.6–20.3 s, UI Automator 35.9–47.5 s, Appium 57.4–60.1 s,
