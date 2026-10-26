@@ -22,8 +22,7 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 [ -x ./speedrun ] || { echo "./speedrun not found: run ./build.sh first"; exit 1; }
 command -v maestro >/dev/null || { echo "maestro not found on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found on PATH"; exit 1; }
-# With several devices connected (race.sh leaves a second emulator running), both tools run
-# on the same one.
+# With several devices connected, both tools run on the same one.
 booted_sims() { xcrun simctl list devices booted 2>/dev/null | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\)) (Booted).*/\1/p'; }
 DEVICE="${DEVICE:-${ANDROID_SERIAL:-}}"
 [ -n "$DEVICE" ] || DEVICE="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1; exit }')"

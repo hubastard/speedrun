@@ -46,7 +46,7 @@ How speedrun is built and how it behaves in detail, for working on it. Using it:
   app needed), `flows/device/settings.yaml` (Android) and `flows/ignite/device.yaml` (iOS)
   cover scripts and the device commands; `flows/notifications` the iOS notification alert
   (its test app: `flows/notifications/install.sh`).
-- `compare.sh`, `race.sh` — benchmarks against Maestro (see `TO_IMPROVE.md`).
+- `compare.sh` — benchmarks against Maestro (see `TO_IMPROVE.md`).
 
 ## Setup
 

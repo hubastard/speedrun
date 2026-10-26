@@ -9,7 +9,6 @@ the commands where speedrun is still closest to Maestro, with what is known abou
 ./compare.sh bench_scenario.yaml -e TIMES=5                       # Android: speedrun, then Maestro
 DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
 ./compare.sh flows/features.yaml                                  # both must agree on every command
-./race.sh bench_scenario.yaml -e TIMES=3                          # both at once on two emulators
 ```
 
 `compare.sh` starts the flow's app fresh before each tool, lines the two runs up command by
@@ -19,14 +18,6 @@ command, repeat iterations grouped. Then three totals per tool: the flow, the ti
 every run) and the wall clock, all included. On iOS it stops speedrun's kept-alive agent
 first, so both tools start cold. It needs `maestro` and `python3` on PATH. With several
 devices connected it uses `DEVICE`, else `ANDROID_SERIAL`, else the first one.
-
-`race.sh` is the demo: speedrun on one emulator and Maestro on another, started at the same
-moment, so both screens can be watched side by side, with each tool's elapsed time and current
-command until both finish. With a single emulator running, it creates `<avd>_race` once (same
-system image and hardware settings) and boots it for Maestro; it stays up for the next race.
-`SPEEDRUN_DEVICE`/`MAESTRO_DEVICE` choose the devices. Two emulators share the machine, so
-numbers come from `compare.sh`, not from the race, and a freshly booted emulator is slower at
-first.
 
 The benchmark flows: `bench_scenario.yaml` (Android Settings, 14 commands per iteration:
 navigation two levels deep, scrolling both ways, text input in a dialog), its iOS version
