@@ -42,8 +42,8 @@ the simulator again and runs `simctl diagnose`, which stalled an Android run.
 |---|---|---|---|---|
 | `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 10.7 s | 96.8 s | 9.0x |
 | `bench_scenario_ios.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator, iOS 26.2 | 33.0 s | 78.8 s | 2.4x |
-| `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-25) | Android emulator, `-gpu host` | 58.2 s | 195.9 s | 3.4x |
-| `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator | 75.1 s | 169.9 s | 2.3x |
+| `flows/ignite/bench_rn.yaml`, TIMES=3 (speedrun 2026-10-26, Maestro 10-25) | Android emulator, `-gpu host` | 30.5 s | 195.9 s | 6.4x |
+| `flows/ignite/bench_rn.yaml`, TIMES=3 (speedrun 2026-10-26, Maestro 10-25) | iPhone 17 Pro simulator | 60.1 s | 169.9 s | 2.8x |
 | `flows/ignite/device.yaml` | iOS simulator | 40.0 s | 49.4 s | 1.2x |
 | Ignite's own flows (`apps/ignite/.maestro/flows`) | iOS simulator | 27.3 s | 37.9 s | 1.4x |
 
@@ -114,7 +114,9 @@ s of 3.3 s.
   updates after each key and could be the signal instead.
 - **iOS `inputText` in Settings' search field: 1.2–1.4 s vs 1.6 s.** Settings works ~65 ms
   per key (search results for every prefix); key-by-key typing is bound by that.
-- **Long press: 3.2–3.4 s vs 3.9–4.7 s.** The press lasts 3 s, as the command defines it.
+- **Long press: 1.0–1.2 s vs 3.9–4.7 s.** The hold is 0.8 s (2026-10-26; 3 s before), past
+  the apps' usual 0.4–0.5 s delay. One that opens an iOS context menu costs ~3 s: the
+  settle's quiescence wait is cut at 2 s (it took XCTest's 60 s before).
 - **iOS Enter and taps that bring up or dismiss the keyboard: 0.64 s vs 0.79 s, 1.0 s vs
   1.2 s.** The keyboard's animation runs outside the app, so the 10x UIKit animation speed
   set at launch does not reach it.

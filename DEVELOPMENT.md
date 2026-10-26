@@ -278,6 +278,14 @@ Known differences in how, not what:
   only once testmanagerd has confirmed them), and a field that does not expose its text
   (React Native) shows none. On iOS the keyboard's suggestion bar is left out of what a
   settle compares: it updates on its own a few hundred ms after each key (reads include it).
+- `longPressOn` holds past the app's long-press delay instead of Maestro's 3 s: 500 ms (iOS's
+  recognizers, React Native, Flutter) or Android's `long_press_timeout` setting (400 ms by
+  default, 1.5 s at most), whichever is longer, plus 300 ms; `SPEEDRUN_LONG_PRESS_MS`
+  overrides it. A React Native favorite toggle went from 3.3 s to 1.0-1.2 s.
+- On iOS a quiescence wait is cut at 2 s (XCTest's application-state timeout, set through
+  `_XCTSetApplicationStateTimeout`, as WebDriverAgent does), then the settle waits for the
+  event loop only and compares signatures: under an open context menu animations never
+  finish, and XCTest waited 60 s after every long press that opened one.
 - `scrollUntilVisible` drags without a fling on both platforms, so the content stops as
   the touch lifts (Android: 50 ms, then still for 60 ms; iOS: see above). It reads the
   screen right after each drag and drags again as soon as the element is not on screen,

@@ -10,6 +10,9 @@
 // as differing signatures.
 // Typing and drags return before testmanagerd confirms their events: settle checks the
 // screen meanwhile, but concludes (settled or no change) only once they are confirmed.
+// An animation that never ends (under an open context menu) would hold quiescence for
+// XCTest's 60 s: a wait is cut at quiescenceCapS, and once one was, the settle waits for the
+// event loop only, the signatures telling whether the screen still changes.
 // Times are measured from the last action. quiet_ms is unused: quiescence is the quiet signal.
 import XCTest
 
@@ -17,6 +20,8 @@ final class Settle {
     private let screen: Screen
     private let input: Input
     private static let pollMs = 30
+    /// Longer than UIKit's transitions, the keyboard's and SpringBoard's (~0.5 s).
+    private static let quiescenceCapS = 2.0
 
     init(screen: Screen, input: Input) {
         self.screen = screen
@@ -36,12 +41,15 @@ final class Settle {
         var previous: Int?
         var doneAt = start
         var status: UInt8 = 2
+        var animations = !input.lastWasSwipe
 
         while true {
             let q = DispatchTime.now().uptimeNanoseconds
-            try Private.waitForQuiescence(screen.foregroundApp(), animations: !input.lastWasSwipe)
+            let cap = min(Self.quiescenceCapS, max(Double(deadline &- min(q, deadline)) / 1e9, 0.1))
+            try Private.waitForQuiescence(screen.foregroundApp(), animations: animations, timeout: cap)
             waits += 1
             longest = max(longest, micros(since: q))
+            if Double(micros(since: q)) >= cap * 0.95e6 { animations = false }
             let sig = try screen.signature()
             signatures += 1
             let now = DispatchTime.now().uptimeNanoseconds

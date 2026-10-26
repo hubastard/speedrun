@@ -4,7 +4,7 @@
 
 speedrun runs mobile UI flows written in the Maestro flow format. Point it at the YAML files,
 folders and config you already use with `maestro test` and most flows run as they are,
-several times faster: **8x faster than Maestro on our Android benchmark**, 2.2–2.4x on
+several times faster: **8x faster than Maestro on our Android benchmark**, 2.4–2.8x on
 iOS.
 
 ```
@@ -51,8 +51,8 @@ Against Maestro on other flows (wall clock):
 | Flow | speedrun | Maestro | speedrun is |
 |---|---:|---:|---:|
 | Settings app, iOS simulator | 37 s | 89 s | 2.4x faster |
-| React Native app, Android | 58 s | 205 s | 3.6x faster |
-| React Native app, iOS simulator | 80 s | 180 s | 2.2x faster |
+| React Native app, Android | 31 s | 205 s | 6.5x faster |
+| React Native app, iOS simulator | 65 s | 180 s | 2.8x faster |
 
 speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds
 and tells exactly when the app has settled, instead of comparing screenshots or sleeping.
@@ -160,6 +160,7 @@ Environment variables:
 |---|---|
 | `SPEEDRUN_IDLE_S` | iOS: seconds of inactivity before the agent stops (default 600). |
 | `SPEEDRUN_DEBUG=1` | Print every screen read and shell command with its time. |
+| `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |
 
 speedrun exits with status 1 when a flow fails. A suite prints one line per flow, then
@@ -216,6 +217,9 @@ yet. So a flow that loads runs as written; nothing is skipped silently.
 - **`scrollUntilVisible` scrolls without momentum**, so the list stops where the finger
   lifts. It takes more, shorter swipes, and its `speed` has no effect. `swipe` and `scroll`
   fling as in Maestro.
+- **`longPressOn` holds for 0.8 s**, where Maestro holds 3 s: past the 0.4–0.5 s after which
+  apps take a touch as a long press (on Android, the device's touch & hold delay plus 0.3 s).
+  For an app that waits longer, set `SPEEDRUN_LONG_PRESS_MS`.
 - **Several devices connected and no `--device`:** Maestro asks which one to use. speedrun
   takes the first Android device, else the booted simulator.
 - **Regular expressions:** Java-only syntax (lookarounds, inline flags, `\p{...}`) is

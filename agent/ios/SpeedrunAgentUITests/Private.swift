@@ -219,9 +219,37 @@ enum Private {
     }
 
     /// XCTest's own wait for the app to be idle: its event loop, then its animations. Must
-    /// run on the main thread (it spins the run loop).
-    static func waitForQuiescence(_ app: XCUIApplication, animations: Bool = true) throws {
+    /// run on the main thread (it spins the run loop). XCTest gives up after 60 s, which an
+    /// animation that never ends (an open context menu) takes whole: `timeout` sets XCTest's
+    /// application-state timeout for this wait (_XCTSetApplicationStateTimeout, as
+    /// WebDriverAgent does), restored after. Without those functions it is not bounded.
+    static func waitForQuiescence(_ app: XCUIApplication, animations: Bool = true, timeout: TimeInterval? = nil) throws {
         let process = try applicationProcess(app)
+        if let timeout, let set = setStateTimeout, let get = stateTimeout {
+            let previous = get()
+            set(timeout)
+            defer { set(previous) }
+            try waitForQuiescence(process, animations: animations)
+        } else {
+            try waitForQuiescence(process, animations: animations)
+        }
+    }
+
+    private typealias SetStateTimeout = @convention(c) (Double) -> Void
+    private typealias StateTimeout = @convention(c) () -> Double
+    private static let setStateTimeout: SetStateTimeout? = function("_XCTSetApplicationStateTimeout")
+    private static let stateTimeout: StateTimeout? = function("_XCTApplicationStateTimeout")
+
+    /// A C function of the loaded frameworks, nil (with a log line) when missing.
+    private static func function<T>(_ name: String) -> T? {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else { // RTLD_DEFAULT
+            NSLog("speedrun: \(name) is missing")
+            return nil
+        }
+        return unsafeBitCast(symbol, to: T.self)
+    }
+
+    private static func waitForQuiescence(_ process: NSObject, animations: Bool) throws {
         let withPreEvent = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:isPreEvent:")
         let plain = NSSelectorFromString("waitForQuiescenceIncludingAnimationsIdle:")
         if process.responds(to: withPreEvent) {

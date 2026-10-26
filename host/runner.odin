@@ -20,7 +20,11 @@ LOOKUP_TIMEOUT_MS          :: 17_000
 OPTIONAL_LOOKUP_TIMEOUT_MS :: 7_000
 ANIMATION_TIMEOUT_MS       :: 15_000
 MAX_RETRIES_ALLOWED        :: 3
-LONG_PRESS_MS              :: 3_000 // as `input swipe x y x y 3000`
+// longPressOn holds past the app's long-press delay: 400 ms on Android (the device's
+// "touch & hold delay", 1.5 s at most), 500 ms for iOS's recognizers, React Native and Flutter.
+// A flow does not say how long; the 3 s `input swipe x y x y 3000` holds are mostly waiting.
+LONG_PRESS_APP_MS          :: 500
+LONG_PRESS_MARGIN_MS       :: 300
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
 
 // ---- hierarchy ------------------------------------------------------------------------
@@ -88,6 +92,7 @@ Runner :: struct {
 	notifications:        string, // iOS: "allow" or "deny" answers the notification alert (system.odin)
 	settle_due:           bool, // a change's settle put off until a command needs the screen
 	launch_due:           string, // the app launched, its UI not waited for yet (exec)
+	long_press_ms:        i32, // how long longPressOn holds (long_press_ms proc), 0 until known
 }
 
 Rx :: struct {
@@ -787,7 +792,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			t := time.tick_now()
 			ok: bool
 			if d.long_press {
-				_, ok = op_press(r.c, x, y, LONG_PRESS_MS)
+				_, ok = op_press(r.c, x, y, long_press_ms(r))
 			} else {
 				_, ok = op_tap(r.c, x, y)
 			}
@@ -916,6 +921,25 @@ element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
 // scrollUntilVisible's drag on Android (iOS's has its own timing). Without a fling, its speed
 // does not change how far the content moves.
 SCROLL_DRAG_MS :: 50
+
+// The hold: SPEEDRUN_LONG_PRESS_MS when set (an app with a longer delay of its own), else
+// past the longest of the device's delay (Android's setting) and the apps' usual 500 ms.
+@(private = "file")
+long_press_ms :: proc(r: ^Runner) -> i32 {
+	if r.long_press_ms > 0 do return r.long_press_ms
+	if v, ok := strconv.parse_int(os.get_env("SPEEDRUN_LONG_PRESS_MS", context.temp_allocator)); ok && v > 0 {
+		r.long_press_ms = i32(v)
+		return r.long_press_ms
+	}
+	delay := i32(LONG_PRESS_APP_MS)
+	if r.dev.platform != .IOS {
+		if v, ok := strconv.parse_int(strings.trim_space(shell(r, "settings get secure long_press_timeout"))); ok {
+			delay = max(delay, i32(v))
+		}
+	}
+	r.long_press_ms = delay + LONG_PRESS_MARGIN_MS
+	return r.long_press_ms
+}
 
 @(private = "file")
 scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
