@@ -82,8 +82,26 @@ and tells exactly when the app has settled, instead of comparing screenshots or 
 
 ## Installation
 
-speedrun is built from source. To build it you need JDK 17, the [Odin](https://odin-lang.org)
-compiler and a C compiler (`cc`) on your PATH, plus Xcode for iOS support.
+### From a package
+
+A package is one archive per platform (`speedrun-<version>-macos-arm64.tar.gz`): the
+`speedrun` binary, with the Android agent inside it, and the iOS agent next to it. The machine
+running it needs only `adb` for Android and Xcode for iOS: no compiler.
+
+```
+tar -xzf speedrun-<version>-macos-arm64.tar.gz
+export PATH="$PWD/speedrun-<version>-macos-arm64:$PATH"   # or symlink the binary into your PATH
+speedrun --version
+```
+
+Keep the `agent/` folder next to the binary: speedrun starts its iOS agent from there. That
+agent is built with one Xcode (the archive's `README.txt` names it); a much different Xcode may
+not run it, and building from source fixes that.
+
+### From source
+
+To build speedrun you need JDK 17, the [Odin](https://odin-lang.org) compiler and a C
+compiler (`cc`) on your PATH, plus Xcode for iOS support.
 
 ```
 git clone https://github.com/hubastard/speedrun.git
@@ -93,7 +111,9 @@ export PATH="$PWD:$PATH"     # add to your shell profile to keep it
 ```
 
 `./build.sh` produces the `speedrun` binary with everything it needs. Without Xcode, it
-builds Android support only.
+builds Android support only. `./package.sh` builds and packs it into a package for this
+platform, in `dist/` (`SPEEDRUN_VERSION=1.2.3 ./package.sh` names the version; by default it
+is the git tag or commit).
 
 ## Quick start
 
@@ -165,6 +185,7 @@ Other commands:
 
 ```
 speedrun --stop-agent      # stop the iOS agent kept running between runs
+speedrun --version
 speedrun --help
 ```
 

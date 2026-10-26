@@ -42,6 +42,9 @@ Op :: enum u8 {
 
 KEYCODE_BACK :: 4
 
+// The release: build.sh passes it (-define:SPEEDRUN_VERSION=...), from SPEEDRUN_VERSION or git.
+VERSION :: #config(SPEEDRUN_VERSION, "dev")
+
 // Settle tuning. "Quiet" means no new frame for ~2 frames at 60 Hz plus an idle-main-thread
 // probe. After an accessibility event the agent waits 120 ms instead (apps send them at most
 // every ~100 ms); on Android 12+ frame stats stay empty, so events are what it mostly sees.
@@ -831,9 +834,11 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 }
 
 USAGE :: `usage:
+  speedrun test [options] <flow file or folder>...   (speedrun test --help)
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
   speedrun --stop-agent        stop the iOS agent kept running between runs
+  speedrun --version
 options:
   --device <id>       the device: an Android serial ("adb devices") or a booted iOS
                       simulator's UDID ("xcrun simctl list devices booted")
@@ -901,6 +906,9 @@ run_cli :: proc(args: []string) -> int {
 			mode = .Stop_Agent
 		case a == "-h" || a == "--help":
 			fmt.println(USAGE)
+			return 0
+		case a == "--version":
+			fmt.printfln("speedrun %s", VERSION)
 			return 0
 		case a == "--plain":
 			plain = true

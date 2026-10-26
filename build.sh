@@ -36,7 +36,9 @@ if [[ ! -f $IMG/build/libspeedrunimage.a || $IMG/image.c -nt $IMG/build/libspeed
 fi
 
 echo "== Building speedrun (Odin)"
-odin build host -o:speed -out:speedrun
+# The version --version prints: SPEEDRUN_VERSION, else the git tag or commit.
+VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+odin build host -o:speed -out:speedrun -define:SPEEDRUN_VERSION="$VERSION"
 
 if command -v xcodebuild >/dev/null; then
   echo "== Building the iOS agent (Xcode, for simulators)"
