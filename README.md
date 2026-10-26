@@ -4,8 +4,7 @@
 
 speedrun runs mobile UI flows written in the Maestro flow format. Point it at the YAML files,
 folders and config you already use with `maestro test` and most flows run as they are,
-several times faster: **8x faster than Maestro on our Android benchmark**, 2.4–2.8x on
-iOS.
+several times faster: **8x faster than Maestro on our Android benchmark**, 3x on iOS.
 
 ```
 maestro test flows/      →      speedrun test flows/
@@ -50,9 +49,9 @@ Against Maestro on other flows (wall clock):
 
 | Flow | speedrun | Maestro | speedrun is |
 |---|---:|---:|---:|
-| Settings app, iOS simulator | 37 s | 89 s | 2.4x faster |
+| Settings app, iOS simulator | 31 s | 93 s | 3.0x faster |
 | React Native app, Android | 31 s | 205 s | 6.5x faster |
-| React Native app, iOS simulator | 65 s | 180 s | 2.8x faster |
+| React Native app, iOS simulator | 60 s | 180 s | 3.0x faster |
 
 speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds
 and tells exactly when the app has settled, instead of comparing screenshots or sleeping.

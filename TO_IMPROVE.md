@@ -41,9 +41,9 @@ the simulator again and runs `simctl diagnose`, which stalled an Android run.
 | flow | device | speedrun | Maestro | ratio |
 |---|---|---|---|---|
 | `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 10.7 s | 96.8 s | 9.0x |
-| `bench_scenario_ios.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator, iOS 26.2 | 33.0 s | 78.8 s | 2.4x |
+| `bench_scenario_ios.yaml`, TIMES=3 (2026-10-26) | iPhone 17 Pro simulator, iOS 26.2 | 26.9 s | 78.8 s | 2.9x |
 | `flows/ignite/bench_rn.yaml`, TIMES=3 (speedrun 2026-10-26, Maestro 10-25) | Android emulator, `-gpu host` | 30.5 s | 195.9 s | 6.4x |
-| `flows/ignite/bench_rn.yaml`, TIMES=3 (speedrun 2026-10-26, Maestro 10-25) | iPhone 17 Pro simulator | 60.1 s | 169.9 s | 2.8x |
+| `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-26) | iPhone 17 Pro simulator | 57.4 s | 169.4 s | 3.0x |
 | `flows/ignite/device.yaml` | iOS simulator | 40.0 s | 49.4 s | 1.2x |
 | Ignite's own flows (`apps/ignite/.maestro/flows`) | iOS simulator | 27.3 s | 37.9 s | 1.4x |
 
@@ -67,11 +67,11 @@ Maestro 9–13 s. The `device.yaml` and Ignite rows predate the iOS speedups of 
 
 | command | speedrun | Maestro |
 |---|---|---|
-| tap (General / About / back / search / close) | 578–1058 | 1780–2894 |
-| `scrollUntilVisible` down / up | 1264 / 1407 (780 / 950 on 2026-10-26, under load) | 3535 / 2964 |
-| `eraseText: 25` | 857 (650 since) | 1949 |
-| `inputText` (14 characters) | 1197 | 1573 |
-| `launchApp` | 641 | 1743 |
+| tap (General / About / back / search / close) | 539–1203 | 1554–2640 |
+| `scrollUntilVisible` down / up | 812 / 100 (up: "General" already shows) | 3777 / 2901 |
+| `eraseText: 25` | 666 | 1972 |
+| `inputText` (14 characters) | 1261 | 1562 |
+| `launchApp` | 596 | 1768 |
 
 ## Other tools on `bench_scenario.yaml` (2026-10-26)
 
@@ -117,9 +117,12 @@ s of 3.3 s.
 - **Long press: 1.0–1.2 s vs 3.9–4.7 s.** The hold is 0.8 s (2026-10-26; 3 s before), past
   the apps' usual 0.4–0.5 s delay. One that opens an iOS context menu costs ~3 s: the
   settle's quiescence wait is cut at 2 s (it took XCTest's 60 s before).
-- **iOS Enter and taps that bring up or dismiss the keyboard: 0.64 s vs 0.79 s, 1.0 s vs
-  1.2 s.** The keyboard's animation runs outside the app, so the 10x UIKit animation speed
-  set at launch does not reach it.
+- **iOS Enter and taps that bring up or dismiss the keyboard: 0.64 s vs 0.62–0.79 s, 1.1 s
+  vs 1.2 s.** The keyboard's animation runs outside the app, so the 10x UIKit animation speed
+  set at launch does not reach it. Enter's settle sees the screen change until ~430 ms, then
+  one more signature (~210 ms) confirms it; Maestro's 617 ms on 2026-10-26 was 790 ms on
+  10-25, so it is level within Maestro's spread. Not waiting for testmanagerd's confirmation
+  was slower for Enter (more signatures while the keyboard moves).
 - **iOS taps in general: 0.5–0.65 s vs ~0.15 s for the same tap on Android.** testmanagerd
   confirms a synthesized event ~230 ms after it, the screen starts changing ~300 ms after the
   tap begins, and a snapshot costs ~70 ms. Not waiting for the confirmation gained little for
