@@ -278,6 +278,11 @@ Known differences in how, not what:
   only once testmanagerd has confirmed them), and a field that does not expose its text
   (React Native) shows none. On iOS the keyboard's suggestion bar is left out of what a
   settle compares: it updates on its own a few hundred ms after each key (reads include it).
+- On iOS, element bounds are cut to the scroll views, tables and collection views around
+  them, as Android's accessibility bounds are; XCUITest frames are not (Maestro uses them as
+  they are). A list header scrolled above the list's top edge kept a frame on screen:
+  `scrollUntilVisible` stopped and the tap landed outside the list (Ignite's
+  `FavoritePodcast` after drags that stop where they lift; flings bounced to the exact top).
 - `longPressOn` holds past the app's long-press delay instead of Maestro's 3 s: 500 ms (iOS's
   recognizers, React Native, Flutter) or Android's `long_press_timeout` setting (400 ms by
   default, 1.5 s at most), whichever is longer, plus 300 ms; `SPEEDRUN_LONG_PRESS_MS`

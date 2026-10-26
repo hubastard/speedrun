@@ -1146,6 +1146,27 @@ try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, foun
 	}
 }
 
+// iOS gives each element its whole frame, also where a scroll view clips it (a list's header
+// scrolled above its top edge stays "on screen"): bounds are cut to the scroll views around
+// them, as Android's are. What a list does not show is then not visible, and a tap aims at
+// the part that shows. Nodes come parents first.
+@(private = "file")
+clip_to_scroll_views :: proc(r: ^Runner) {
+	Clip :: struct { left, top, right, bottom: i32 }
+	clips := make([]Clip, len(r.h.nodes), context.temp_allocator)
+	for &n, k in r.h.nodes {
+		c := Clip{min(i32), min(i32), max(i32), max(i32)}
+		if n.parent >= 0 do c = clips[n.parent]
+		n.left, n.top = clamp(n.left, c.left, c.right), clamp(n.top, c.top, c.bottom)
+		n.right, n.bottom = clamp(n.right, n.left, c.right), clamp(n.bottom, n.top, c.bottom)
+		switch n.class {
+		case "ScrollView", "Table", "CollectionView":
+			c = {n.left, n.top, n.right, n.bottom}
+		}
+		clips[k] = c
+	}
+}
+
 // The last hierarchy read, briefly: each window, then the texts on screen.
 screen_summary :: proc(r: ^Runner) -> string {
 	b := strings.builder_make(r.alloc)
@@ -1687,6 +1708,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		h = max(h, r.h.nodes[i].bottom)
 	}
 	if w > 0 && h > 0 do r.w, r.h_px = w, h
+	if r.dev.platform == .IOS do clip_to_scroll_views(r)
 	// filterOutOfBounds: drop nodes less than 10% on screen whose children are all dropped.
 	w, h = r.w, r.h_px
 	if w == 0 || h == 0 do w, h = max(i32), max(i32) // display size not known yet

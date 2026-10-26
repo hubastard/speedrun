@@ -3,6 +3,7 @@
 // database (what applesimutils writes).
 package speedrun
 
+import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -243,7 +244,8 @@ IOS_TCC_SERVICES :: [][2]string {
 }
 
 // Location permission applied per "udid app" in this process: `simctl privacy` takes ~0.3 s
-// and launchApp applies `all: allow` each time. ios_clear_state forgets an app.
+// and launchApp applies `all: allow` each time. ios_clear_state forgets an app. On the heap:
+// it outlives each flow's arena (a suite's next flow read a freed map).
 ios_location_set: map[string]string
 
 // iOS permissions, through the TCC database as applesimutils does, and simctl for location.
@@ -310,7 +312,8 @@ ios_set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 			return fmt.aprintf("wrong argument value '%s' was provided for 'location' permission", location, allocator = r.alloc)
 		}
 		if out, ok := simctl("privacy", r.dev.udid, action, service, app); !ok do return strings.clone(out, r.alloc)
-		ios_location_set[strings.clone(key)] = location
+		if ios_location_set == nil do ios_location_set = make(map[string]string, 8, runtime.heap_allocator())
+		ios_location_set[strings.clone(key, runtime.heap_allocator())] = location
 	}
 	return nil
 }

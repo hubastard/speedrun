@@ -224,6 +224,9 @@ yet. So a flow that loads runs as written; nothing is skipped silently.
   takes the first Android device, else the booted simulator.
 - **Regular expressions:** Java-only syntax (lookarounds, inline flags, `\p{...}`) is
   rejected. A pattern that is invalid in both tools matches as plain text, as in Maestro.
+- **iOS: what a list has scrolled out of view is not visible**, as on Android: an element's
+  bounds are cut to the scrolling area around it, and taps aim at the part that shows.
+  Maestro counts an element as visible when its frame is on screen, even if the list hides it.
 - **Not in the screen hierarchy:** Android toasts, and iOS Safari web views.
 
 ## Troubleshooting
