@@ -40,7 +40,7 @@ the simulator again and runs `simctl diagnose`, which stalled an Android run.
 
 | flow | device | speedrun | Maestro | ratio |
 |---|---|---|---|---|
-| `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 15.0 s | 96.8 s | 6.5x |
+| `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 10.7 s | 96.8 s | 9.0x |
 | `bench_scenario_ios.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator, iOS 26.2 | 33.0 s | 78.8 s | 2.4x |
 | `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-25) | Android emulator, `-gpu host` | 58.2 s | 195.9 s | 3.4x |
 | `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator | 75.1 s | 169.9 s | 2.3x |
@@ -57,21 +57,54 @@ Maestro 9–13 s. The `device.yaml` and Ignite rows predate the iOS speedups of 
 |---|---|---|
 | tap (Display & touch / Display size & text / About / Device name / Cancel) | 157–319 | 2583–3785 |
 | back | 121–176 | 759–898 |
-| `scrollUntilVisible` down / up | 828 / 801 | 2492 / 2452 |
+| `scrollUntilVisible` down / up | 328 / 330 (828 / 801 with flinging swipes) | 2492 / 2452 |
 | `eraseText: 25` | 350 | 2115 |
 | `inputText` (14 characters) | 248 | 3570 |
 | `assertVisible` | 4–64 | 84–509 |
-| `launchApp` | 870 (100 in another run) | 1015 (405) |
+| `launchApp` | 120 (then the next command waits for the app's window) | 1015 (405) |
 
 `bench_scenario_ios.yaml` per command (median ms):
 
 | command | speedrun | Maestro |
 |---|---|---|
 | tap (General / About / back / search / close) | 578–1058 | 1780–2894 |
-| `scrollUntilVisible` down / up | 1264 / 1407 | 3535 / 2964 |
+| `scrollUntilVisible` down / up | 1264 / 1407 (780 / 950 on 2026-10-26, under load) | 3535 / 2964 |
 | `eraseText: 25` | 857 (650 since) | 1949 |
 | `inputText` (14 characters) | 1197 | 1573 |
 | `launchApp` | 641 | 1743 |
+
+## Other tools on `bench_scenario.yaml` (2026-10-26)
+
+Quick ports, not kept in the repo: the same 14 steps written the way each tool is normally
+used, TIMES=3, on the same emulator, alternating the tools. The README's table is the wall
+clock, measured with VS Code closed (load ~2): speedrun's whole command; Maestro's; Appium
+from starting its server to stopping it; UI Automator's `./gradlew connectedDebugAndroidTest`
+(build up to date, daemon warm: it installs the test, runs it and uninstalls it).
+
+| tool | wall clock (median) | runs | flow alone |
+|---|---|---|---|
+| speedrun | 11.2 s | 10.8, 11.1, 11.2, 11.3, 11.3 | 10.4–10.9 s |
+| UI Automator 2.3 (Kotlin, `UiObject2` + `Until`) | 48.9 s | 44.4, 53.4 | 35.1, 36.6 s |
+| Appium 3.8, UiAutomator2 driver 8.7, WebdriverIO | 52.7 s | 51.8, 53.5 | 48.3, 48.9 s |
+| Maestro 2.11.0 | 89.1 s | 87.5, 90.7 | |
+
+Earlier the same day, with VS Code and macOS's ANECompilerService busy (load 3–5), the
+flows alone took: speedrun 12.6–20.3 s, UI Automator 35.9–47.5 s, Appium 57.4–60.1 s,
+Maestro 96.8–103.3 s. speedrun's row is after `scrollUntilVisible` stopped flinging on
+Android (13.9 s before: 13.5–15.6): per lap, its two scrolls took 1.6 s of 4.2 s, now 0.66
+s of 3.3 s.
+
+- Both ports needed an explicit wait for the dialog to close after Cancel: their tap returns
+  at once and the next `back` went to the closing dialog, leaving the flow on the wrong
+  screen. Without it Appium failed 2 runs of 4 (46.4 and 47.0 s when it passed) and UI
+  Automator all 4.
+- Where they beat speedrun: UI Automator's `clear()` and `setText` take 7 and 37 ms
+  (speedrun's `eraseText`/`inputText`: 295 and 256 ms). They set the field's text through
+  accessibility, skipping the keyboard; flows type through it, so that would change what
+  apps see.
+- UI Automator's taps return without waiting (50–100 ms); its next lookup waits instead
+  (~0.8 s after a tap that opens a screen). Its `scrollUntil` takes 2.4 s down and 1.1–1.8 s
+  up (speedrun: 0.8 s).
 
 ## Closest to Maestro
 
@@ -90,12 +123,12 @@ Maestro 9–13 s. The `device.yaml` and Ignite rows predate the iOS speedups of 
   tap begins, and a snapshot costs ~70 ms. Not waiting for the confirmation gained little for
   taps (the app's reaction is the floor).
 - **iOS `scrollUntilVisible`.** Its drags do not fling, so each moves ~340 points against
-  ~540 for Maestro's swipe (more swipes for the same distance); the 500 ms lookup before the
-  first swipe is kept; a drag that reaches the end of a list waits ~0.4 s for the bounce.
-- **Android `scrollUntilVisible`: 0.8 s vs 2.5 s, its closest command there.** The swipe
-  flings and the final settle waits for the list to stop; iOS's drag that stops at lift-up
-  could apply. `eraseText` also sends all 25 DELs when the field holds fewer characters (iOS
-  bounds them by the field's length): 350 ms here, ~60 ms per key under software rendering.
+  ~540 for Maestro's swipe (more swipes for the same distance); a drag that reaches the end
+  of a list waits ~0.4 s for the bounce.
+- **Android `eraseText` and `back`: ~4.5x, the closest commands there.** `eraseText` sends
+  all 25 DELs when the field holds fewer characters (iOS bounds them by the field's length):
+  ~460 ms here. `scrollUntilVisible` (0.33 s vs 2.5 s) drags without a fling since
+  2026-10-26; in a React Native list each drag moves ~1.5 rows, ~0.8 s for 4 drags.
 - **iOS `launchApp`: 0.6–1.5 s vs 1.7–2.3 s.** The app's own start-up; SpringBoard's launch
   animation is not sped up (that would be a global, persistent simulator setting).
 
