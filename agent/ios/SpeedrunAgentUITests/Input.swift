@@ -14,8 +14,10 @@ final class Input {
     /// lost no character in Settings' search field (agent/ios/spike/typing.py).
     static let charactersPerSecond = 100
     static let maestroCharactersPerSecond = 30
-    /// Response field inject_path: XCTest-synthesized event (Android uses 0-2).
+    /// Response field inject_path: XCTest-synthesized event (Android uses 0-2), or nothing
+    /// sent (deleting from an empty field).
     static let injectPath: UInt8 = 3
+    static let injectNone: UInt8 = 255
 
     private(set) var lastActionNs = DispatchTime.now().uptimeNanoseconds
     /// The last action was a swipe: its content stops at lift-up (no fling).
@@ -49,37 +51,48 @@ final class Input {
     /// Text through the keyboard of the focused field ("\u{8}" deletes): the first character
     /// alone, then the rest at Maestro's rate once the field has taken the first one.
     func type(_ text: String, screen: Screen, out: inout Writer) throws {
-        try type(text, screen: screen, firstRate: 30, restRate: Self.charactersPerSecond, waitCapMs: Self.firstCharacterWaitMs)
-        Self.action(inject: micros(since: lastActionNs), out: &out)
+        let typed = try type(text, screen: screen, firstRate: 30, restRate: Self.charactersPerSecond, waitCapMs: Self.firstCharacterWaitMs)
+        Self.action(inject: typed ? micros(since: lastActionNs) : 0, path: typed ? Self.injectPath : Self.injectNone, out: &out)
     }
 
-    /// The typing itself, with its knobs (the spike's TYPE_TEST tries other values).
-    func type(_ text: String, screen: Screen, firstRate: Int, restRate: Int, waitCapMs: Int) throws {
+    /// The typing itself, with its knobs (the spike's TYPE_TEST tries other values). False when
+    /// there was nothing to type: no action happened.
+    @discardableResult
+    func type(_ text: String, screen: Screen, firstRate: Int, restRate: Int, waitCapMs: Int) throws -> Bool {
+        let field = onMain { Self.focusedField(screen) }
+        var text = text
+        // No more DELs than the field holds characters: its value's length (the placeholder's
+        // when it shows one), an upper bound wherever the cursor is. None from an empty field.
+        if text.allSatisfy({ $0 == "\u{8}" }), let field, field.elementType != .secureTextField,
+           let value = field.value as? String {
+            text = String(text.prefix(value.count))
+        }
+        guard let first = text.first else { return false }
         mark()
-        guard let first = text.first else { return }
-        let before = onMain { Self.focusedValue(screen) }
+        let before = field.map(Self.shownValue)
         // Deleting from an empty field changes nothing: no change to wait for, so one event.
         if text.allSatisfy({ $0 == "\u{8}" }) && (before?.isEmpty ?? true) {
             try Private.typeText(text, charactersPerSecond: restRate)
-            return
+            return true
         }
         try Private.typeText(String(first), charactersPerSecond: firstRate)
         let rest = String(text.dropFirst())
-        guard !rest.isEmpty else { return }
+        guard !rest.isEmpty else { return true }
         guard before != nil else {
             // No focused element reports its value (React Native groups a field with its
             // label): nothing to watch, so Maestro's pacing, its fixed wait and its rate.
             Thread.sleep(forTimeInterval: Double(Self.firstCharacterWaitMs) / 1000)
             try Private.typeText(rest, charactersPerSecond: Self.maestroCharactersPerSecond)
-            return
+            return true
         }
         let cap = waitCapMs
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(cap, 0)) * 1_000_000
         while DispatchTime.now().uptimeNanoseconds < deadline {
-            if let now = onMain({ Self.focusedValue(screen) }), now != before { break }
+            if let now = onMain({ Self.focusedField(screen).map(Self.shownValue) }), now != before { break }
             Thread.sleep(forTimeInterval: 0.02)
         }
         try Private.typeText(rest, charactersPerSecond: restRate)
+        return true
     }
 
     /// Android key codes, mapped as Maestro's IOSDriver.pressKey does; other keys (back
@@ -97,21 +110,25 @@ final class Input {
         Self.action(inject: micros(since: t), out: &out)
     }
 
-    /// The focused element's value, "" when it only shows its placeholder (nil when no element
-    /// reports keyboard focus). `exists` first: a snapshot of a query that matches nothing
-    /// retries for ~2.5 s. Main thread.
-    private static func focusedValue(_ screen: Screen) -> String? {
+    /// The element with keyboard focus (nil when none reports it). `exists` first: a snapshot
+    /// of a query that matches nothing retries for ~2.5 s. Main thread.
+    private static func focusedField(_ screen: Screen) -> XCUIElementSnapshot? {
         let focused = screen.foregroundApp().descendants(matching: .any)
             .matching(NSPredicate(format: "hasKeyboardFocus == YES")).firstMatch
-        guard focused.exists, let snapshot = try? focused.snapshot() else { return nil }
-        let value = snapshot.value as? String ?? ""
-        return value == snapshot.placeholderValue ? "" : value
+        guard focused.exists else { return nil }
+        return try? focused.snapshot()
+    }
+
+    /// A field's value, "" when it only shows its placeholder.
+    private static func shownValue(_ field: XCUIElementSnapshot) -> String {
+        let value = field.value as? String ?? ""
+        return value == field.placeholderValue ? "" : value
     }
 
     /// Action response: u32 prep_us, u32 inject_us, u8 inject_path.
-    private static func action(inject: UInt32, out: inout Writer) {
+    private static func action(inject: UInt32, path: UInt8 = injectPath, out: inout Writer) {
         out.u32(0)
         out.u32(inject)
-        out.u8(injectPath)
+        out.u8(path)
     }
 }

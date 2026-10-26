@@ -81,7 +81,8 @@ What it means:
 - Taps are not where Maestro loses its time on iOS (it already synthesizes events directly).
   Its time goes to settling and to hierarchy reads: a tap command costs 2.4–3 s against
   ~1.0–1.3 s for tap + quiescence here. Expect about 2x per tap, less than Android's 4–5x,
-  because the push animation itself takes ~1 s and nothing on iOS turns it off.
+  because the push animation itself takes ~1 s and nothing on iOS turns it off (but see
+  `UIAnimationDragCoefficient` below).
 - XCTest's quiescence is a usable settle signal (it fires ~0.2 s after the content stops
   moving, ignoring the scroll indicator's fade), but in one push of five it fired ~0.44 s
   after the tap, before the transition began: settle needs a guard, as on Android.
@@ -91,6 +92,16 @@ What it means:
 - Typing faster than 30 chars/s lost characters in some runs (60: 1 of 3 correct, 100: 2 of
   3, 150–300: 3 of 3); unexplained so far, so 30 chars/s stays until it is understood.
 - Writing `ReduceMotionEnabled` to the simulator's defaults did not change push timing.
+- Later (2026-10-24): UIKit's `UIAnimationDragCoefficient()` returns its internal preference
+  `UIAnimationDragCoefficient` (when set and above 0), else 10 while the simulator's Slow
+  Animations is on (Darwin notification state `com.apple.UIKit.SimulatorSlowMotionAnimationState`),
+  else 1. Internal preferences are read only on internal builds or with the feature flag
+  `UIKit/UIPreferences` on, which `FEATUREFLAGS_ENABLED=UIKit/UIPreferences` in the app's
+  environment does (flags separated by colons). Launched with that and
+  `-UIAnimationDragCoefficient 0.1`, Settings' General push went from ~1.5 to ~0.7 s per tap
+  command and back from ~1.0 to ~0.55 s; 0.01 was no faster. speedrun's `launchApp` does this
+  (host/system.odin). The global defaults domain and `com.apple.UIKit` are not read without
+  the flag.
 - Start-up: 3.7 s here against ~10 s for Maestro, before keeping the runner alive between
   runs.
 

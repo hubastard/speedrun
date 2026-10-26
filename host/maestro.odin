@@ -88,6 +88,7 @@ Runner :: struct {
 	location:             Location_Mock, // Android's mock location (setLocation, travel)
 	notifications:        string, // iOS: "allow" or "deny" answers the notification alert (system.odin)
 	settle_due:           bool, // a change's settle put off until a command needs the screen
+	launch_due:           string, // iOS: the app launched, its UI not waited for yet (exec)
 }
 
 Rx :: struct {
@@ -419,13 +420,24 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	// A settle put off (Android's dark mode restarting the apps, which Maestro does not wait
 	// for at all) is paid by the first command that reads or touches the screen.
-	if r.settle_due {
+	// So is the wait for an app's UI after an iOS launchApp (Maestro's returns once the
+	// process starts): commands that do not touch the screen run while the app starts.
+	if r.settle_due || r.launch_due != "" {
 		switch _ in c.data {
 		case Device_Mode, Set_Permissions, Set_Location, Travel, Add_Media, Start_Recording,
 		     Stop_Recording, Eval_Script, Run_Script, Set_Clipboard, Run_Flow, Repeat, Retry:
 		case Launch_App, App_Cmd, Tap, Assert, Input_Text, Erase_Text, Key_Press, Navigate,
 		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot, Copy_Text, Paste_Text,
 		     Input_Random, Set_Orientation, Assert_Screenshot:
+			if app := r.launch_due; app != "" {
+				r.launch_due = ""
+				t := time.tick_now()
+				ready, ok := op_launched(r.c, app, 20_000, r.alloc)
+				debug_step(r, "app ready", &t)
+				if !ok do return false, "agent connection lost"
+				if !ready do return false, fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
+				r.settle_due = true
+			}
 			r.settle_due = false
 			settle(r) or_return
 		}
@@ -450,19 +462,17 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			if d.stop_app && !d.clear_state do simctl("terminate", r.dev.udid, app)
 			debug_step(r, "terminate", &t)
 			// `simctl launch` returns once the process starts; Android's `am start -W` once
-			// it has launched. Wait for the app's UI, then settle: a tap during the launch
-			// would be ignored.
+			// it has launched. The next command that needs the screen waits for the app's UI,
+			// then settles (exec): a tap during the launch would be ignored.
 			if !op_mark(r.c) do return true, "agent connection lost"
 			cmd := make([dynamic]string, 0, 3 + 2 * len(args), context.temp_allocator)
 			append(&cmd, "launch", r.dev.udid, app)
 			append(&cmd, ..ios_launch_arguments(args))
-			if out, ok := simctl(..cmd[:]); !ok do return true, out
+			append(&cmd, ..ios_animation_arguments(args))
+			if out, ok := simctl_env(ios_launch_env(), ..cmd[:]); !ok do return true, out
 			debug_step(r, "simctl launch", &t)
-			ready, ok := op_launched(r.c, app, 20_000, r.alloc)
-			debug_step(r, "app ready", &t)
-			if !ok do return true, "agent connection lost"
-			if !ready do return true, fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
-			return true, settle(r)
+			r.launch_due = strings.clone(app, r.alloc)
+			return true, nil
 		}
 		if d.clear_state do _ = shell(r, "pm clear %s", app)
 		set_permissions(r, app, perms) or_return
@@ -494,8 +504,10 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Input_Text:
 		return true, type_text(r, eval(r, d.text) or_return)
 	case Erase_Text:
-		if _, ok := op_erase(r.c, i32(d.count)); !ok do return true, "agent connection lost"
-		return true, settle(r)
+		res, ok := op_erase(r.c, i32(d.count))
+		if !ok do return true, "agent connection lost"
+		if res.inject_path == .None do return true, nil // the field was empty: nothing changed
+		return true, settle(r, no_change_ms = SETTLE_TYPED_NO_CHANGE_MS)
 	case Key_Press:
 		if _, ok := op_key(r.c, d.keycode); !ok do return true, "agent connection lost"
 		return true, settle(r)
@@ -675,12 +687,13 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 }
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
-	_, skipped, ok := op_type(r.c, text, r.alloc)
+	res, skipped, ok := op_type(r.c, text, r.alloc)
 	if !ok do return "agent connection lost"
+	if res.inject_path == .None do return nil
 	if skipped > 0 {
 		return fmt.aprintf("Could not type \"%s\": %d characters have no key sequence, and no editable field has the input focus to insert them into", text, skipped, allocator = r.alloc)
 	}
-	return settle(r)
+	return settle(r, no_change_ms = SETTLE_TYPED_NO_CHANGE_MS)
 }
 
 // IOSDriver.hideKeyboard: past the keyboard's introduction, then a short swipe up, and if
@@ -738,6 +751,8 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	tapped: struct {
 		text, desc, class: string,
 		flags:             Flags,
+		path:              u64, // class_path
+		window:            map[u64]struct{}, // window_texts
 	}
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
@@ -748,7 +763,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		el := find_element(r, d.sel, c.optional, -1) or_return
 		n := r.h.nodes[el]
 		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
-		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags}
+		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
 		if d.point != "" {
 			p := eval(r, d.point) or_return
 			ok: bool
@@ -780,8 +795,10 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		read_since_tap = false
 		// The element moved between the lookup and the tap: an app that keeps laying out after
 		// it looked settled (Settings inserts a banner ~0.5 s after launch). If it is still
-		// there, unchanged (nothing reacted to the tap: a toggled switch would differ), the
-		// tap missed it: tap it where it is now. Once.
+		// there, unchanged (nothing reacted to the tap: a toggled switch would differ), in the
+		// same containers, on the same screen (most of its window's texts still there), the
+		// tap missed it: tap it where it is now. Once. The screen a tap opened can repeat the
+		// tapped text elsewhere: iOS titles a pushed screen with the row that opened it.
 		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
 			if !read_screen(r) do return "agent connection lost"
 			read_since_tap = true
@@ -790,7 +807,14 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				nx, ny := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 				same := n.text == tapped.text && n.desc == tapped.desc && n.flags == tapped.flags
 				moved := abs(int(nx - x)) > 4 || abs(int(ny - y)) > 4
-				if r.debug && moved do fmt.printf("      [tapped %s moved by %d,%d; same %v]\n", tapped.class, nx - x, ny - y, same)
+				if same && moved {
+					containers := class_path(r, el) == tapped.path
+					window := window_texts(r, el)
+					shared := 0
+					for t in tapped.window do if t in window do shared += 1
+					same = containers && shared * 2 > len(tapped.window)
+					if r.debug do fmt.printf("      [tapped %s moved by %d,%d; same containers %v, %d of %d texts still there]\n", tapped.class, nx - x, ny - y, containers, shared, len(tapped.window))
+				}
 				// A field the tap focused moves out of the keyboard's way (and the read can
 				// predate its focus flag): that is no miss.
 				if same && moved && (typing_before || !typing(r)) {
@@ -827,6 +851,34 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		settle(r, d.settle_ms) or_return
 	}
 	return nil
+}
+
+// The classes of node `el` and its ancestors, hashed.
+@(private = "file")
+class_path :: proc(r: ^Runner, el: int) -> u64 {
+	h: u64 = 14695981039346656037
+	for k := el; k >= 0; k = r.h.nodes[k].parent {
+		for c in transmute([]u8)r.h.nodes[k].class do h = (h ~ u64(c)) * 1099511628211
+		h = (h ~ u64('/')) * 1099511628211
+	}
+	return h
+}
+
+// The texts and descriptions in the window holding node `el` (its root), hashed, in the
+// temp allocator.
+@(private = "file")
+window_texts :: proc(r: ^Runner, el: int) -> map[u64]struct{} {
+	root := el
+	for r.h.nodes[root].parent >= 0 do root = r.h.nodes[root].parent
+	set := make(map[u64]struct{}, context.temp_allocator)
+	for k in subtree(r, root) {
+		for s in ([]string{r.h.nodes[k].text, r.h.nodes[k].desc}) do if s != "" {
+			h: u64 = 14695981039346656037
+			for c in transmute([]u8)s do h = (h ~ u64(c)) * 1099511628211
+			set[h] = {}
+		}
+	}
+	return set
 }
 
 // A keyboard is up or a text field has the focus, in the last read.
@@ -980,15 +1032,15 @@ edge_point :: proc(r: ^Runner, x, y: i32, dir: Swipe_Dir) -> (i32, i32) {
 	return x, y
 }
 
-settle :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> Err {
-	_, err := settle_status(r, timeout_ms)
+settle :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i32 = SETTLE_NO_CHANGE_MS) -> Err {
+	_, err := settle_status(r, timeout_ms, no_change_ms)
 	return err
 }
 
-settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil) -> (Settle_Status, Err) {
+settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i32 = SETTLE_NO_CHANGE_MS) -> (Settle_Status, Err) {
 	timeout := i32(SETTLE_TIMEOUT_MS)
 	if t, has := timeout_ms.?; has do timeout = i32(t)
-	res, ok := op_settle(r.c, SETTLE_QUIET_MS, SETTLE_NO_CHANGE_MS, timeout)
+	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
 	if !ok do return .Timeout, "agent connection lost"
 	if r.debug do fmt.printf("      [settle %v: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
 	return res.status, nil

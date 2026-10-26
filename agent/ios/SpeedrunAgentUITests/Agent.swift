@@ -19,7 +19,8 @@
 //  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
 //   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same   (Maestro's swipe; flags unused)
 //   8 TYPE   str text                       -> same, u32 skipped (always 0)
-//   9 ERASE  i32 count                      -> same                          (count deletes)
+//   9 ERASE  i32 count                      -> same   (count deletes, at most the focused
+//                                                     field's length; inject_path 255: none)
 //   4 KEY    i32 android_keycode            -> same   (ENTER, DEL, HOME, POWER; others no-op)
 //  12 MARK                                  -> (empty)
 //   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms -> as on Android (Settle.swift)

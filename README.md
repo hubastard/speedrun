@@ -257,8 +257,18 @@ Maestro's runner: settle is XCTest's quiescence checked against the screen inste
 comparing screenshots, and after the first character the rest of the text is typed as soon as
 the field shows it, at 100 characters per second (Maestro: a fixed 0.5 s pause, then 30). A
 field that does not expose its value (React Native groups it with its label) gets Maestro's
-pacing.
+pacing. `eraseText` sends no more deletes than the focused field holds characters (its
+value's length, the placeholder's while it shows one) and none to an empty field.
 Swipes are Maestro's exactly, end hold included: how far content scrolls depends on it.
+Apps that `launchApp` starts run their UIKit animations 10 times faster, the counterpart of
+Android's animations being off: speedrun launches them with UIKit's
+`UIAnimationDragCoefficient` at 0.1 (the setting behind the simulator's Slow Animations,
+which uses 10) and the `UIKit/UIPreferences` feature flag under which UIKit reads it
+(`SIMCTL_CHILD_FEATUREFLAGS_ENABLED`, added to any flags already set). A flow's own
+`UIAnimationDragCoefficient` launch argument (1: normal speed) wins. A tap that pushes a
+screen or brings up the keyboard settles in about half the time; scrolling momentum and React Native's
+JavaScript-driven animations are not UIKit animations and keep their speed, and apps opened
+another way (`openLink`, the system) run at normal speed.
 
 Known differences in how, not what:
 
@@ -273,8 +283,18 @@ Known differences in how, not what:
   `am start`; `setLocation`/`travel` use the shell's test location providers (gps, network,
   fused; Android 12+, the emulator's GPS before), sent again every 2 s while the flow runs;
   `addMedia` copies to `Pictures`/`Movies` and runs the media scanner.
-- `launchApp` waits until the app's UI is up and settled, where Maestro returns at once and
-  its next command waits instead.
+- Android `launchApp` waits until the app's UI is up and settled, where Maestro returns at
+  once and its next command waits instead. On iOS it returns once the process starts, as
+  Maestro's does, and the next command that reads or touches the screen waits for the app's
+  UI; commands that do not (permissions, location, scripts) run while the app starts.
+- A tap whose element is still there afterwards, unchanged, moved and on the same screen
+  (same containers, most of its window's texts) missed it, and is tapped again where it is
+  now (an app laying out after it looked settled). A screen the tap opened can repeat the
+  tapped text elsewhere, as iOS titles a pushed screen with the row that opened it: that is
+  no miss.
+- After `inputText` and `eraseText`, a screen that shows no change is taken as settled after
+  300 ms (1 s after taps): the keys were delivered when the agent returned, and a field that
+  does not expose its text (React Native) shows none.
 - `scrollUntilVisible` settles only once the element is on screen: until then it reads the
   screen while the list still drifts and swipes again as soon as the last swipe has played
   out (the touch stops the drift). Maestro settles and polls 500 ms after every swipe. The

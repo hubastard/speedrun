@@ -46,6 +46,10 @@ KEYCODE_BACK :: 4
 // every ~100 ms); on Android 12+ frame stats stay empty, so events are what it mostly sees.
 SETTLE_QUIET_MS     :: 34
 SETTLE_NO_CHANGE_MS :: 1000 // only paid when a tap really does nothing
+// After typing: the keys were delivered when the op returned, so an app reacting late is
+// less of a worry; paid where the field's text is not exposed (React Native groups it with
+// its label), where nothing a flow can read changes.
+SETTLE_TYPED_NO_CHANGE_MS :: 300
 SETTLE_TIMEOUT_MS   :: 10_000
 
 Flag :: enum u8 {
@@ -99,6 +103,7 @@ Inject_Path :: enum u8 {
 	UiAutomation_Fast, // hidden UiAutomation overload: syncs input transactions, no animation wait
 	Input_Manager,     // shell-uid agent straight to the input manager: async, no syncs
 	XCTest_Event,      // iOS: an event synthesized through testmanagerd, until delivered
+	None = 255,        // iOS: nothing to send (deleting from an empty field)
 }
 
 Action_Result :: struct {
@@ -798,6 +803,7 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 		case .UiAutomation_Fast: path_label = "UiAutomation, no animation wait (syncs input transactions)"
 		case .UiAutomation:      path_label = "UiAutomation public API (waits for animations; see logcat tag SpeedrunAgent)"
 		case .XCTest_Event:      path_label = "XCTest synthesized event (iOS)"
+		case .None:              path_label = "none (nothing to send)"
 		case:                    path_label = fmt.tprintf("unknown (%d)", u8(inject_path))
 		}
 		fmt.printf("  injection path: %s\n", path_label)
@@ -821,7 +827,8 @@ options:
   --instrument        Android: run the agent as an instrumentation (~60 ms slower per action)
 Starts the agent on the device, runs, then stops it; on iOS the agent stays up for the next
 run (starting it takes seconds) and stops after 10 idle minutes (SPEEDRUN_IDLE_S). On Android,
-animations are turned off, as for any UI test, and stay off.`
+animations are turned off, as for any UI test, and stay off; on iOS, apps that launchApp
+starts run their UIKit animations 10x faster.`
 
 // --flow runs a Maestro flow file; exit status 0 if it passed. On a terminal the output is a
 // live view like Maestro's; --plain (or a pipe) prints one line per command instead.

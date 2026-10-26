@@ -237,10 +237,15 @@ copy_app :: proc(from, to: string, clone: bool) -> bool {
 
 // Runs `xcrun simctl args`. out is its stdout, plus its stderr when it failed.
 simctl :: proc(args: ..string) -> (out: string, ok: bool) {
+	return simctl_env(nil, ..args)
+}
+
+// simctl with this environment (nil: ours).
+simctl_env :: proc(env: []string, args: ..string) -> (out: string, ok: bool) {
 	cmd := make([dynamic]string, 0, len(args) + 2, context.temp_allocator)
 	append(&cmd, "xcrun", "simctl")
 	append(&cmd, ..args)
-	state, stdout, stderr, err := os.process_exec({command = cmd[:]}, context.temp_allocator)
+	state, stdout, stderr, err := os.process_exec({command = cmd[:], env = env}, context.temp_allocator)
 	if err != nil do return fmt.tprintf("xcrun: %v (Xcode command-line tools)", err), false
 	if state.exited && state.exit_code == 0 do return string(stdout), true
 	return strings.trim_space(strings.concatenate({string(stdout), string(stderr)}, context.temp_allocator)), false

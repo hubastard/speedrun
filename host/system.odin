@@ -188,6 +188,38 @@ ios_launch_arguments :: proc(args: []Launch_Arg) -> []string {
 	return out[:]
 }
 
+// iOS apps run their animations 10x faster, as Android's are turned off (device.odin):
+// UIKit's UIAnimationDragCoefficient, which the simulator's "Slow Animations" sets to 10.
+// UIKit reads it from the app's defaults (this launch argument, unless the flow passes its
+// own) once the UIKit/UIPreferences feature flag is on (ios_launch_env).
+@(rodata)
+ios_animation_args := [2]string{"-UIAnimationDragCoefficient", "0.1"}
+
+ios_animation_arguments :: proc(args: []Launch_Arg) -> []string {
+	for a in args do if strings.trim_left(a.key, "-") == "UIAnimationDragCoefficient" do return nil
+	return ios_animation_args[:]
+}
+
+// `simctl launch`'s environment: ours, with the feature flag added to the app's
+// (SIMCTL_CHILD_X reaches it as X; flags are separated by colons).
+ios_launch_env :: proc() -> []string {
+	KEY :: "SIMCTL_CHILD_FEATUREFLAGS_ENABLED"
+	FLAG :: "UIKit/UIPreferences"
+	environ, _ := os.environ(context.temp_allocator)
+	env := make([dynamic]string, 0, len(environ) + 1, context.temp_allocator)
+	flags := FLAG
+	for e in environ {
+		if !strings.has_prefix(e, KEY + "=") {
+			append(&env, e)
+			continue
+		}
+		old := e[len(KEY) + 1:]
+		if old != "" do flags = old if strings.contains(old, FLAG) else strings.concatenate({old, ":", FLAG}, context.temp_allocator)
+	}
+	append(&env, strings.concatenate({KEY, "=", flags}, context.temp_allocator))
+	return env[:]
+}
+
 // The Android API level (cached).
 @(private = "file")
 api_level :: proc(r: ^Runner) -> int {
