@@ -32,22 +32,36 @@ The benchmark flows: `bench_scenario.yaml` (Android Settings, 14 commands per it
 navigation two levels deep, scrolling both ways, text input in a dialog), its iOS version
 `bench_scenario_ios.yaml` (Settings on a simulator in English), and `flows/ignite/bench_rn.yaml`
 (a React Native app: login, an API list, favorites, scrolling, text input, tabs). Shut the iOS
-simulator down for Android numbers: memory pressure on a 16 GB Mac stalls the emulator.
+simulator down for Android numbers: memory pressure on a 16 GB Mac stalls the emulator. Stop
+speedrun's iOS agent first (`./speedrun --stop-agent`): shut down under it, xcodebuild boots
+the simulator again and runs `simctl diagnose`, which stalled an Android run.
 
 ## Latest results
 
 | flow | device | speedrun | Maestro | ratio |
 |---|---|---|---|---|
-| `bench_scenario.yaml`, TIMES=2 (2026-10-23) | Android emulator, software rendering | 14.7 s | 65.1 s | 4.4x |
+| `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 15.0 s | 96.8 s | 6.5x |
 | `bench_scenario_ios.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator, iOS 26.2 | 33.0 s | 78.8 s | 2.4x |
 | `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-25) | Android emulator, `-gpu host` | 58.2 s | 195.9 s | 3.4x |
 | `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-25) | iPhone 17 Pro simulator | 75.1 s | 169.9 s | 2.3x |
 | `flows/ignite/device.yaml` | iOS simulator | 40.0 s | 49.4 s | 1.2x |
 | Ignite's own flows (`apps/ignite/.maestro/flows`) | iOS simulator | 27.3 s | 37.9 s | 1.4x |
 
-Flow times; outside the flow, start-up and shutdown cost speedrun 0.7 s on Android and 4–5 s
-on iOS cold (~0.2 s once the runner is up), Maestro 9–10 s. The `device.yaml` and Ignite rows
-predate the iOS speedups of 2026-10-24/25.
+Flow times; outside the flow, start-up and shutdown cost speedrun 0.6–2.7 s on Android (the
+most when it pushes a new agent build) and 4–5 s on iOS cold (~0.2 s once the runner is up),
+Maestro 9–13 s. The `device.yaml` and Ignite rows predate the iOS speedups of 2026-10-24/25.
+
+`bench_scenario.yaml` per command (median ms):
+
+| command | speedrun | Maestro |
+|---|---|---|
+| tap (Display & touch / Display size & text / About / Device name / Cancel) | 157–319 | 2583–3785 |
+| back | 121–176 | 759–898 |
+| `scrollUntilVisible` down / up | 828 / 801 | 2492 / 2452 |
+| `eraseText: 25` | 350 | 2115 |
+| `inputText` (14 characters) | 248 | 3570 |
+| `assertVisible` | 4–64 | 84–509 |
+| `launchApp` | 870 (100 in another run) | 1015 (405) |
 
 `bench_scenario_ios.yaml` per command (median ms):
 
@@ -78,9 +92,10 @@ predate the iOS speedups of 2026-10-24/25.
 - **iOS `scrollUntilVisible`.** Its drags do not fling, so each moves ~340 points against
   ~540 for Maestro's swipe (more swipes for the same distance); the 500 ms lookup before the
   first swipe is kept; a drag that reaches the end of a list waits ~0.4 s for the bounce.
-- **Android `eraseText`: 1.7 s vs 3.8 s.** ~60 ms per DEL through the IME, and all 25 are
-  sent even when the field holds fewer characters. iOS bounds the count by the field's
-  length; Android could too.
+- **Android `scrollUntilVisible`: 0.8 s vs 2.5 s, its closest command there.** The swipe
+  flings and the final settle waits for the list to stop; iOS's drag that stops at lift-up
+  could apply. `eraseText` also sends all 25 DELs when the field holds fewer characters (iOS
+  bounds them by the field's length): 350 ms here, ~60 ms per key under software rendering.
 - **iOS `launchApp`: 0.6–1.5 s vs 1.7–2.3 s.** The app's own start-up; SpringBoard's launch
   animation is not sped up (that would be a global, persistent simulator setting).
 
