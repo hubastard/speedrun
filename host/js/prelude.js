@@ -1,25 +1,24 @@
-// The JavaScript world flows' scripts run in, as Maestro 2.11.0 sets it up for GraalJS
-// (maestro-client js/GraalJsEngine.kt, GraalJsHttp.kt), here on QuickJS-ng. engine.c
+// The JavaScript world flows' scripts run in, on QuickJS-ng. engine.c
 // evaluates this file once per flow and calls the function it evaluates to with the natives
 // (log, http, platform); host/js.odin then drives the object it returns.
 //
-// What scripts see, as in Maestro:
+// What scripts see:
 // - undeclared names are `undefined`, not a ReferenceError (`${NAME || 'default'}`);
 // - env variables as global strings, set again before every script; globals a script
 //   creates are gone at the next one (only `output` and `maestro` carry state);
 // - each script runs in its own function scope, strict, its value being the last
-//   expression's (`(function(){ return eval(script) })()` in Maestro);
+//   expression's (`(function(){ return eval(script) })()`);
 // - `output`, `maestro.platform`, `maestro.copiedText`, `json()`, `relativePoint()`,
 //   `http.get/post/put/delete/request` (synchronous; through curl, see js.odin) and
 //   `console.log`, whose lines show under the command.
-// - `faker`, Java's Datafaker in Maestro: its common providers (see below).
+// - `faker`, as Java's Datafaker: its common providers (see below).
 (function (natives) {
 	'use strict'
 	const g = globalThis
-	// Bindings Maestro never removes between scripts (permanentBindingKeys).
+	// Bindings never removed between scripts.
 	const PERMANENT = new Set(['http', 'faker', 'output', 'maestro', 'json', 'relativePoint'])
 
-	// GraalJS's Value.toString(), which Maestro substitutes for `${...}`: a string as it is,
+	// The value `${...}` takes: a string as it is,
 	// anything else in its display form (`[1, 2]`, `{a: 1, b: "x"}`).
 	function show(v, depth) {
 		try {
@@ -63,7 +62,7 @@
 	const maestro = { platform: natives.platform }
 	g.maestro = maestro
 
-	// GraalJsHttp.executeRequest with okhttp's rules: only a string `body` is sent, GET and
+	// A request with okhttp's rules: only a string `body` is sent, GET and
 	// HEAD take none, POST/PUT/PATCH need one; `multipartForm` values are text parts, or
 	// files with `{filePath, mediaType}` (relative to the running script).
 	function request(method, url, params) {
@@ -106,7 +105,7 @@
 		request: (url, params) => request(params && typeof params.method === 'string' ? params.method : 'GET', url, params),
 	}
 
-	// Datafaker (Maestro's `faker` and inputRandom*): the providers flows use, with
+	// Datafaker (`faker` and inputRandom*): the providers flows use, with
 	// Datafaker's English word lists (datafaker/data.json) and formats. Other providers
 	// and methods are an error naming the call.
 	let fakerText = ''

@@ -43,7 +43,7 @@ env:
           direction: DOWN
           centerElement: true # else it can stop under the tab bar, which takes the tap
       # (React Native groups the field with its label: the typed value is not exposed to
-      # accessibility, so it cannot be asserted, in Maestro either.)
+      # accessibility, so it cannot be asserted.)
       - tapOn: "No Status, This is the default status"
       - inputText: "Speedrun RN"
       - eraseText: 11

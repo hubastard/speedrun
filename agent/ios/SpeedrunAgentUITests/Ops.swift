@@ -72,7 +72,7 @@ final class Ops {
             }))
         case 16: // INFO
             let env = ProcessInfo.processInfo.environment
-            // Maestro's description of a simulator: "<model> - iOS <version> - <udid>".
+            // A simulator's description: "<model> - iOS <version> - <udid>".
             let udid = env["SIMULATOR_UDID"] ?? ""
             var parts = [env["SIMULATOR_DEVICE_NAME"] ?? "iOS simulator"]
             if let version = env["SIMULATOR_RUNTIME_VERSION"] { parts.append("iOS \(version)") }

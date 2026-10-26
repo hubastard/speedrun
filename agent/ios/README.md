@@ -7,11 +7,10 @@ with `xcodebuild test-without-building` (3–6 s: ~2 s of xcodebuild itself, the
 launching the runner and XCTest's session handshake). It then stays up for the next run, in
 its own session: a run that finds it serving this build on the chosen simulator (op INFO)
 starts in ~0.2 s. It stops on QUIT (`./speedrun --stop-agent`) or after SPEEDRUN_IDLE_S
-seconds without a client (600). Only an XCTest runner may drive other apps on iOS, which is
-also how Maestro's iOS driver works.
+seconds without a client (600). Only an XCTest runner may drive other apps on iOS.
 
 - `SpeedrunAgentUITests/` — `Agent.swift` (server, protocol), `Screen.swift` (the hierarchy,
-  with Maestro's iOS attribute mapping), `Input.swift` (taps, swipes, typing, keys),
+  with the iOS attribute mapping flows match against), `Input.swift` (taps, swipes, typing, keys),
   `Settle.swift`, `Private.swift` (private XCTest API, reached through the Objective-C runtime
   and checked before each use: a missing method is an error naming it, not a crash) and
   `Spike.swift` (measurement-only ops).
@@ -26,11 +25,11 @@ How it does each part:
   testmanagerd, the last one checked first), then SpringBoard's status bars, re-read every 5 s
   (they cost as much as the app and change with the clock). A read right after SETTLE is
   served from settle's last snapshot (no action since, under 1 s old). ~70–90 ms otherwise.
-- **Input**: events synthesized through testmanagerd, as Maestro's runner does (a 100 ms tap;
-  Maestro's swipe for `swipe` and `scroll`, which glides over its whole duration, see below;
-  `scrollUntilVisible` a drag that does not fling, `Input.drag`). Text: the first character alone, then, once the focused field shows
-  it (at most 0.5 s), the rest at 100 characters per second; Maestro types at 30 after a fixed
-  0.5 s. Deleting from an empty field does not wait.
+- **Input**: events synthesized through testmanagerd (a 100 ms tap; for `swipe` and `scroll`
+  a swipe that glides over its whole duration, see below; for `scrollUntilVisible` a drag that
+  does not fling, `Input.drag`). Text: the first character alone, then, once the focused field
+  shows it (at most 0.5 s), the rest at 100 characters per second. Deleting from an empty
+  field does not wait.
 - **Settle**: XCTest's quiescence (event loop, then animations, idle), then the screen's
   signature: it must differ from what the flow last read (quiescence once reported idle
   before a push had begun), and two signatures in a row must agree. "No change" after
@@ -50,18 +49,6 @@ python3 agent/ios/spike/measure.py        # Settings open on its home screen
 
 ## Spike results (2026-10-23, iPhone 17 Pro simulator, iOS 26.2, Xcode 27.0, a loaded Mac)
 
-Maestro 2.11.0, `bench_scenario_ios.yaml -e TIMES=5`, all commands passed:
-
-| command | median |
-|---|---|
-| tap (General / About / back button / search field / close) | 2.4–3.0 s |
-| `scrollUntilVisible` down / up | 3.7 / 3.0 s |
-| `eraseText: 25` | 2.0 s |
-| `inputText` (14 characters) | 1.6 s |
-| `assertVisible` | 0.2–0.3 s |
-| per iteration | 26.0 s |
-| start-up and shutdown, outside the flow | ~10 s |
-
 Building blocks through the spike runner:
 
 | block | time |
@@ -71,21 +58,17 @@ Building blocks through the spike runner:
 | full snapshot of Settings (168 nodes) | 70–90 ms (`dictionaryRepresentation` 70, walking `children` 90) |
 | first element by label (`firstMatch`) | 53 ms found, 81 ms absent |
 | screenshot (PNG) | 105 ms |
-| tap (synthesized event, Maestro's 100 ms hold) until delivered | 334 ms (249 ms with a 20 ms hold) |
+| tap (synthesized event, 100 ms hold) until delivered | 334 ms (249 ms with a 20 ms hold) |
 | screen starts changing | ~300 ms after the tap begins |
 | XCTest quiescence (event loop + animations idle) after a push / pop | 1.2 s / 0.74 s after the tap |
 | push content actually done (PNG diffs) | ~1.0 s after the tap |
-| Maestro's static check (two equal screenshots) after a push / pop | 1.46 s / 1.15 s |
-| typing 14 characters at Maestro's 30 chars/s | 648 ms (Maestro: plus 0.7 s of fixed sleeps) |
+| typing 14 characters at 30 chars/s | 648 ms |
 | erasing 25 characters at 30 chars/s | 1.0 s |
 
 What it means:
 
-- Taps are not where Maestro loses its time on iOS (it already synthesizes events directly).
-  Its time goes to settling and to hierarchy reads: a tap command costs 2.4–3 s against
-  ~1.0–1.3 s for tap + quiescence here. Expect about 2x per tap, less than Android's 4–5x,
-  because the push animation itself takes ~1 s and nothing on iOS turns it off (but see
-  `UIAnimationDragCoefficient` below).
+- A tap + quiescence takes ~1.0–1.3 s, mostly the push animation itself (~1 s), which
+  nothing on iOS turns off (but see `UIAnimationDragCoefficient` below).
 - XCTest's quiescence is a usable settle signal (it fires ~0.2 s after the content stops
   moving, ignoring the scroll indicator's fade), but in one push of five it fired ~0.44 s
   after the tap, before the transition began: settle needs a guard, as on Android.
@@ -108,8 +91,8 @@ What it means:
 - Later (2026-10-25), swipes, traced with `spike/swipe.py` (a row's position polled during
   and after a drag sent without waiting):
   - testmanagerd plays a move (`moveToPoint:atOffset:`) from its offset until the next event.
-    Maestro's swipe (down, move at 100 ms, up at 100 ms + duration) is therefore a glide over
-    the whole duration that lifts still moving, never a hold. scrollUntilVisible's 601 ms
+    The flow format's swipe (down, move at 100 ms, up at 100 ms + duration) is therefore a
+    glide over the whole duration that lifts still moving, never a hold. scrollUntilVisible's 601 ms
     over 350 points moved a UIKit list ~540 points and a React Native one ~530, both still
     only ~2.6 s after the touch began. (The earlier "holding 100 ms scrolled UIKit Settings
     as far" was Settings' list ending.)
@@ -142,8 +125,7 @@ What it means:
   suggestions then held up whichever settle came next (they change ~200-500 ms after the
   last key): left out of the signature. A single key (pressKey) still waits: sent without
   waiting, the settle's polling during the keyboard's dismissal made Enter ~100 ms slower.
-- Start-up: 3.7 s here against ~10 s for Maestro, before keeping the runner alive between
-  runs.
+- Start-up: 3.7 s, before keeping the runner alive between runs.
 
 The typing losses above came from `_XCT_sendString`; typing through synthesized key events
 (what the agent does) lost no character at up to 300 characters per second, without waiting

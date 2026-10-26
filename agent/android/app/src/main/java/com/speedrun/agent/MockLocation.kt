@@ -9,9 +9,9 @@ import java.util.Timer
 import java.util.TimerTask
 
 /**
- * Test-provider locations set in-process, the way Maestro's driver does (a timer re-sending
- * the location every 2 s). `cmd location providers set-test-provider-location` costs a
- * process per provider (~9 ms each); this is one binder call per provider.
+ * Test-provider locations set in-process, with a timer re-sending the location every 2 s.
+ * `cmd location providers set-test-provider-location` costs a process per provider (~9 ms
+ * each); this is one binder call per provider.
  *
  * Only as the shell user: com.android.shell holds the mock_location app op (speedrun sets it,
  * and adds and enables the providers, from the shell before the first location). Otherwise,
@@ -50,7 +50,7 @@ internal class MockLocation {
         val location = Location(provider).apply {
             setLatitude(latitude)
             setLongitude(longitude)
-            accuracy = 1f // Criteria.ACCURACY_FINE, as Maestro
+            accuracy = 1f // Criteria.ACCURACY_FINE
             altitude = 0.0
             time = System.currentTimeMillis()
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()

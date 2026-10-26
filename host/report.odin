@@ -1,4 +1,4 @@
-// --format html / html-detailed: Maestro's HtmlTestSuiteReporter page (Bootstrap cards: the
+// --format html / html-detailed: a Bootstrap page (cards: the
 // suite's summary, then a collapsible card per flow; the detailed one adds every step).
 package speedrun
 
@@ -29,7 +29,7 @@ html_report :: proc(suites: []Suite_Result, detailed: bool) -> string {
 	w :: proc(b: ^strings.Builder, args: ..any) {
 		for a in args do fmt.sbprint(b, a)
 	}
-	w(&b, "<html>\n  <head>\n    <title>Maestro Test Report</title>\n",
+	w(&b, "<html>\n  <head>\n    <title>Test Report</title>\n",
 		"    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\">\n",
 		"  </head>\n  <body>\n")
 	for &s in suites {

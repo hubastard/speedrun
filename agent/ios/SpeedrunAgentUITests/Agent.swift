@@ -13,12 +13,12 @@
 // The Android agent's ops, same numbers and responses (see Agent.kt), as iOS does them:
 //   1 PING                                  -> (empty)
 //  10 SCREEN                                -> u32 count, count * node        (Screen.swift)
-//        the foreground app, then SpringBoard's status bars, each a root at depth 0; Maestro's
-//        iOS attribute mapping; frames in points
+//        the foreground app, then SpringBoard's status bars, each a root at depth 0; the
+//        iOS attribute mapping flows match against; frames in points
 //   3 TAP    i32 x, i32 y                   -> u32 prep_us, u32 inject_us, u8 inject_path (3)
 //  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
 //   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same
-//        flags & 1 (fling): Maestro's swipe over duration_ms; otherwise a drag that stops when
+//        flags & 1 (fling): a swipe gliding over duration_ms; otherwise a drag that stops when
 //        the touch lifts (Input.drag; duration_ms unused)
 //   8 TYPE   str text                       -> same, u32 skipped (always 0)
 //   9 ERASE  i32 count                      -> same   (count deletes, at most the focused
@@ -31,7 +31,7 @@
 //  17 LAUNCHED str bundle_id, i32 timeout_ms -> u8 ok
 //        after `simctl launch`: the app runs in the foreground and its UI can be read
 //  16 INFO                                  -> str simulator udid, str description, str build
-//        description: Maestro's "<model> - iOS <version> - <udid>"
+//        description: "<model> - iOS <version> - <udid>"
 //        build = SPEEDRUN_BUILD as given at launch: the host restarts a runner of another build
 // Measurement ops from the spike (Spike.swift; agent/ios/README.md):
 //  40 APP    str bundle_id                  -> u8 state               (target of 41-43)
@@ -44,7 +44,7 @@
 //        mode 0: firstMatch.frame; 1: firstMatch.snapshot().frame; 2: firstMatch.exists only
 //  43 IDLE   u8 mode, i32 timeout_ms        -> u8 ok, u32 since_tap_us, u32 waited_us, u32 checks,
 //                                              u32 changes, u32 top_row, u32 bottom_row, u32 first_change_us
-//        mode 0: XCTest's quiescence wait; 1: Maestro's isScreenStatic, repeated (two
+//        mode 0: XCTest's quiescence wait; 1: a static-screen check, repeated (two
 //        screenshots, equal hashes); 2: reference: raw screenshots for timeout_ms
 //  44 METHODS str class                     -> str selectors, one per line ("+" for class methods)
 //  45 TAP_NOWAIT i32 x, i32 y, i32 hold_ms  -> u32 dispatch_us        (no wait for delivery)

@@ -1,4 +1,4 @@
-// speedrun: runs Maestro flow files on Android through an on-device agent, over one
+// speedrun: runs flow files on Android and iOS through an on-device agent, over one
 // persistent TCP connection (forwarded by `adb forward`), and measures where every
 // millisecond goes. Usage: see USAGE below.
 package speedrun
@@ -683,7 +683,7 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 
 		loop_start := time.tick_now()
 		defer fmt.printf(
-			"\n  LOOP TOTAL (wall clock, %d rounds of tap + back): %s s  ->  compare with `time maestro test bench.yaml`\n",
+			"\n  LOOP TOTAL (wall clock, %d rounds of tap + back): %s s\n",
 			iters, num(us(loop_start) / 1_000_000),
 		)
 
@@ -830,11 +830,11 @@ run (starting it takes seconds) and stops after 10 idle minutes (SPEEDRUN_IDLE_S
 animations are turned off, as for any UI test, and stay off; on iOS, apps that launchApp
 starts run their UIKit animations 10x faster.`
 
-// --flow runs a Maestro flow file; exit status 0 if it passed. On a terminal the output is a
-// live view like Maestro's; --plain (or a pipe) prints one line per command instead.
+// --flow runs a flow file; exit status 0 if it passed. On a terminal the output is a live
+// view; --plain (or a pipe) prints one line per command instead.
 // --bench prints the latency breakdown, after a `uiautomator dump` baseline.
 run_cli :: proc(args: []string) -> int {
-	// Maestro's form: [-p <platform>] [--device <id>] [--no-ansi] [--verbose] test [options] <flows>...
+	// The test form: [-p <platform>] [--device <id>] [--no-ansi] [--verbose] test [options] <flows>...
 	{
 		platform, device := "", ""
 		for i := 0; i < len(args); i += 1 {

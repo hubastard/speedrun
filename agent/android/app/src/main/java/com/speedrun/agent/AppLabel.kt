@@ -8,7 +8,7 @@ import android.content.res.Resources
  * An installed app's name as the launcher and Android's "Open with" dialog show it, in the
  * device's language. Neither entry point has an app Context (the shell agent has none at all),
  * so: ApplicationInfo from the package manager service, then the label resource read from the
- * app's own APK. Maestro gets the same name by pulling the APK and parsing it on the host.
+ * app's own APK.
  * Null, with a log line, when the hidden APIs are missing or the package is not installed.
  */
 internal object AppLabel {

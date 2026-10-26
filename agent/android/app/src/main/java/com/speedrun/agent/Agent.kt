@@ -69,7 +69,7 @@ internal object AgentLog {
  *  10 SCREEN                                 -> u32 count, count * node
  *        every window (active one first, then status bar, dialogs, keyboard...), each root
  *        at depth 0, keeping only children the system reports visible to the user (all of
- *        a WebView's): the hierarchy Maestro matches selectors against.
+ *        a WebView's): the hierarchy flows' selectors match against.
  *   6 FIND   str text                        -> u32 count, count * node
  *        nodes of the active window whose text or content description contains text,
  *        ignoring case, in document order (depth is 0). The app's own search: one round
@@ -99,7 +99,7 @@ internal object AgentLog {
  *        count DEL key presses.
  *  12 MARK                                   -> (empty)
  *        an action without input: the next SETTLE measures from here (waiting for a screen
- *        that is already changing, e.g. Maestro's waitForAnimationToEnd).
+ *        that is already changing, e.g. waitForAnimationToEnd).
  *  11 SHELL  str command                     -> bytes stdout
  *        runs as the shell user through UiAutomation (no shell syntax: the line is split on
  *        spaces). For app control: am force-stop, pm clear, pm grant, am start...
@@ -346,7 +346,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         str(n.error)
     }
 
-    /** All windows, as Maestro's hierarchy dump sees them (see SCREEN in the protocol). */
+    /** All windows, as flows see them (see SCREEN in the protocol). */
     private fun writeScreen() {
         treeBuf.reset()
         var count = 0
@@ -379,7 +379,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         while (nodes.isNotEmpty()) {
             val n = nodes.removeLast()
             val depth = depths.removeLast()
-            // Like Maestro: a WebView's content is often reported invisible, so keep all of it.
+            // A WebView's content is often reported invisible, so keep all of it.
             val web = inWebView.removeLast() || n.className?.contains("WebView") == true
             writeNode(n, depth)
             count++
@@ -584,9 +584,9 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     /**
      * Text no key events can type: replaces the focused field's selection (the cursor), and
-     * the cursor goes after it, as an input method's commitText would (Maestro switches to its
-     * own IME for this). One accessibility action, served on the app's main thread, so the
-     * text is in when it returns. False when no editable field has the input focus.
+     * the cursor goes after it, as an input method's commitText would. One accessibility
+     * action, served on the app's main thread, so the text is in when it returns. False when
+     * no editable field has the input focus.
      */
     private fun insertText(text: String): Boolean {
         val node = ua.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false

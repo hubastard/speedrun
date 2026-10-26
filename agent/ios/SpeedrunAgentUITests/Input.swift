@@ -1,19 +1,19 @@
-// Taps, swipes, typing and keys, synthesized through testmanagerd as Maestro's runner does
-// (no XCTest waits for the app to go idle around them). Every action sets lastActionNs before
-// its event is sent: SETTLE measures from there.
+// Taps, swipes, typing and keys, synthesized through testmanagerd (no XCTest waits for the
+// app to go idle around them). Every action sets lastActionNs before its event is sent:
+// SETTLE measures from there.
 import XCTest
 
 final class Input {
-    /// Maestro's tap: a touch held for EventRecord.defaultTapDuration (100 ms).
+    /// A tap: a touch held 100 ms.
     static let tapHoldMs: Int32 = 100
-    /// After the first character, iOS can drop the next ones while the keyboard reacts to it
-    /// (Maestro: "characters after the first one are often skipped"). Maestro waits 500 ms;
-    /// this waits until the focused field shows a change, at most that long.
+    /// After the first character, iOS can drop the next ones while the keyboard reacts to it:
+    /// typing waits until the focused field shows a change, at most this long.
     static let firstCharacterWaitMs = 500
-    /// Typing rate after the first character. Maestro types at 30/s; 100/s (and up to 300/s)
-    /// lost no character in Settings' search field (agent/ios/spike/typing.py).
+    /// Typing rate after the first character: 100/s (and up to 300/s) lost no character in
+    /// Settings' search field (agent/ios/spike/typing.py). A field that does not show its
+    /// value, so typing cannot watch the first character land, gets 30/s after a fixed wait.
     static let charactersPerSecond = 100
-    static let maestroCharactersPerSecond = 30
+    static let pacedCharactersPerSecond = 30
     /// Response field inject_path: XCTest-synthesized event (Android uses 0-2), or nothing
     /// sent (deleting from an empty field).
     static let injectPath: UInt8 = 3
@@ -35,7 +35,7 @@ final class Input {
         Self.action(inject: micros(since: t), out: &out)
     }
 
-    /// Maestro's swipe (EventRecord.addSwipeEvent): a touch that rests 100 ms, glides to the
+    /// The flow format's swipe: a touch that rests 100 ms, glides to the
     /// end over the duration and lifts there still moving, so content flings on at the glide's
     /// speed (scrollUntilVisible's 601 ms over 350 points: ~540 points, still after ~2.6 s,
     /// UIKit and React Native alike).
@@ -75,14 +75,14 @@ final class Input {
         if try Private.drag(through: points, liftAt: liftAt, wait: false) {
             Thread.sleep(until: Date(timeIntervalSinceNow: liftAt + Self.dragDoneMs / 1000 - Double(micros(since: t)) / 1e6))
         } else {
-            // An Xcode without explicit move events: Maestro's swipe, slow enough not to fling.
+            // An Xcode without explicit move events: a gliding swipe, slow enough not to fling.
             try Private.swipe(from: start, to: end, duration: length / 250)
         }
         Self.action(inject: micros(since: t), out: &out)
     }
 
     /// Text through the keyboard of the focused field ("\u{8}" deletes): the first character
-    /// alone, then the rest at Maestro's rate once the field has taken the first one. Returns
+    /// alone, then the rest once the field has taken the first one. Returns
     /// once the keys are sent: the settle that follows concludes only after testmanagerd has
     /// confirmed them (~200 ms after the last), checking the screen meanwhile.
     func type(_ text: String, screen: Screen, out: inout Writer) throws {
@@ -117,9 +117,9 @@ final class Input {
         guard !rest.isEmpty else { return true }
         guard before != nil else {
             // No focused element reports its value (React Native groups a field with its
-            // label): nothing to watch, so Maestro's pacing, its fixed wait and its rate.
+            // label): nothing to watch, so a fixed wait and the paced rate.
             Thread.sleep(forTimeInterval: Double(Self.firstCharacterWaitMs) / 1000)
-            try Private.typeText(rest, charactersPerSecond: Self.maestroCharactersPerSecond, wait: false)
+            try Private.typeText(rest, charactersPerSecond: Self.pacedCharactersPerSecond, wait: false)
             return true
         }
         let cap = waitCapMs
@@ -132,8 +132,7 @@ final class Input {
         return true
     }
 
-    /// Android key codes, mapped as Maestro's IOSDriver.pressKey does; other keys (back
-    /// included) do nothing on iOS.
+    /// Android key codes, mapped to iOS keys; other keys (back included) do nothing on iOS.
     func key(_ code: Int32, out: inout Writer) throws {
         try Private.confirmPending()
         mark()

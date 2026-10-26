@@ -29,5 +29,5 @@ for first, rest, cap in [(1, 30, 500), (30, 30, 500), (30, 60, 500), (30, 100, 5
     bad = sorted(set(v for v in values if v != TEXT))
     print(f"  first {first:3d}/s, rest {rest:3d}/s, wait cap {cap:3d} ms: {statistics.median(times):6.0f} ms, correct {ok}/5  {bad}")
 type_test("\b" * 30, 30, 30, 500); settle()
-print("  erase 25 on an empty field, Maestro's way:", round(type_test("\b" * 25, 1, 30, 500)), "ms")
+print("  erase 25 on an empty field, paced (30/s):", round(type_test("\b" * 25, 1, 30, 500)), "ms")
 a.call(b"\x03" + i(*center("close"))); settle()

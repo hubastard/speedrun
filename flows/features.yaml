@@ -105,7 +105,7 @@ env:
     stopApp: false
 - assertVisible: Search Settings
 
-# Optional: a warning, not a failure (after Maestro's 7 s optional lookup).
+# Optional: a warning, not a failure (after the 7 s optional lookup).
 - tapOn:
     text: Not on this screen
     optional: true

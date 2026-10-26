@@ -1,4 +1,4 @@
-// JavaScript in flows, as Maestro runs it (maestro-client js/GraalJsEngine.kt): `${...}` in
+// JavaScript in flows: `${...}` in
 // command fields, evalScript, runScript, assertTrue and `true:` conditions. The engine is
 // QuickJS-ng (js/engine.c, js/prelude.js), one per flow, started on the first script; env
 // variables reach it as globals, kept in step with the runner's scopes.
@@ -42,8 +42,8 @@ PRELUDE :: #load("js/prelude.js", string)
 @(private = "file")
 FAKER_DATA :: #load("js/datafaker/data.json", string)
 
-// Runs `script` in the flow's engine: its value as Maestro substitutes it for `${...}`
-// (GraalJS's Value.toString), or the message of what it threw.
+// Runs `script` in the flow's engine: its value as `${...}` takes it (a string as it is,
+// anything else in its display form), or the message of what it threw.
 js_run :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 	js_start(r) or_return
 	if r.js_env_gen != r.env_gen {
@@ -86,7 +86,7 @@ js_stop :: proc(r: ^Runner) {
 	r.js = nil
 }
 
-// maestro.copiedText, for copyTextFrom and setClipboard.
+// The scripts' maestro.copiedText, for copyTextFrom and setClipboard.
 set_copied_text :: proc(r: ^Runner, text: string) -> Err {
 	r.copied_text = text
 	if r.js != nil do js_call(r, "setCopiedText", text) or_return
@@ -117,7 +117,7 @@ js_log :: proc "c" (user: rawptr, msg: [^]u8, n: c.size_t) {
 	if r.log_node != nil do append(&r.log_node.logs, line)
 }
 
-// ---- http (GraalJsHttp), through curl ---------------------------------------------------
+// ---- http, through curl -----------------------------------------------------------------
 
 @(private = "file")
 Http_Part :: struct {
@@ -158,7 +158,7 @@ js_http :: proc "c" (user: rawptr, request: [^]u8, n: c.size_t) -> [^]u8 {
 	return out
 }
 
-// One request as okhttp sends it for Maestro: redirects followed, gzip decoded, a string
+// One request as okhttp sends it: redirects followed, gzip decoded, a string
 // body without a Content-Type unless given, 5 minutes at most. The reply's headers are
 // lowercased, repeated ones joined with ",".
 @(private = "file")

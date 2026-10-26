@@ -1,4 +1,4 @@
-# The notification-permission alert, answered as Maestro's iOS runner does (launchApp's
+# The notification-permission alert, answered on a hierarchy read (launchApp's
 # default permissions, all: allow). NotifTest: ./flows/notifications/install.sh
 appId: com.speedrun.notiftest
 ---

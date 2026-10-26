@@ -1,9 +1,9 @@
-# speedrun (Android)
+# speedrun
 
-A mobile E2E runner designed for speed. It runs Maestro flow files as they are, and proves
-with numbers how fast one E2E step (read screen → find element → tap → wait until the UI
-settles) can be, compared with the classic full-hierarchy dump and with Maestro running the
-same files.
+A mobile E2E runner designed for speed, on Android and iOS simulators. It runs Maestro flow
+files as they are (`maestro test …` becomes `speedrun test …`), and measures how fast one E2E
+step (read screen → find element → tap → wait until the UI settles) can be. Benchmarks
+against Maestro, and what is still slow: `TO_IMPROVE.md`.
 
 ## Pieces
 
@@ -31,10 +31,10 @@ same files.
   - `device.odin`: the agent's lifecycle. The agent APK is embedded in the binary; each run
     pushes it if the device does not have this build yet, starts it, forwards its port and
     stops it at exit (Ctrl-C too).
-  - `yaml.odin`, `flow.odin`, `maestro.odin`, `console.odin`: runs Maestro flow files and
-    prints them like Maestro does (see below).
+  - `yaml.odin`, `flow.odin`, `runner.odin`, `console.odin`: reads flow files, runs them and
+    prints their progress (see below).
   - `js.odin`, `js/`: JavaScript for flows, on QuickJS-ng (vendored in `js/quickjs-ng`, MIT):
-    `engine.c` wraps it, `prelude.js` sets up what Maestro's scripts see, including `faker`
+    `engine.c` wraps it, `prelude.js` sets up what flow scripts see, including `faker`
     with Datafaker's English word lists (`js/datafaker`, Apache-2.0).
   - `system.odin`: commands that change the device rather than tap the app (permissions,
     launch arguments, orientation, dark and airplane mode, location, media, recording).
@@ -44,11 +44,11 @@ same files.
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
 - `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
-  the supported Maestro commands, each tap checked by an assertion; `flows/javascript` (no
+  the supported commands, each tap checked by an assertion; `flows/javascript` (no
   app needed), `flows/device/settings.yaml` (Android) and `flows/ignite/device.yaml` (iOS)
   cover scripts and the device commands; `flows/notifications` the iOS notification alert
   (its test app: `flows/notifications/install.sh`).
-- `compare.sh` — runs one flow file with both tools and prints them side by side.
+- `compare.sh`, `race.sh` — benchmarks against Maestro (see `TO_IMPROVE.md`).
 
 ## Setup
 
@@ -70,13 +70,8 @@ for flows whose scripts make HTTP requests.
 Maestro flow files run as they are:
 
 ```
-./speedrun test bench_scenario.yaml -e TIMES=5      # speedrun only
-./compare.sh bench_scenario.yaml -e TIMES=5         # speedrun, then Maestro, side by side
-./compare.sh flows/features.yaml                     # both tools must agree on every command
-./race.sh bench_scenario.yaml -e TIMES=3            # both at once on two emulators, to watch
-
+./speedrun test bench_scenario.yaml -e TIMES=5
 ./speedrun test -p ios bench_scenario_ios.yaml -e TIMES=5   # iOS simulator
-DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
 ```
 
 speedrun picks a connected Android device, else the one booted simulator; `--platform` and
@@ -84,7 +79,7 @@ speedrun picks a connected Android device, else the one booted simulator; `--pla
 `xcodebuild test-without-building`, which takes 3–6 s, so the runner outlives the run: the
 next run on that simulator reuses it and starts in ~0.2 s (a runner of an older build is
 replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
-`./speedrun --stop-agent`. Apps are controlled with `xcrun simctl`, as Maestro does.
+`./speedrun --stop-agent`. Apps are controlled with `xcrun simctl`.
 
 ### A drop-in for `maestro test`
 
@@ -128,26 +123,8 @@ The latency breakdown (open the Settings app on the emulator first):
 Run `--bench` with no target to list texts visible on the current screen. `./speedrun --help`
 lists the options (`--port`, `--instrument`, `--plain`, `--timings`).
 
-`bench_scenario.yaml` is 14 commands per iteration in Settings: navigation two levels deep,
-scrolling both ways, and text input in a dialog (erase, type, assert, cancel, so nothing
-changes). `compare.sh` starts the flow's app fresh before each tool, lines the two runs up
-command by command (warning if their command sequences or statuses differ) and prints
-medians per command, repeat iterations grouped. Then three totals per tool: the flow, the
-time outside it (start-up and shutdown, measured as the whole run's wall clock minus the
-flow: a slow tool costs that on every run) and the wall clock, all included. On iOS it stops
-speedrun's kept-alive agent first, so both tools start cold. It needs `maestro` and
-`python3` on PATH.
-`--timings out.json` makes speedrun write its per-command record.
-
-`race.sh` is the demo: it starts speedrun on one emulator and Maestro on another at the same
-moment, so both screens can be watched side by side, and shows each tool's elapsed time and
-current command until both finish. With a single emulator running, it creates
-`<avd>_race` once (same system image and hardware settings) and boots it for Maestro; it
-stays up for the next race. `SPEEDRUN_DEVICE`/`MAESTRO_DEVICE` choose the devices. Two
-emulators share the machine, so numbers come from `compare.sh`, not from the race; and a
-freshly booted emulator is slower at first, so the first race on it is not representative.
-With several devices connected, `compare.sh` uses `ANDROID_SERIAL` or the first one, and
-`./speedrun --device <serial>` picks one.
+`--timings out.json` makes speedrun write its per-command record. With several devices
+connected, `./speedrun --device <serial>` picks one.
 
 The agent starts as the shell user (`adb push` to `/data/local/tmp/speedrun-agent-<crc>.apk`,
 skipped when that build is already there, then `app_process`); if it cannot start, speedrun
@@ -262,8 +239,8 @@ value's length, the placeholder's while it shows one) and none to an empty field
 `swipe` and `scroll` are Maestro's exactly: a touch that glides over the duration and lifts
 still moving, so the content flings on, and how far it goes depends on that.
 `scrollUntilVisible` drags without a fling instead: fast, then its last 40 points at 200
-points per second, so the content stops as the touch lifts (~0.5 s a swipe, where Maestro's
-moves content ~1.6 times as far but drifts for ~2 s that a settle waits out).
+points per second, so the content stops as the touch lifts (a flinging swipe moves it
+farther, but drifts for ~2 s that a settle would wait out).
 Apps that `launchApp` starts run their UIKit animations 10 times faster, the counterpart of
 Android's animations being off: speedrun launches them with UIKit's
 `UIAnimationDragCoefficient` at 0.1 (the setting behind the simulator's Slow Animations,
@@ -334,9 +311,9 @@ Known differences in how, not what:
 - **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`. Text with a
   character no key produces (most non-ASCII, emoji) goes in whole through accessibility
   instead: it replaces the focused field's selection and the cursor moves after it, as the
-  IME Maestro switches to for such text commits it, without switching IMEs (~10 ms instead of
-  several hundred). With no focused editable field the command fails. Key events go through
-  the IME before the field, about 60 ms per key on the emulator, for Maestro too. The last
+  IME Maestro switches to for such text commits it, without switching IMEs. With no focused
+  editable field the command fails. Key events go through the IME before the field, about
+  60 ms per key on the emulator. The last
   key of `TYPE` and `ERASE` waits until the app has handled it: the IME applies DELs
   asynchronously, and spare DELs once deleted the first characters typed next.
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
@@ -358,7 +335,6 @@ Known differences in how, not what:
   trusting a failure or a number.
 - speedrun goes through the `adb` binary for `forward`/`push`/`install` (about 0.5 s of
   start-up per run). It could speak the adb wire protocol directly.
-- Android only. iOS needs a separate XCUITest- or in-app-based agent.
 - Animations are disabled by every run (normal practice for UI tests) and stay disabled;
   re-enable with `adb shell settings put global <name> 1` for `window_animation_scale`,
   `transition_animation_scale` and `animator_duration_scale`.

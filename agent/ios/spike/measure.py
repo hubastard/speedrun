@@ -72,7 +72,7 @@ for _ in range(5):
     tap("BackButton"); ref_back.append(idle(2, 2000)[1])
 report("reference: last screen change (screenshots for 2 s), push", ref_in)
 report("reference: last screen change, pop", ref_back)
-for mode, name in [(0, "XCTest quiescence (event loop + animations idle)"), (1, "Maestro isScreenStatic (2 screenshots, equal)")]:
+for mode, name in [(0, "XCTest quiescence (event loop + animations idle)"), (1, "static check (2 screenshots, equal)")]:
     since_in, since_back, checks = [], [], []
     for _ in range(5):
         tap("General"); r = idle(mode); since_in.append(r[1]); checks.append(r[3])

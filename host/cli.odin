@@ -1,8 +1,7 @@
-// `speedrun test`: Maestro's command line (2.11.0 TestCommand), so `maestro test ...` becomes
-// `speedrun test ...` with the same arguments. One flow file runs with the live view; several
-// flows (files, folders, a workspace config), or any report, run as a suite with Maestro's
-// one line per flow and summary. Reports (JUnit, HTML) and the debug output folder are laid
-// out as Maestro lays them out.
+// `speedrun test`: one flow file runs with the live view; several flows (files, folders, a
+// workspace config), or any report, run as a suite: one line per flow, then a summary.
+// Reports (JUnit, HTML) and the debug output folder keep the layout tools reading them
+// expect.
 package speedrun
 
 import "core:c/libc"
@@ -50,7 +49,7 @@ Report_Format :: enum {
 }
 
 TEST_USAGE :: `usage: speedrun test [options] <flow file or folder>...
-Maestro's options (maestro test --help), with the same meaning:
+Options (the same as maestro test's):
   -e, --env KEY=VALUE        --config <file>             --include-tags / --exclude-tags a,b
   --format junit|html|html-detailed|noop               --output <file>
   --test-suite-name <name>   --debug-output <dir>        --flatten-debug-output
@@ -59,7 +58,7 @@ Maestro's options (maestro test --help), with the same meaning:
 speedrun's own:
   --plain (or --no-ansi)     --timings <file.json>       --port <n>       --instrument`
 
-// args: what follows `test`; globals: -p/--device given before `test` (Maestro's parent options).
+// args: what follows `test`; globals: -p/--device given before `test`.
 run_test_cli :: proc(args: []string, global_platform, global_device: string) -> int {
 	arena: virtual.Arena
 	_ = virtual.arena_init_growing(&arena)
@@ -193,7 +192,7 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 		return 1
 	}
 	if legacy_shards > 0 {
-		cli_warning("--shards option is deprecated and will be removed in the next Maestro version. Use --shard-split or --shard-all instead.")
+		cli_warning("--shards is deprecated: use --shard-split or --shard-all instead.")
 		o.shard_split = legacy_shards
 	}
 	if o.config != "" && !os.exists(o.config) {
@@ -269,7 +268,7 @@ run_test :: proc(o: ^Test_Options) -> int {
 	}
 	if single && o.format == .Noop {
 		if o.continuous do return run_continuous(&c, &dev, plan.flows[0], o, device_id)
-		res := run_maestro_flow(&c, &dev, plan.flows[0], Run_Options {
+		res := run_flow(&c, &dev, plan.flows[0], Run_Options {
 			env = o.env[:], device_id = device_id, timings_path = o.timings, plain = o.plain,
 			flow_dir = flow_dir(debug_dir, flow_file_name(plan.flows[0]), -1),
 		}, context.allocator)
@@ -298,7 +297,7 @@ Suite_Result :: struct {
 	device:        string,
 }
 
-// Maestro's TestSuiteInteractor: the sequence first (stopping at a failure unless
+// A suite: the sequence first (stopping at a failure unless
 // continueOnFailure), then the other flows; a line per flow, then the summary.
 run_suite :: proc(c: ^Conn, dev: ^Device, plan: ^Plan, o: ^Test_Options, device_id, debug_dir: string, shard: int) -> (s: Suite_Result) {
 	prefix := fmt.tprintf("[shard %d] ", shard + 1) if shard >= 0 else ""
@@ -308,7 +307,7 @@ run_suite :: proc(c: ^Conn, dev: ^Device, plan: ^Plan, o: ^Test_Options, device_
 	s.start_unix_ms = time.to_unix_nanoseconds(time.now()) / 1_000_000
 	start := time.tick_now()
 	run_one :: proc(c: ^Conn, dev: ^Device, path: string, o: ^Test_Options, device_id, debug_dir, prefix: string, shard: int) -> Flow_Result {
-		res := run_maestro_flow(c, dev, path, Run_Options {
+		res := run_flow(c, dev, path, Run_Options {
 			env = o.env[:], device_id = device_id, shard_index = max(shard, 0), silent = true,
 			flow_dir = flow_dir(debug_dir, flow_file_name(path), shard),
 		}, context.allocator)
@@ -431,9 +430,9 @@ cli_warning :: proc(msg: string) {
 run_continuous :: proc(c: ^Conn, dev: ^Device, path: string, o: ^Test_Options, device_id: string) -> int {
 	tty := os.is_tty(os.stdout)
 	for {
-		if tty do fmt.print("\x1b[H\x1b[2J") // each run from the top, as Maestro redraws
+		if tty do fmt.print("\x1b[H\x1b[2J") // each run from the top
 		fmt.println("> Press [ENTER] to restart the Flow\n")
-		run_maestro_flow(c, dev, path, Run_Options{env = o.env[:], device_id = device_id, plain = o.plain}, context.allocator)
+		run_flow(c, dev, path, Run_Options{env = o.env[:], device_id = device_id, plain = o.plain}, context.allocator)
 		watched := watch_files(path)
 		before := make([]time.Time, len(watched))
 		for f, k in watched do before[k] = modified(f)
@@ -483,7 +482,7 @@ connected_devices :: proc(platform: string) -> (out: [dynamic]Shard_Device) {
 	return
 }
 
-// --shard-split / --shard-all (TestCommand.handleSessions): one speedrun per device, each
+// --shard-split / --shard-all: one speedrun per device, each
 // running its share of the flows as a suite; then their results merged into one report.
 run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: string) -> int {
 	all := connected_devices(o.platform)
@@ -580,7 +579,7 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 	return 0 if passed == total && total > 0 else 1
 }
 
-// Maestro's String.box(): magenta rounded borders, 3 columns and 1 line of padding.
+// A box: magenta rounded borders, 3 columns and 1 line of padding.
 @(private = "file")
 magenta_box :: proc(lines: []string) -> string {
 	width := 0

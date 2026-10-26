@@ -1,7 +1,6 @@
 // Commands that change the device rather than tap the app: permissions, launch arguments,
-// orientation, dark and airplane mode. Done as Maestro 2.11.0's drivers do them
-// (maestro-client AndroidDriver, IOSDriver; maestro-ios-driver LocalSimulatorUtils), with
-// adb/simctl and, on iOS, the simulator's TCC database (what Maestro's applesimutils writes).
+// orientation, dark and airplane mode. Done with adb/simctl and, on iOS, the simulator's TCC
+// database (what applesimutils writes).
 package speedrun
 
 import "core:fmt"
@@ -13,7 +12,7 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 
-// launchApp without `permissions:` (Orchestra.launchAppCommand: "for testing convenience").
+// launchApp without `permissions:` grants everything, for testing convenience.
 DEFAULT_PERMISSIONS :: []Env_Pair{{"all", "allow"}}
 
 // setPermissions and launchApp's permissions: `all` first, then each named one, which wins.
@@ -40,10 +39,9 @@ set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 
 // ---- Android ----------------------------------------------------------------------------
 
-// `all`: Maestro sets every permission the app's manifest asks for (pm grant/revoke each,
-// failures ignored: only runtime permissions change). Same end state, fewer shell calls:
-// the runtime permissions not in the wanted state yet, plus MANAGE_EXTERNAL_STORAGE
-// through appops.
+// `all`: every permission the app's manifest asks for. Only runtime permissions can change,
+// so only those not in the wanted state yet are set, plus MANAGE_EXTERNAL_STORAGE through
+// appops.
 @(private = "file")
 android_set_all_permissions :: proc(r: ^Runner, app, value: string) {
 	grant := value == "allow"
@@ -92,7 +90,7 @@ android_set_permission :: proc(r: ^Runner, app, permission, value: string) {
 	_ = shell(r, "pm %s %s %s", "grant" if value == "allow" else "revoke", app, permission)
 }
 
-// AndroidDriver.translatePermissionName.
+// A flow's permission name as Android's.
 @(private = "file")
 ANDROID_PERMISSION_GROUPS :: []struct {
 	name:  string,
@@ -130,8 +128,8 @@ android_permission_names :: proc(name: string) -> []string {
 	return out
 }
 
-// launchApp: the launcher activity, with `arguments:` as typed intent extras (Maestro's
-// driver puts them on the launch intent).
+// launchApp: the launcher activity, with `arguments:` as typed intent extras on the launch
+// intent.
 android_launch :: proc(r: ^Runner, comp: string, args: []Launch_Arg) -> Err {
 	START :: "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "
 	if len(args) == 0 {
@@ -232,7 +230,7 @@ api_level :: proc(r: ^Runner) -> int {
 
 // ---- iOS ----------------------------------------------------------------------------------
 
-// The permissions applesimutils sets for Maestro, with their TCC service names.
+// The permissions a flow can set on iOS (applesimutils' names), with their TCC services.
 @(private = "file")
 IOS_TCC_SERVICES :: [][2]string {
 	{"calendar", "kTCCServiceCalendar"}, {"camera", "kTCCServiceCamera"},
@@ -248,9 +246,9 @@ IOS_TCC_SERVICES :: [][2]string {
 // and launchApp applies `all: allow` each time. ios_clear_state forgets an app.
 ios_location_set: map[string]string
 
-// LocalSimulatorUtils.setAppleSimutilsPermissions (through the TCC database, as applesimutils
-// does) and setSimctlPermissions (location). Notifications have no setting there: their alert
-// is answered when a read shows it (answer_notification_alert).
+// iOS permissions, through the TCC database as applesimutils does, and simctl for location.
+// Notifications have no setting there: their alert is answered when a read shows it
+// (answer_notification_alert).
 @(private = "file")
 ios_set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 	tcc := make(map[string]string, 16, context.temp_allocator) // service -> allow/deny/unset/limited
@@ -281,7 +279,7 @@ ios_set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 			case "deny":    auth = 0
 			case "limited": auth = 3
 			case "unset":
-			case:           continue // applesimutils rejects it; Maestro logs that and goes on
+			case:           continue // applesimutils rejects it: skipped
 			}
 			fmt.sbprintf(&sql, "DELETE FROM access WHERE service = '%s' AND client = %s AND client_type = 0;", service, client)
 			if auth >= 0 {
@@ -317,10 +315,9 @@ ios_set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 	return nil
 }
 
-// SystemPermissionHelper + PermissionButtonFinder (Maestro's iOS runner): when the screen
-// holds "… Would Like to Send You Notifications", tap its button for r.notifications. allow:
-// "Allow" or "Continue", else the second button; deny: "Don't Allow" (straight apostrophe, as
-// Maestro compares it) or "Cancel", else the first. Buttons in the foreground app's tree only.
+// When the screen holds "… Would Like to Send You Notifications", tap its button for
+// r.notifications. allow: "Allow" or "Continue", else the second button; deny: "Don't Allow"
+// (straight apostrophe) or "Cancel", else the first. Buttons in the foreground app's tree only.
 answer_notification_alert :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	if len(r.h.roots) == 0 do return false, true
 	root := r.h.roots[0]
@@ -357,7 +354,7 @@ sql_quote :: proc(s: string) -> string {
 
 // ---- orientation, dark and airplane mode -----------------------------------------------------
 
-// setOrientation. Android: fixed rotation (auto-rotate off), as Maestro sets it; iOS: the
+// setOrientation. Android: fixed rotation (auto-rotate off); iOS: the
 // runner turns the device. Then the screen settles (the next read has the new display size).
 set_orientation :: proc(r: ^Runner, name: string) -> Err {
 	o, known := orientation_by_name(name)
@@ -383,8 +380,8 @@ set_orientation :: proc(r: ^Runner, name: string) -> Err {
 		settle(r) or_return
 		// The rotation recreates the activity, and the settle can end while no app window is
 		// active yet (only the status bar on screen): the next command then waited for the
-		// app (~1 s), and a screenshot caught the half-done rotation. Maestro waits for its
-		// hierarchy to settle. Wait for the active window, in the new orientation.
+		// app (~1 s), and a screenshot caught the half-done rotation. Wait for the active
+		// window, in the new orientation.
 		if active_window_rotated(r, rotation % 2 == 1) {
 			if !op_mark(r.c) do return "agent connection lost"
 			return settle(r)
@@ -422,7 +419,7 @@ active_window_rotated :: proc(r: ^Runner, landscape: bool) -> (waited: bool) {
 device_mode :: proc(r: ^Runner, op: Device_Mode_Op) -> (mutating: bool, err: Err) {
 	switch op {
 	case .Airplane_On, .Airplane_Off, .Airplane_Toggle:
-		// Maestro: "Airplane mode is not available on iOS simulators" (a warning).
+		// Airplane mode is not available on iOS simulators: a no-op.
 		if r.dev.platform == .IOS do return true, nil
 		on := op == .Airplane_On
 		if op == .Airplane_Toggle do on = !(airplane_enabled(r) or_return)
@@ -437,8 +434,8 @@ device_mode :: proc(r: ^Runner, op: Device_Mode_Op) -> (mutating: bool, err: Err
 		on := op == .Dark_On
 		if op == .Dark_Toggle do on = !(dark_enabled(r) or_return)
 		if r.dev.platform == .IOS {
-			// XCUIDevice.appearance, as Maestro's runner sets it. The app redraws in place:
-			// no wait, as in Maestro (the next lookup sees the new screen).
+			// XCUIDevice.appearance. The app redraws in place: no wait (the next lookup
+			// sees the new screen).
 			if _, ok := op_appearance(r.c, 2 if on else 1); !ok do return true, "agent connection lost"
 			return true, nil
 		}
@@ -519,7 +516,7 @@ command_output :: proc(r: ^Runner, command, path, ext: string) -> (file: string,
 	return file, nil
 }
 
-// A PNG of the screen, or of the element cropOn picks (found first, as Maestro does).
+// A PNG of the screen, or of the element cropOn picks (found first).
 screenshot :: proc(r: ^Runner, crop_on: ^Selector, optional: bool) -> (png: []byte, err: Err) {
 	if crop_on == nil {
 		ok: bool
@@ -546,7 +543,7 @@ screenshot :: proc(r: ^Runner, crop_on: ^Selector, optional: bool) -> (png: []by
 	return png, nil
 }
 
-// assertScreenshot (Orchestra.assertScreenshotCommand): the screen (or cropOn's element)
+// assertScreenshot: the screen (or cropOn's element)
 // against a reference image next to the flow; on a mismatch, <name>_diff.png beside it shows
 // the differing pixels.
 assert_screenshot :: proc(r: ^Runner, c: ^Cmd, d: Assert_Screenshot) -> Err {
@@ -595,7 +592,7 @@ assert_screenshot :: proc(r: ^Runner, c: ^Cmd, d: Assert_Screenshot) -> Err {
 	}
 	defer image_free(expected)
 
-	description := evaluated(r, maestro_description(r, c))
+	description := evaluated(r, command_description(r, c))
 	if expected.width != actual.width || expected.height != actual.height {
 		return fmt.aprintf(
 			"Screenshot size mismatch: %s - expected %dx%d, actual %dx%d. Screenshots must have the same dimensions to compare.",
@@ -624,8 +621,8 @@ Recording :: struct {
 @(private = "file")
 DEVICE_RECORDING :: "/sdcard/speedrun-recording.mp4"
 
-// startRecording: Android's screenrecord at Maestro's bit rate, or the simulator's
-// recordVideo (h264). One at a time: a second start is ignored, as in Maestro.
+// startRecording: Android's screenrecord (bit rate below), or the simulator's recordVideo
+// (h264). One at a time: a second start is ignored.
 start_recording :: proc(r: ^Runner, file: string) -> Err {
 	if r.recording.active do return nil
 	null, nerr := os.open("/dev/null", {.Write})
@@ -695,7 +692,7 @@ stop_recording :: proc(r: ^Runner) -> Err {
 // ---- media --------------------------------------------------------------------------------
 
 // addMedia: images and videos into the device's gallery. Android: into Pictures or Movies,
-// then the media scanner (Maestro's driver inserts them through MediaStore); iOS: simctl.
+// then the media scanner; iOS: simctl.
 add_media :: proc(r: ^Runner, files: []string) -> Err {
 	for f in files {
 		ext := filepath.ext(f)
@@ -749,8 +746,8 @@ add_media_ios :: proc(r: ^Runner, file: string) -> Err {
 
 // ---- location -------------------------------------------------------------------------------
 
-// Android: the shell's test location providers (Android 12+), sent again every 2 s as
-// Maestro's driver does, so apps asking for updates keep getting them. The agent sets them
+// Android: the shell's test location providers (Android 12+), sent again every 2 s, so apps
+// asking for updates keep getting them. The agent sets them
 // in-process (op_location, ~1 ms); without it, `cmd location` per provider (~9 ms each) and
 // an `adb shell` loop re-sending.
 Location_Mock :: struct {
@@ -795,7 +792,7 @@ set_location :: proc(r: ^Runner, latitude, longitude: f64, keep_sending := true)
 		if m.in_agent do return nil
 	}
 	if m.in_agent {
-		// Maestro re-sends every point too, travel steps included.
+		// Every point is re-sent, travel steps included.
 		if n, ok := op_location(r.c, m.providers[:], lat, lon, LOCATION_RESEND_MS); ok && n == len(m.providers) do return nil
 		m.in_agent = false
 	}
@@ -838,7 +835,7 @@ travel :: proc(r: ^Runner, d: Travel) -> Err {
 	set_location(r, start[0], start[1], len(d.points) == 1) or_return
 	for k in 1 ..< len(d.points) {
 		end := d.points[k]
-		ms := i64(maestro_distance(start, end) / d.speed * 1000)
+		ms := i64(travel_distance(start, end) / d.speed * 1000)
 		pause := time.Duration(ms / STEPS) * time.Millisecond
 		for i in 1 ..= STEPS {
 			last := k == len(d.points) - 1 && i == STEPS
@@ -852,8 +849,10 @@ travel :: proc(r: ^Runner, d: Travel) -> Err {
 	return nil
 }
 
+// Meters between two points. The latitudes and longitudes go through to_radians twice:
+// travel's timing, which flows are written for, comes from this distance.
 @(private = "file")
-maestro_distance :: proc(a, b: [2]f64) -> f64 {
+travel_distance :: proc(a, b: [2]f64) -> f64 {
 	o_lat, o_lon := math.to_radians(a[0]), math.to_radians(a[1])
 	a_lat, a_lon := math.to_radians(b[0]), math.to_radians(b[1])
 	d_lat, d_lon := math.to_radians(a_lat - o_lat), math.to_radians(a_lon - o_lon)
@@ -864,8 +863,8 @@ maestro_distance :: proc(a, b: [2]f64) -> f64 {
 
 // ---- openLink autoVerify (Android) ----------------------------------------------------------
 
-// AndroidDriver.autoVerifyApp. Android's "Open with" dialog: the flow's app, by its name (a
-// regex, as Maestro uses it), then "Just once"; when only a longer text holds the name (the
+// openLink autoVerify: Android's "Open with" dialog: the flow's app, by its name (as a
+// regex), then "Just once"; when only a longer text holds the name (the
 // dialog's title for a single app), "Just once" alone. Then Chrome's first run: accept its
 // terms, decline the sign-in.
 auto_verify :: proc(r: ^Runner, app: string) -> Err {

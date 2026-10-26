@@ -1,6 +1,6 @@
 // Screenshots cropped to an element (takeScreenshot and assertScreenshot `cropOn`), and
-// assertScreenshot's comparison: Maestro 2.11.0's ScreenshotMatch, a pixel matching when
-// its RGB distance is within 10% of the largest. Codecs: image/image.c (stb).
+// assertScreenshot's comparison: a pixel matches when its RGB distance is within 10% of the
+// largest. Codecs: image/image.c (stb).
 package speedrun
 
 import "core:c"
@@ -45,7 +45,7 @@ image_png :: proc(img: Image, alloc := context.allocator) -> (png: []byte, ok: b
 	return slice.clone(p[:n], alloc), true
 }
 
-// Maestro.takeScreenshot's crop: bounds in the hierarchy's units (points on iOS), scaled by
+// The crop: bounds in the hierarchy's units (points on iOS), scaled by
 // the screenshot's height over the display's, clamped to the image. A new image.
 image_crop :: proc(img: Image, left, top, right, bottom: i32, display_height: i32) -> (out: Image, err: Err) {
 	scale := f64(img.height) / f64(display_height) if display_height > 0 else 1
@@ -61,7 +61,7 @@ image_crop :: proc(img: Image, left, top, right, bottom: i32, display_height: i3
 	return {pixels, w, h}, nil
 }
 
-// ScreenshotMatch.matchPercentage: the share of pixels equal, or within the tolerance.
+// The share of pixels equal, or within the tolerance.
 image_match_percent :: proc(expected, actual: Image, diff: ^[dynamic]bool = nil) -> f64 {
 	total := expected.width * expected.height
 	if total == 0 do return 100

@@ -1,7 +1,7 @@
 # Swipe shapes vs. fling: a row's position polled while a DRAG_TEST plays (sent without
 # waiting) and until it stops. In Settings > General > Keyboard > Keyboards > Add New Keyboard
 # (a long UIKit list), each shape dragging 350 points up from the screen's center.
-#   python3 agent/ios/spike/swipe.py maestro drag glide1400 tail40_200 tail40_125
+#   python3 agent/ios/spike/swipe.py swipe drag glide1400 tail40_200 tail40_125
 import struct, subprocess, sys, time, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent_client import Agent, s, i, nodes
@@ -11,7 +11,7 @@ X, Y0, Y1 = 201, 437, 87
 
 def shape(name):
     """(points as (y, offset_ms, duration_ms), lift_ms)"""
-    if name == "maestro":  # what moveToPoint at 100 ms and liftUp at 701 ms play: a glide
+    if name == "swipe":  # SWIPE with fling, 601 ms: moveToPoint at 100 ms, liftUp at 701 ms, a glide
         return [(Y0, 0, 0), (Y1, 100, 601)], 701
     if name == "drag":  # Input.drag: a 12-point kick, fast, the last 40 points at 200 points/s
         return [(Y0, 0, 0), (Y0 - 12, 0, 40), (Y1 + 40, 40, 150), (Y1, 190, 200)], 390
@@ -52,7 +52,7 @@ subprocess.run(["xcrun", "simctl", "terminate", "booted", APP], capture_output=T
 subprocess.run(["xcrun", "simctl", "launch", "booted", APP], capture_output=True)
 time.sleep(2.5)
 for label in ("General", "Keyboard", "Keyboards", "Add New Keyboard"): tap(label)
-for name in sys.argv[1:] or ["maestro", "drag"]:
+for name in sys.argv[1:] or ["swipe", "drag"]:
     points, lift = shape(name)
     label = row(); y0 = query(label)
     t0 = time.perf_counter()

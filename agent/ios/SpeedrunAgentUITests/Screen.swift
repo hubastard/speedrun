@@ -1,13 +1,13 @@
-// SCREEN: the hierarchy Maestro matches selectors against on iOS (its runner's
-// ViewHierarchyHandler): the foreground app, then SpringBoard's status bars, each a root at
-// depth 0, every node with Maestro's attribute mapping (IOSDriver.mapViewHierarchy):
+// SCREEN: the hierarchy flows' selectors match against on iOS: the foreground app, then
+// SpringBoard's status bars, each a root at depth 0, every node with this attribute mapping:
 //   text = title, or value when the title is empty; desc = label; id = identifier;
 //   hint = placeholder; checked = a checkbox, switch or toggle whose value is "1".
-// Frames are in points, as Maestro reports them. The status bars cost as much as the app's
-// own snapshot and change with the clock or the battery only, so they are re-read every 5 s.
-// The app's part comes from SETTLE's last snapshot when no action happened since and it is
-// under 1 s old: settle has just seen the screen hold still, and the flow reads it right away. iOS has no "visible to user" attribute:
-// every node is flagged visible and the host drops those mostly off screen, as Maestro does.
+// Frames are in points. The status bars cost as much as the app's own snapshot and change
+// with the clock or the battery only, so they are re-read every 5 s. The app's part comes
+// from SETTLE's last snapshot when no action happened since and it is under 1 s old: settle
+// has just seen the screen hold still, and the flow reads it right away. iOS has no "visible
+// to user" attribute: every node is flagged visible and the host drops those mostly off
+// screen.
 import XCTest
 
 final class Screen {
@@ -96,8 +96,8 @@ final class Screen {
 
     /// The app in the foreground, SpringBoard when none is: XCTest's accessibility client lists
     /// the active apps (~3 ms; testmanagerd names each process once). SpringBoard alone is the
-    /// home screen, or one of its alerts over the app (a permission request): Maestro reads
-    /// SpringBoard then, which shows the alert, and answers a notification request there.
+    /// home screen, or one of its alerts over the app (a permission request): SpringBoard is
+    /// read then, which shows the alert, and a notification request is answered there.
     /// The last app found is kept while it is listed.
     func foregroundApp() -> XCUIApplication {
         let active = Private.activeBundleIDs()

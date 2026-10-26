@@ -5,8 +5,7 @@
 // with `xcodebuild test-without-building`; a simulator shares the Mac's loopback, so the host
 // connects straight to it. Starting it takes seconds, so it outlives the run (in its own
 // session, stopping itself after SPEEDRUN_IDLE_S idle seconds) and the next run reuses it if
-// it runs this build on the chosen simulator. App control goes through `xcrun simctl`, as
-// Maestro's does.
+// it runs this build on the chosen simulator. App control goes through `xcrun simctl`.
 package speedrun
 
 import "base:runtime"
@@ -177,7 +176,7 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 }
 
 Simulator :: struct {
-	udid, name: string, // name: Maestro's description, "<model> - <runtime> - <udid>"
+	udid, name: string, // name: "<model> - <runtime> - <udid>", as "Running on" shows it
 }
 
 // Booted simulators, from `xcrun simctl list devices booted`: "-- iOS 26.2 --" headers, then
@@ -208,7 +207,7 @@ simulator_description :: proc(model, runtime, udid: string) -> string {
 	return fmt.tprintf("%s - %s - %s", model, runtime, udid)
 }
 
-// Maestro's clearAppState on a simulator (LocalSimulatorUtils): stop the app, then reinstall
+// clearState on a simulator: stop the app, then reinstall
 // it from a copy of its installed bundle, the most reliable way to drop its data.
 ios_clear_state :: proc(udid, app: string) -> Err {
 	delete_key(&ios_location_set, fmt.tprintf("%s %s", udid, app)) // reinstalling resets it

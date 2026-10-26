@@ -1,9 +1,8 @@
-// Which flows `speedrun test` runs, as Maestro 2.11.0 decides it (WorkspaceExecutionPlanner):
-// a single flow file runs as is; files and directories (walked recursively) are filtered by
-// the workspace config's `flows` globs (default "*": the top level of each directory), by
-// tags, and split into the `executionOrder` sequence and the rest. The error messages are
-// Maestro's, and so is the order: the given files, then each directory as the file system
-// lists it, depth first (Java's Files.walk).
+// Which flows `speedrun test` runs: a single flow file runs as is; files and directories
+// (walked recursively) are filtered by the workspace config's `flows` globs (default "*": the
+// top level of each directory), by tags, and split into the `executionOrder` sequence and the
+// rest. The order: the given files, then each directory as the file system lists it, depth
+// first (as Java's Files.walk does).
 package speedrun
 
 import "core:fmt"
@@ -28,7 +27,7 @@ Plan :: struct {
 	config:              Workspace_Config,
 }
 
-// Keys of Maestro's WorkspaceConfig: a YAML file with only these (and no `---`) is a
+// Keys of a workspace config: a YAML file with only these (and no `---`) is a
 // workspace config, never a flow.
 WORKSPACE_KEYS :: []string {
 	"flows", "includeTags", "excludeTags", "executionOrder", "baselineBranch", "notifications",
@@ -119,7 +118,7 @@ workspace_plan :: proc(
 	if len(candidates) == 0 {
 		if len(globs) == 1 && globs[0] == "*" {
 			return plan, fmt.aprintf(
-				"Top-level directories do not contain any Flows: %s\nTo configure Maestro to run Flows in subdirectories, check out the following resources:\n  * https://maestro.mobile.dev/cli/test-suites-and-reports#inclusion-patterns\n  * https://blog.mobile.dev/maestro-best-practices-structuring-your-test-suite-54ec390c5c82",
+				"Top-level directories do not contain any Flows: %s\nTo run flows in subdirectories, list them under `flows:` in the workspace config (config.yaml), e.g. `flows: [\"subfolder/*\"]`.",
 				strings.join(dirs[:], ", "),
 			)
 		}
@@ -129,7 +128,7 @@ workspace_plan :: proc(
 		return plan, strings.to_string(b)
 	}
 
-	// Tags (each flow is loaded, which also validates it, as Maestro does here).
+	// Tags (each flow is loaded, which also validates it).
 	all_include, all_exclude: [dynamic]string
 	append(&all_include, ..include_tags)
 	append(&all_include, ..cfg.include_tags[:])
@@ -180,7 +179,7 @@ workspace_plan :: proc(
 	return plan, nil
 }
 
-// The file name without its extension (Maestro's default flow name and MAESTRO_FILENAME).
+// The file name without its extension (a flow's default name, and MAESTRO_FILENAME).
 flow_file_name :: proc(path: string) -> string {
 	base := path[strings.last_index_byte(path, '/') + 1:]
 	if i := strings.last_index_byte(base, '.'); i > 0 do return base[:i]
@@ -208,7 +207,7 @@ walk_flow_files :: proc(dir, config: string, out: ^[dynamic]string) {
 	}
 }
 
-// Maestro's isFlowFile: a .yaml/.yml file other than the workspace config.
+// A flow file: a .yaml/.yml file other than the workspace config.
 @(private = "file")
 is_flow_file :: proc(path, config: string) -> bool {
 	if !os.is_file(path) || path == config do return false
@@ -263,7 +262,7 @@ read_workspace_config :: proc(path: string) -> (cfg: Workspace_Config, err: Err)
 				}
 			}
 		case "baselineBranch", "notifications", "disableRetries", "platform":
-		// Read by Maestro for its cloud and device set-up; nothing to do here.
+		// Cloud and device set-up keys: nothing to do here.
 		case:
 			append(&unknown, key)
 		}

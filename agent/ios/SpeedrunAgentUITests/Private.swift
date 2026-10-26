@@ -63,7 +63,7 @@ enum Private {
         try synthesize(try record(with: path), wait: wait)
     }
 
-    /// Maestro's swipe (EventRecord.addSwipeEvent): down at start, a move to end at 100 ms, up
+    /// The flow format's swipe: down at start, a move to end at 100 ms, up
     /// at 100 ms + duration. testmanagerd plays a move from its offset until the next event,
     /// so the touch rests 100 ms, then glides to end over the whole duration and lifts while
     /// still moving.

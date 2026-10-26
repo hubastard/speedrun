@@ -1,8 +1,7 @@
-// Runs Maestro flow files (see flow.odin) on the agent, with Maestro 2.11.0's semantics:
-// element matching (Orchestra.buildFilter, maestro.Filters), lookup timeouts counted from the
-// last interaction, conditions, env scopes, gestures and key codes (drivers/AndroidDriver).
-// What differs is how: one agent round trip per hierarchy read and frame/event-driven settle
-// instead of fixed sleeps and screenshot diffs.
+// Runs flow files (see flow.odin) on the agent, with the semantics flows are written for:
+// element matching, lookup timeouts counted from the last interaction, conditions, env
+// scopes, gestures and key codes. One agent round trip per hierarchy read, and a settle
+// driven by frames and events instead of fixed sleeps and screenshot diffs.
 package speedrun
 
 import "core:encoding/json"
@@ -17,12 +16,12 @@ import "core:strings"
 import "core:text/regex"
 import "core:time"
 
-LOOKUP_TIMEOUT_MS          :: 17_000 // Orchestra.lookupTimeoutMs
-OPTIONAL_LOOKUP_TIMEOUT_MS :: 7_000 // Orchestra.optionalLookupTimeoutMs
-ANIMATION_TIMEOUT_MS       :: 15_000 // Maestro.ANIMATION_TIMEOUT_MS
-MAX_RETRIES_ALLOWED        :: 3 // Orchestra.MAX_RETRIES_ALLOWED
-LONG_PRESS_MS              :: 3_000 // AndroidDriver.longPress: `input swipe x y x y 3000`
-GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // AndroidDriver.isKeyboardVisible
+LOOKUP_TIMEOUT_MS          :: 17_000
+OPTIONAL_LOOKUP_TIMEOUT_MS :: 7_000
+ANIMATION_TIMEOUT_MS       :: 15_000
+MAX_RETRIES_ALLOWED        :: 3
+LONG_PRESS_MS              :: 3_000 // as `input swipe x y x y 3000`
+GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
 
 // ---- hierarchy ------------------------------------------------------------------------
 
@@ -33,8 +32,8 @@ H_Node :: struct {
 	kept:       bool,
 }
 
-// Maestro's view of the screen: every window, nodes the system reports visible, minus
-// those less than 10% on screen (filterOutOfBounds).
+// The screen as flows see it: every window, nodes the system reports visible, minus those
+// less than 10% on screen.
 Hierarchy :: struct {
 	nodes: [dynamic]H_Node,
 	roots: [dynamic]int,
@@ -80,7 +79,7 @@ Runner :: struct {
 	log_rec:              int, // record of the running command, for console.log (-1: none)
 	log_node:             ^View_Node,
 	script_dir:           string, // of the running runScript
-	copied_text:          Maybe(string), // maestro.copiedText
+	copied_text:          Maybe(string), // the scripts' maestro.copiedText
 	http_seq:             int,
 	api_level:            int, // Android, read when needed (system.odin)
 	flow_dir:             string, // this flow's debug output folder ("" for none)
@@ -94,7 +93,7 @@ Runner :: struct {
 Rx :: struct {
 	pattern: string,
 	re:      regex.Regular_Expression,
-	literal: bool, // does not compile: matched as plain text, like Maestro's toRegexSafe
+	literal: bool, // does not compile: matched as plain text
 }
 
 // A failure message; nil means success.
@@ -134,7 +133,7 @@ Run_Options :: struct {
 }
 
 // Runs one flow file. The result's strings live in `alloc`.
-run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options, alloc: mem.Allocator) -> (result: Flow_Result) {
+run_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options, alloc: mem.Allocator) -> (result: Flow_Result) {
 	result.file_path = strings.clone(path, alloc)
 	result.name = strings.clone(flow_file_name(path), alloc)
 	result.start_unix_ms = time.to_unix_nanoseconds(time.now()) / 1_000_000
@@ -179,8 +178,8 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 		return
 	}
 
-	// Env, Maestro's order: -e values, MAESTRO_* shell variables not given with -e, the
-	// defaults it sets for every flow, then the flow's own `env:` (define_env, below).
+	// Env, in this order: -e values, MAESTRO_* shell variables not given with -e, the
+	// defaults every flow gets, then the flow's own `env:` (define_env, below).
 	push_scope(&r)
 	scope := &r.env[0]
 	for e in opts.env do scope[e.key] = e.value
@@ -194,7 +193,7 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 	scope["MAESTRO_SHARD_ID"] = fmt.aprintf("%d", opts.shard_index + 1)
 	scope["MAESTRO_SHARD_INDEX"] = fmt.aprintf("%d", opts.shard_index)
 
-	// "Running on <emulator or simulator name>", like Maestro.
+	// "Running on <emulator or simulator name>".
 	device := dev.name
 	if dev.platform == .Android {
 		device = strings.trim_space(shell(&r, "getprop ro.boot.qemu.avd_name"))
@@ -218,7 +217,7 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 	result.duration_ms = total
 	result.steps = make([]Step, len(r.records), alloc)
 	for rec, k in r.records {
-		// TestSuiteInteractor: "N. <description>", "850ms" / "1.2s".
+		// "N. <description>", "850ms" / "1.2s".
 		d := fmt.tprintf("%.1fs", rec.duration_ms / 1000) if rec.duration_ms >= 1000 else fmt.tprintf("%dms", int(rec.duration_ms))
 		result.steps[k] = {
 			fmt.aprintf("%d. %s", k + 1, rec.evaluated if rec.evaluated != "" else rec.description, allocator = alloc),
@@ -226,7 +225,7 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 			strings.clone(d, alloc),
 		}
 	}
-	// Maestro's message only: the lines after it describe the screen, for the console.
+	// The message only: the lines after it describe the screen, for the console.
 	if !ok && result.error == "" {
 		first, _, _ := strings.partition(failure_message(&r), "\n")
 		result.error = strings.clone(first, alloc)
@@ -245,10 +244,10 @@ run_maestro_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options
 	return
 }
 
-// Maestro's names for the commands in its commands.json (the YAML name is `description`'s
-// source; tapOn with a point is tapOnPointV2Command in Maestro, tapOnElement here).
+// The commands' names in commands.json, as tools reading it expect them (the YAML name is
+// `description`'s source; tapOn with a point is tapOnPointV2Command there).
 @(private = "file")
-MAESTRO_COMMAND_NAMES :: [][2]string {
+COMMANDS_JSON_NAMES :: [][2]string {
 	{"tapOn", "tapOnElement"}, {"doubleTapOn", "tapOnElement"}, {"longPressOn", "tapOnElement"},
 	{"assertVisible", "assertConditionCommand"}, {"assertNotVisible", "assertConditionCommand"},
 	{"extendedWaitUntil", "assertConditionCommand"}, {"back", "backPressCommand"},
@@ -275,8 +274,8 @@ MAESTRO_COMMAND_NAMES :: [][2]string {
 	{"setLocation", "setLocationCommand"}, {"travel", "travelCommand"},
 }
 
-// The flow's debug output, laid out as Maestro's artifacts bundle: commands.json (each
-// command under Maestro's name, with its status, start and duration), logs/maestro.log, and
+// The flow's debug output, in the artifacts layout tools expect: commands.json (each
+// command under its name there, with its status, start and duration), logs/maestro.log, and
 // on failure screenshots/final.png.
 @(private = "file")
 write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
@@ -299,7 +298,7 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 	log := strings.builder_make(context.temp_allocator)
 	for rec, k in r.records {
 		name := rec.command
-		for pair in MAESTRO_COMMAND_NAMES do if pair[0] == rec.command do name = pair[1]
+		for pair in COMMANDS_JSON_NAMES do if pair[0] == rec.command do name = pair[1]
 		fields := make(map[string]string, 1, context.temp_allocator)
 		fields["description"] = rec.description
 		cmd := make(map[string]map[string]string, 1, context.temp_allocator)
@@ -321,8 +320,8 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 	}
 }
 
-// A description with its ${...} evaluated, as Maestro's messages show them (its live view
-// shows them as written); as written when they do not evaluate.
+// A description with its ${...} evaluated, as messages show them (the live view shows them
+// as written); as written when they do not evaluate.
 evaluated :: proc(r: ^Runner, description: string) -> string {
 	if v, err := eval(r, description); err == nil do return v
 	return description
@@ -362,7 +361,7 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 		node := r.view.nodes[&c]
 		if node == nil { 	// not reachable from the flow tree: still shown, never a crash
 			node = new(View_Node, r.alloc)
-			node.cmd, node.depth, node.desc = &c, r.depth, maestro_description(r, &c)
+			node.cmd, node.depth, node.desc = &c, r.depth, command_description(r, &c)
 		}
 		r.path = fmt.aprintf("%s/%s%d", parent, section, k, allocator = r.alloc)
 		append(&r.records, Record{
@@ -372,8 +371,8 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 		view_started(r, node)
 		t := time.tick_now()
 		r.depth += 1
-		// Maestro evaluates a command's scripts once, before running it: its ${...} values are
-		// kept while it runs (a lookup polling the screen does not run them again).
+		// A command's scripts are evaluated once, before it runs: its ${...} values are kept
+		// while it runs (a lookup polling the screen does not run them again).
 		append(&r.evals, nil)
 		saved_rec, saved_node := r.log_rec, r.log_node
 		r.log_rec, r.log_node = seq, node
@@ -414,14 +413,14 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 
 // ---- commands -------------------------------------------------------------------------
 
-// Executes one command. `mutating` = it may have changed the screen (Maestro then restarts
-// the lookup timeout clock). `err` is empty on success, SKIPPED, or the failure.
+// Executes one command. `mutating` = it may have changed the screen (the lookup timeout
+// clock restarts). `err` is empty on success, SKIPPED, or the failure.
 @(private = "file")
 exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
-	// A settle put off (Android's dark mode restarting the apps, which Maestro does not wait
-	// for at all) is paid by the first command that reads or touches the screen.
-	// So is the wait for an app's UI after an iOS launchApp (Maestro's returns once the
-	// process starts): commands that do not touch the screen run while the app starts.
+	// A settle put off (Android's dark mode restarting the apps) is paid by the first command
+	// that reads or touches the screen. So is the wait for an app's UI after an iOS launchApp
+	// (it returns once the process starts): commands that do not touch the screen run while
+	// the app starts.
 	if r.settle_due || r.launch_due != "" {
 		switch _ in c.data {
 		case Device_Mode, Set_Permissions, Set_Location, Travel, Add_Media, Start_Recording,
@@ -447,7 +446,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		app := eval(r, d.app_id) or_return
 		perms := d.permissions[:] if d.has_permissions else DEFAULT_PERMISSIONS
 		args := eval_launch_arguments(r, d.arguments[:]) or_return
-		// Maestro's order: clear the keychain, clear the state, set the permissions, launch
+		// In this order: clear the keychain, clear the state, set the permissions, launch
 		// (stopping the app first unless stopApp: false).
 		if r.dev.platform == .IOS {
 			if d.clear_keychain {
@@ -482,7 +481,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case App_Cmd:
 		app := eval(r, d.app_id) or_return
 		if r.dev.platform == .IOS {
-			// killApp is stopApp on iOS, as in Maestro (no process death there).
+			// killApp is stopApp on iOS (no process death there).
 			if d.op == .Clear_State do return true, ios_clear_state(r.dev.udid, app)
 			simctl("terminate", r.dev.udid, app)
 			return true, nil
@@ -514,12 +513,12 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Navigate:
 		switch d {
 		case .Back:
-			if r.dev.platform == .IOS do return true, nil // no back key: a no-op, as in Maestro
+			if r.dev.platform == .IOS do return true, nil // no back key: a no-op
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
 			return true, settle(r)
 		case .Hide_Keyboard:
 			if r.dev.platform == .IOS do return true, ios_hide_keyboard(r)
-			// Maestro presses BACK, then fails if (G)board ids are still on screen.
+			// BACK, then a failure if (G)board ids are still on screen.
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
 			if e := settle(r); e != nil do return true, e
 			if !read_screen(r) do return true, "agent connection lost"
@@ -551,14 +550,14 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Open_Link:
 		link := eval(r, d.link) or_return
 		if strings.contains(link, " ") do return false, "links with spaces are not supported yet"
-		// iOS opens every link the same way (Maestro ignores browser and autoVerify there).
+		// iOS opens every link the same way (browser and autoVerify do not apply there).
 		if r.dev.platform == .IOS {
 			if out, ok := simctl("openurl", r.dev.udid, link); !ok do return true, out
 			return true, settle(r)
 		}
 		browser := ""
 		if d.browser {
-			// AndroidDriver.openBrowser: Chrome, else Firefox, else the default handler.
+			// Chrome, else Firefox, else the default handler.
 			packages := shell(r, "pm list packages")
 			for p in ([]string{"com.android.chrome", "org.mozilla.firefox"}) {
 				if strings.contains(packages, fmt.tprintf("package:%s\n", p)) || strings.has_suffix(strings.trim_space(packages), p) {
@@ -641,7 +640,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Travel:
 		return true, travel(r, d)
 	case Eval_Script:
-		// Scripts can make requests that change the app: mutating, as in Maestro.
+		// Scripts can make requests that change the app: mutating.
 		_ = eval(r, d.script) or_return
 		return true, nil
 	case Run_Script:
@@ -661,7 +660,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Copy_Text:
 		el := find_element(r, d.sel, c.optional, -1) or_return
 		n := r.h.nodes[el]
-		// Orchestra.resolveText: text, hint, accessibility text, error (else empty).
+		// The element's text: text, hint, accessibility text, error (else empty).
 		text := n.text
 		if text == "" do text = n.hint
 		if text == "" do text = n.desc
@@ -696,8 +695,8 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 	return settle(r, no_change_ms = SETTLE_TYPED_NO_CHANGE_MS)
 }
 
-// IOSDriver.hideKeyboard: past the keyboard's introduction, then a short swipe up, and if
-// the keyboard is still there (its delete key), one to the left. It never fails.
+// iOS hideKeyboard: past the keyboard's introduction, then a short swipe up, and if the
+// keyboard is still there (its delete key), one to the left. It never fails.
 @(private = "file")
 ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 	if !read_screen(r) do return "agent connection lost"
@@ -722,7 +721,7 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 	if !(keyboard_shown(r) or_return) do return nil
 	swipe_points(r, w / 2, h / 2, w / 2, i32(f32(h) * 0.47), 50, nil) or_return
 	if !(keyboard_shown(r) or_return) do return nil
-	// swipe_points settled already (Maestro's closing waitForAppToSettle).
+	// swipe_points settled already.
 	return swipe_points(r, w / 2, h / 2, i32(f32(w) * 0.47), h / 2, 50, nil)
 }
 
@@ -832,7 +831,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		}
 		if r.h.hash != before do break
 	}
-	// waitUntilVisible (Maestro.tap): the screen did not change and something covers the
+	// waitUntilVisible: the screen did not change and something covers the
 	// element at its center: wait for it to show (10 reads, 1 s apart), then tap it again.
 	if d.sel != nil && d.sel.wait_until_visible {
 		if !read_since_tap && !read_screen(r) do return "agent connection lost"
@@ -895,7 +894,7 @@ typing :: proc(r: ^Runner) -> bool {
 	return false
 }
 
-// ViewHierarchy.getElementAt: the last element containing the point, its own children first.
+// The last element containing the point, its own children first.
 @(private = "file")
 element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
 	#reverse for k in list {
@@ -914,9 +913,9 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	speed_s := eval(r, d.speed) or_return
 	speed, sok := strconv.parse_i64(strings.trim_space(speed_s))
 	if !sok do return fmt.aprintf("invalid scroll speed `%s`", speed_s, allocator = r.alloc)
-	duration := i64(1000 * f64(100 - speed) / 100) + 1 // ScrollUntilVisibleCommand.speedToDuration
+	duration := i64(1000 * f64(100 - speed) / 100) + 1 // speed (0-100) as a swipe duration
 	if duration < 0 do duration = 40
-	visibility := f64(d.visibility / 100) // integer division, as Maestro's visibilityPercentageNormalized
+	visibility := f64(d.visibility / 100) // integer division: below 100% counts as 0
 	dir := swipe_for_scroll(d.direction)
 	end := time.tick_now()._nsec + timeout * 1_000_000
 	retry_center := 0
@@ -925,12 +924,12 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	// After a swipe the content drifts on (a fling) and a settle waits for it to stop. While
 	// the element is not on screen yet that wait is useless: the next swipe's touch stops the
 	// drift anyway. So read right away, swipe again if it is not there, and settle only once
-	// it shows, for Maestro's checks below on a still screen.
+	// it shows, for the checks below on a still screen.
 	// A swipe is over only after its own duration, as a finger's would be: Android's SWIPE
 	// injects it at once, and gestures overlapping in time can leave a list stuck.
 	// On iOS the swipe is a drag that does not fling instead (the agent's SWIPE without the
-	// flag; `speed` unused): Maestro's moves content ~1.6x as far, but it drifts for ~2 s
-	// that the settle would wait out, where the drag's content stops as the op returns.
+	// flag; `speed` unused): a flinging swipe moves content ~1.6x as far, but it drifts for
+	// ~2 s that the settle would wait out, where the drag's content stops as the op returns.
 	fling := r.dev.platform != .IOS
 	moving := false
 	swiped: time.Tick
@@ -964,7 +963,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				return nil
 			}
 		}
-		// swipeFromCenter: from the screen center towards the edge.
+		// From the screen center towards the edge.
 		swiped = time.tick_now()
 		if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling); !ok do return "agent connection lost"
 		moving = true
@@ -1025,7 +1024,7 @@ swipe_for_scroll :: proc(d: Swipe_Dir) -> Swipe_Dir {
 	return .Up
 }
 
-// AndroidDriver.swipe(elementPoint, direction): to 10% / 90% of the screen.
+// A swipe from an element's point in a direction: to 10% / 90% of the screen.
 @(private = "file")
 edge_point :: proc(r: ^Runner, x, y: i32, dir: Swipe_Dir) -> (i32, i32) {
 	switch dir {
@@ -1053,7 +1052,7 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 
 // ---- conditions and lookups -----------------------------------------------------------
 
-// Orchestra.evaluateCondition. `timeout` < 0: the default for conditions (7 s), always
+// A condition (`when:`, runFlow/repeat). `timeout` < 0: the default for conditions (7 s), always
 // shortened by the time since the last interaction.
 @(private = "file")
 condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64) -> (met: bool, err: Err) {
@@ -1084,7 +1083,7 @@ adjusted :: proc(r: ^Runner, ms: i64) -> i64 {
 	return max(0, ms - i64(us(r.last_interaction) / 1000))
 }
 
-// Orchestra.findElement: polls the hierarchy until the selector matches. `timeout` < 0:
+// Polls the hierarchy until the selector matches. `timeout` < 0:
 // the lookup default (17 s, optional 7 s) shortened by the time since the last interaction.
 find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -> (idx: int, err: Err) {
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
@@ -1095,7 +1094,7 @@ find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -
 	return i, nil
 }
 
-// One read at least (Maestro's do-while), then re-reads until found or `timeout_ms` passes.
+// One read at least, then re-reads until found or `timeout_ms` passes.
 try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, found: bool, err: Err) {
 	end := time.tick_now()._nsec + timeout_ms * 1_000_000
 	for {
@@ -1126,7 +1125,7 @@ screen_summary :: proc(r: ^Runner) -> string {
 	return strings.to_string(b)
 }
 
-// Orchestra.buildFilter's description, used in "Element not found: ..."
+// The selector's description, used in "Element not found: ..."
 @(private = "file")
 filter_description :: proc(s: ^Selector) -> string {
 	parts := make([dynamic]string, 0, 4, context.temp_allocator)
@@ -1147,7 +1146,7 @@ filter_description :: proc(s: ^Selector) -> string {
 	return strings.join(parts[:], ", ", context.temp_allocator)
 }
 
-// ---- matching (Orchestra.buildFilter) -------------------------------------------------
+// ---- matching ------------------------------------------------------------------------
 
 // Index of the element `sel` picks on the current hierarchy, or -1.
 @(private = "file")
@@ -1174,7 +1173,7 @@ resolve_parent :: proc(r: ^Runner, s: ^Selector) -> (idx: int, err: Err) {
 	return res[0] if len(res) > 0 else -1, nil
 }
 
-// ViewHierarchy(node).aggregate(): the node and its kept descendants, pre-order.
+// The node and its kept descendants, pre-order.
 @(private = "file")
 subtree :: proc(r: ^Runner, root: int) -> []int {
 	out: [dynamic]int
@@ -1191,7 +1190,7 @@ subtree :: proc(r: ^Runner, root: int) -> []int {
 	return out[:]
 }
 
-// The full filter of one selector over `nodes`, in Maestro's order.
+// The full filter of one selector over `nodes`, in the order flows rely on.
 @(private = "file")
 apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) {
 	text_rx, id_rx: ^Rx
@@ -1338,7 +1337,7 @@ deepest :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: int, out: ^[dy
 @(private = "file")
 basic_match :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: H_Node) -> bool {
 	if text_rx != nil {
-		// Filters.textMatches: text, hint, content description, or a non-empty error.
+		// Text matches: text, hint, content description, or a non-empty error.
 		if !(text_match(text_rx, n.text) || text_match(text_rx, n.hint) || text_match(text_rx, n.desc) ||
 			   (n.error != "" && text_match(text_rx, n.error))) {
 			return false
@@ -1360,8 +1359,8 @@ basic_match :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: H_Node) ->
 		if w, ok := s.width.?; ok && abs(int(n.right - n.left) - w) > tol do return false
 		if h, ok := s.height.?; ok && abs(int(n.bottom - n.top) - h) > tol do return false
 	}
-	// TraitFilters. Every element has a text attribute in Maestro's hierarchy (empty when
-	// it shows none), so `text` keeps them all.
+	// Traits. Every element has a text attribute in the hierarchy flows see (empty when it
+	// shows none), so `text` keeps them all.
 	for t in s.traits {
 		switch t {
 		case .TEXT:
@@ -1406,7 +1405,7 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	}
 	re, cerr := regex.create(fmt.tprintf("^(?:%s)$", pattern), {.Case_Insensitive, .Unicode}, r.alloc, context.temp_allocator)
 	if cerr != nil {
-		entry.literal = true // Maestro's toRegexSafe: an invalid pattern matches as text
+		entry.literal = true // an invalid pattern matches as text
 	} else {
 		entry.re = re
 	}
@@ -1418,7 +1417,7 @@ has_bounds :: proc(n: H_Node) -> bool {
 	return n.right > n.left || n.bottom > n.top || n.left != 0 || n.top != 0
 }
 
-// UiElement.getVisiblePercentage
+// The share of the element's area on screen (0-1).
 @(private = "file")
 visible_pct :: proc(n: H_Node, w, h: i32) -> f64 {
 	bw, bh := n.right - n.left, n.bottom - n.top
@@ -1431,7 +1430,7 @@ visible_pct :: proc(n: H_Node, w, h: i32) -> f64 {
 	return f64(vx) * f64(vy) / area
 }
 
-// UiElement.isElementNearScreenCenter
+// Whether the element is near the screen's center along the scroll direction.
 @(private = "file")
 near_center :: proc(n: H_Node, dir: Swipe_Dir, w, h: i32) -> bool {
 	cx, cy := w / 2, h / 2
@@ -1513,9 +1512,9 @@ define_env :: proc(r: ^Runner, pairs: []Env_Pair) -> Err {
 	return nil
 }
 
-// Env.evaluateScripts: each `${script}` is replaced by the script's value (JavaScript, see
-// js.odin), an escaped `\${...}` stays as written without its backslash. Maestro's regexes
-// exactly: a script runs to the last `}` before the next `$`; a blank one gives "".
+// Each `${script}` is replaced by the script's value (JavaScript, see js.odin), an escaped
+// `\${...}` stays as written without its backslash. A script runs to the last `}` before the
+// next `$`; a blank one gives "".
 eval :: proc(r: ^Runner, s: string) -> (out: string, err: Err) {
 	if !strings.contains(s, "${") do return s, nil
 	b := strings.builder_make(r.alloc)
@@ -1587,10 +1586,10 @@ script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 
 // ---- device ---------------------------------------------------------------------------
 
-// Reads every window into r.h and applies Maestro's bounds filter.
+// Reads every window into r.h and applies the bounds filter.
 read_screen :: proc(r: ^Runner) -> bool {
 	if !read_screen_once(r) do return false
-	// Maestro's iOS runner answers the notification alert on its hierarchy reads.
+	// On iOS the notification alert is answered on hierarchy reads.
 	if r.dev.platform == .IOS && r.notifications != "" {
 		tapped, ok := answer_notification_alert(r)
 		if !ok do return false

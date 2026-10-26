@@ -1,6 +1,6 @@
-// Console output for flows, modeled on Maestro's CLI (maestro-cli runner/resultview): a live
-// view redrawn in place on a terminal (AnsiResultView), one line per command otherwise
-// (PlainTextResultView). Descriptions use Maestro's wording; each command also shows its time.
+// Console output for flows: a live view redrawn in place on a terminal, one line per command
+// otherwise. Descriptions use the wording flow authors know; each command also shows its
+// time.
 package speedrun
 
 import "core:c"
@@ -33,7 +33,7 @@ View_Node :: struct {
 
 View :: struct {
 	live:                     bool, // stdout is a terminal: redraw in place
-	silent:                   bool, // a flow of a suite: Maestro prints one line per flow only
+	silent:                   bool, // a flow of a suite: only one line per flow
 	device, flow_name:        string,
 	main, on_start, on_comp:  [dynamic]^View_Node,
 	nodes:                    map[^Cmd]^View_Node,
@@ -71,7 +71,7 @@ view_init :: proc(r: ^Runner, flow: ^Flow, flow_name, device: string, plain: boo
 	}
 }
 
-// Plain mode: Maestro's section headers before a list of commands runs.
+// Plain mode: a section header before a list of commands runs.
 view_section :: proc(r: ^Runner, section: string) {
 	if r.view.live || r.view.silent do return
 	switch section {
@@ -86,7 +86,7 @@ view_nodes :: proc(r: ^Runner, cmds: []Cmd, depth: int) -> (out: [dynamic]^View_
 	out.allocator = r.alloc
 	for &c in cmds {
 		n := new(View_Node, r.alloc)
-		n.cmd, n.depth, n.desc = &c, depth, maestro_description(r, &c)
+		n.cmd, n.depth, n.desc = &c, depth, command_description(r, &c)
 		switch d in c.data {
 		case Run_Flow:
 			n.on_start = view_nodes(r, d.on_start[:], depth + 1)
@@ -109,7 +109,7 @@ view_nodes :: proc(r: ^Runner, cmds: []Cmd, depth: int) -> (out: [dynamic]^View_
 	return out
 }
 
-// Pending again for the next pass of a repeat or retry (Maestro's resetCommand).
+// Pending again for the next pass of a repeat or retry.
 view_reset :: proc(nodes: []^View_Node) {
 	for n in nodes {
 		n.status, n.runs, n.ms, n.error = .Pending, 0, 0, ""
@@ -136,7 +136,7 @@ view_finished :: proc(r: ^Runner, n: ^View_Node) {
 		view_render(r)
 		return
 	}
-	// Plain: the line Maestro prints, then this tool's time.
+	// Plain: the command's line, then its time.
 	runs := fmt.tprintf(" (completed %d %s)", n.runs, "time" if n.runs == 1 else "times") if n.runs > 0 else ""
 	fmt.printf("%s%s... %s%s  %s\n", pad(n.depth), n.desc, status_word(n.status), runs, fmt_ms(n.ms))
 	if len(n.logs) > 0 {
@@ -151,7 +151,7 @@ view_done :: proc(r: ^Runner, footer: string) {
 	if r.view.silent do return
 	if r.view.live {
 		view_render(r)
-		// As Maestro does, the failure's message in full below the view.
+		// The failure's message in full below the view.
 		failed :: proc(nodes: []^View_Node) {
 			for n in nodes {
 				if n.status != .Failed do continue
@@ -228,7 +228,7 @@ render_nodes :: proc(v: ^View, nodes: []^View_Node, lines: ^[dynamic]string, foc
 	for n in nodes {
 		if n.status == .Running do focus^ = len(lines)
 		append(lines, command_line(v, n))
-		// AnsiResultView.printLogMessages
+		// Its log lines (console.log) below it.
 		if len(n.logs) > 0 {
 			append(lines, fmt.tprintf(" ║    %s     %sLog messages:%s", pad(n.depth), YELLOW, RESET))
 			for line in n.logs do append(lines, fmt.tprintf(" ║    %s       %s", pad(n.depth), line))
@@ -240,7 +240,7 @@ render_nodes :: proc(v: ^View, nodes: []^View_Node, lines: ^[dynamic]string, foc
 			first = ellipsize(first, max(v.cols - 11 - 2 * n.depth, 10))
 			append(lines, fmt.tprintf(" ║    %s     %s%s%s", pad(n.depth), RED if n.status == .Failed else YELLOW, first, RESET))
 		}
-		// Sub-commands show while their container runs (or failed), as in Maestro.
+		// Sub-commands show while their container runs (or failed).
 		started :: proc(list: []^View_Node) -> bool {
 			for c in list do if c.status != .Pending do return true
 			return false
@@ -273,7 +273,7 @@ command_line :: proc(v: ^View, n: ^View_Node) -> string {
 	return fmt.tprintf(" ║    %s%s   %s%s%s", pad(n.depth), symbol, highlight(desc), suffix(n), time)
 }
 
-// Maestro shows unresolved ${...} in cyan.
+// Unresolved ${...} in cyan.
 @(private = "file")
 highlight :: proc(s: string) -> string {
 	if !strings.contains(s, "${") do return s
@@ -354,9 +354,9 @@ fmt_ms :: proc(ms: f64) -> string {
 	return fmt.tprintf("%.0f ms", ms)
 }
 
-// ---- Maestro's command descriptions (Commands.kt originalDescription) ------------------
+// ---- command descriptions (the wording flow authors know) -----------------------------
 
-maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
+command_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 	if c.label != "" do return c.label
 	opt := "(Optional) " if c.optional else ""
 	s: string
@@ -503,7 +503,7 @@ maestro_description :: proc(r: ^Runner, c: ^Cmd) -> string {
 	case Copy_Text:
 		s = fmt.tprintf("Copy text from element with %s", selector_description(d.sel))
 	case Set_Clipboard:
-		s = fmt.tprintf("Set Maestro clipboard to %s", d.text)
+		s = fmt.tprintf("Set clipboard to %s", d.text)
 	case Paste_Text:
 		s = "Paste text"
 	}
