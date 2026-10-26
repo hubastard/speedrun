@@ -113,8 +113,8 @@ s of 3.3 s.
   updates after each key and could be the signal instead.
 - **iOS `inputText` in Settings' search field: 1.2–1.4 s vs 1.6 s.** Settings works ~65 ms
   per key (search results for every prefix); key-by-key typing is bound by that.
-- **Long press: 1.0–1.2 s vs 3.9–4.7 s.** The hold is 0.8 s (2026-10-26; 3 s before), past
-  the apps' usual 0.4–0.5 s delay. One that opens an iOS context menu costs ~3 s: the
+- **Long press: ~1.4 s vs 3.9–4.7 s.** The hold is 1.2 s (2026-10-26; 3 s before), past
+  the apps' usual 0.4–0.8 s delay. One that opens an iOS context menu costs ~3 s: the
   settle's quiescence wait is cut at 2 s (it took XCTest's 60 s before).
 - **iOS Enter and taps that bring up or dismiss the keyboard: 0.64 s vs 0.62–0.79 s, 1.1 s
   vs 1.2 s.** The keyboard's animation runs outside the app, so the 10x UIKit animation speed

@@ -35,6 +35,21 @@ final class Input {
         Self.action(inject: micros(since: t), out: &out)
     }
 
+    /// Repeated taps (doubleTapOn, tapOn's repeat) as one gesture, intervalMs apart but at
+    /// least tapsMinIntervalMs: React Native drops a press that comes ~150 ms after the one
+    /// before (XCTest's own doubleTap lands as one tap there), and 200 ms apart its handlers
+    /// still see the pair ~100 ms apart, inside a 300 ms double-tap window.
+    static let tapsMinIntervalMs: Int32 = 200
+
+    func taps(x: Int32, y: Int32, count: Int32, intervalMs: Int32, out: inout Writer) throws {
+        mark()
+        let t = DispatchTime.now().uptimeNanoseconds
+        let interval = TimeInterval(max(intervalMs, Self.tapsMinIntervalMs)) / 1000
+        try Private.taps(at: CGPoint(x: Int(x), y: Int(y)), count: Int(count), interval: interval,
+                         hold: min(TimeInterval(Self.tapHoldMs) / 1000, interval / 2))
+        Self.action(inject: micros(since: t), out: &out)
+    }
+
     /// The flow format's swipe: a touch that rests 100 ms, glides to the
     /// end over the duration and lifts there still moving, so content flings on at the glide's
     /// speed (scrollUntilVisible's 601 ms over 350 points: ~540 points, still after ~2.6 s,

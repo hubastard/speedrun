@@ -231,9 +231,14 @@ yet. So a flow that loads runs as written; nothing is skipped silently.
 - **`scrollUntilVisible` scrolls without momentum**, so the list stops where the finger
   lifts. It takes more, shorter swipes, and its `speed` has no effect. `swipe` and `scroll`
   fling as in Maestro.
-- **`longPressOn` holds for 0.8 s**, where Maestro holds 3 s: past the 0.4–0.5 s after which
-  apps take a touch as a long press (on Android, the device's touch & hold delay plus 0.3 s).
-  For an app that waits longer, set `SPEEDRUN_LONG_PRESS_MS`.
+- **`scrollUntilVisible` scrolls the element clear of what is drawn over it** (a sticky
+  footer, a floating search bar), so a tap that follows lands on it. Maestro stops once the
+  element is on screen, under the footer or not.
+- **`longPressOn` holds for 1.2 s**, where Maestro holds 3 s: past the 0.4–0.8 s after which
+  apps take a touch as a long press (on Android, at least the device's touch & hold delay
+  plus 0.7 s). For an app that waits longer, set `SPEEDRUN_LONG_PRESS_MS`.
+- **iOS `doubleTapOn` lands as a double tap in React Native apps**: its two taps are one
+  gesture, 200 ms apart (Maestro's arrive too far apart for a 300 ms double-tap window).
 - **Several devices connected and no `--device`:** Maestro asks which one to use. speedrun
   takes the first Android device, else the booted simulator.
 - **Regular expressions:** Java-only syntax (lookarounds, inline flags, `\p{...}`) is

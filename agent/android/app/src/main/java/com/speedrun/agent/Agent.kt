@@ -505,16 +505,25 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun injectMotion(e: MotionEvent, sync: Boolean = false) {
         e.source = InputDevice.SOURCE_TOUCHSCREEN
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) lastDownTime = e.downTime
         injector.inject(e, sync)
         e.recycle()
     }
+
+    // The last gesture's down time. Android 17's input verifier refuses a gesture whose down
+    // time is earlier ("Down time went backwards"), so a SWIPE stamped in the past waits until
+    // its start comes after it.
+    private var lastDownTime = 0L
 
     private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean) = timedAction {
         val duration = durationMs.coerceIn(0, 10_000)
         val hold = if (fling) 0 else SWIPE_HOLD_MS
         val dx = x2 - x1
         val dy = y2 - y1
-        // Timestamps end now, so the app sees the gesture's speed without us waiting it out.
+        // Timestamps end now, so the app sees the gesture's speed without us waiting it out,
+        // unless that would start it before the last gesture did (a tap just before).
+        val early = lastDownTime + 1 - (SystemClock.uptimeMillis() - duration - hold)
+        if (early > 0) Thread.sleep(early)
         val down = SystemClock.uptimeMillis() - duration - hold
         fun move(f: Float, sync: Boolean = false) = injectMotion(
             MotionEvent.obtain(down, down + (duration * f).toLong(), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f, 0),

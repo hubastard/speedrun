@@ -128,6 +128,26 @@ final class Screen {
     /// does not wait for the suggestions.
     private static let unsettledID = "SystemInputAssistantView"
 
+    /// React Native spells a checkbox's or radio button's role and state into its value
+    /// ("checkbox, checked", "radio button, unchecked"): UIKit has no trait for them.
+    private static func spelledChecked(_ value: String) -> Bool {
+        let words = value.components(separatedBy: ", ")
+        return words.count >= 2 && (words[0] == "checkbox" || words[0] == "radio button") && words[1] == "checked"
+    }
+
+    /// The field with the keyboard's focus. hasFocus is the focus engine's (tvOS); XCTest's
+    /// snapshot keeps the keyboard's as hasKeyboardFocus. False where this Xcode lacks it.
+    private static let keyboardFocusSel = NSSelectorFromString("hasKeyboardFocus")
+    private static func keyboardFocused(_ s: XCUIElementSnapshot) -> Bool {
+        switch s.elementType {
+        case .textField, .secureTextField, .searchField, .textView: break
+        default: return false
+        }
+        guard let o = s as? NSObject, o.responds(to: keyboardFocusSel) else { return false }
+        typealias Get = @convention(c) (NSObject, Selector) -> Bool
+        return unsafeBitCast(o.method(for: keyboardFocusSel), to: Get.self)(o, keyboardFocusSel)
+    }
+
     private func walk(_ s: XCUIElementSnapshot, depth: Int, into w: inout Writer, count: inout UInt32, hasher: inout Hasher,
                       hashed: Bool = true) {
         let value = s.value as? String ?? ""
@@ -135,8 +155,8 @@ final class Screen {
         let checkable = s.elementType == .checkBox || s.elementType == .switch || s.elementType == .toggle
         var flags: UInt8 = 32 // visible
         if s.isEnabled { flags |= 2 }
-        if s.hasFocus { flags |= 4 }
-        if checkable && value == "1" { flags |= 16 }
+        if s.hasFocus || Self.keyboardFocused(s) { flags |= 4 }
+        if (checkable && value == "1") || Self.spelledChecked(value) { flags |= 16 }
         if s.isSelected { flags |= 64 }
         let f = s.frame
         let finite = f.origin.x.isFinite && f.origin.y.isFinite && f.width.isFinite && f.height.isFinite

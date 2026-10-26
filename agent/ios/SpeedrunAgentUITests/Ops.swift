@@ -46,6 +46,9 @@ final class Ops {
             try onMain { try screen.read(lastActionNs: input.lastActionNs, out: &out) }
         case 12: // MARK
             input.mark()
+        case 23: // TAPS
+            let x = try conn.readI32(), y = try conn.readI32(), count = try conn.readI32(), interval = try conn.readI32()
+            try input.taps(x: x, y: y, count: count, intervalMs: interval, out: &out)
         case 13: // PRESS
             let x = try conn.readI32(), y = try conn.readI32(), hold = try conn.readI32()
             try input.tap(x: x, y: y, holdMs: hold, out: &out)

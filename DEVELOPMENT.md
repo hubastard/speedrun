@@ -285,8 +285,32 @@ Known differences in how, not what:
   `FavoritePodcast` after drags that stop where they lift; flings bounced to the exact top).
 - `longPressOn` holds past the app's long-press delay instead of Maestro's 3 s: 500 ms (iOS's
   recognizers, React Native, Flutter) or Android's `long_press_timeout` setting (400 ms by
-  default, 1.5 s at most), whichever is longer, plus 300 ms; `SPEEDRUN_LONG_PRESS_MS`
-  overrides it. A React Native favorite toggle went from 3.3 s to 1.0-1.2 s.
+  default, 1.5 s at most), whichever is longer, plus 700 ms; `SPEEDRUN_LONG_PRESS_MS`
+  overrides it (300 ms of margin was too little for an app's own 800 ms delay). A React
+  Native favorite toggle went from 3.3 s to ~1.4 s.
+- `scrollUntilVisible` checks that nothing is drawn over the element's center (a node later
+  in the tree, outside its subtree and outside any other scroll view, smaller than half the
+  screen: a sticky footer, iOS 26's floating search bar) and drags it just clear; after two
+  such drags it stops checking (a closed side drawer that Android still places on screen
+  covered every row of an Ignite list).
+- A lookup that had to wait for its element settles once it shows, then finds it again: an
+  element enters the hierarchy at its final place while it may still slide in (Stripe's
+  payment sheet, presented once its SDK has loaded), and a tap then hits what is behind.
+- iOS: a tap in a system sheet or alert (another process's view, "Save Password?") that
+  changes nothing is tapped again, up to 3 times: such sheets ignore touches while they
+  present, and their buttons always act.
+- iOS `doubleTapOn` (and tapOn's `repeat`) is one event record with a finger per tap, at
+  least 200 ms apart (agent op 23 TAPS): one record per tap waits ~230 ms for testmanagerd;
+  a second press on one path, and XCTest's own doubleTap, land as one tap in React Native.
+- iOS reads React Native's checkbox and radio state from the value it spells them into
+  ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
+  (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
+- iOS `hideKeyboard` fails when the keyboard stays up, as Maestro's does ("Couldn't hide the
+  keyboard"); the keyboard is found by its element (the number pad's delete key has another
+  id).
+- Android `SWIPE` waits when its back-dated down time would come before the last gesture's
+  (a tap just before): Android 17's input verifier drops such a gesture ("Down time went
+  backwards").
 - On iOS a quiescence wait is cut at 2 s (XCTest's application-state timeout, set through
   `_XCTSetApplicationStateTimeout`, as WebDriverAgent does), then the settle waits for the
   event loop only and compares signatures: under an open context menu animations never

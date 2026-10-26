@@ -63,6 +63,21 @@ enum Private {
         try synthesize(try record(with: path), wait: wait)
     }
 
+    /// `count` taps at a point, one every `interval`, each held `hold`, as one event record with
+    /// a finger per tap. One record per tap would wait ~230 ms between them for testmanagerd's
+    /// confirmation (a second synthesis before it crashes the runner); a second press on one
+    /// path does not land as a tap.
+    static func taps(at point: CGPoint, count: Int, interval: TimeInterval, hold: TimeInterval) throws {
+        var paths: [NSObject] = []
+        for k in 0..<max(count, 1) {
+            let offset = Double(k) * interval
+            let path = try touchPath(at: point, offset: offset)
+            try call(path, "liftUpAtOffset:", offset + hold)
+            paths.append(path)
+        }
+        try synthesize(try record(with: paths))
+    }
+
     /// The flow format's swipe: down at start, a move to end at 100 ms, up
     /// at 100 ms + duration. testmanagerd plays a move from its offset until the next event,
     /// so the touch rests 100 ms, then glides to end over the whole duration and lifts while
@@ -134,7 +149,7 @@ enum Private {
         XCUIDevice.shared.perform(sel)
     }
 
-    private static func touchPath(at point: CGPoint) throws -> NSObject {
+    private static func touchPath(at point: CGPoint, offset: TimeInterval = 0) throws -> NSObject {
         guard let pathClass = NSClassFromString("XCPointerEventPath") as? NSObject.Type else {
             throw AgentError(message: "XCPointerEventPath is missing")
         }
@@ -142,10 +157,14 @@ enum Private {
         let alloc = pathClass.perform(NSSelectorFromString("alloc")).takeUnretainedValue() as! NSObject
         guard alloc.responds(to: initPath) else { throw AgentError(message: "XCPointerEventPath.initForTouchAtPoint:offset: is missing") }
         typealias InitPath = @convention(c) (NSObject, Selector, CGPoint, TimeInterval) -> NSObject
-        return unsafeBitCast(alloc.method(for: initPath), to: InitPath.self)(alloc, initPath, hardwarePoint(point), 0)
+        return unsafeBitCast(alloc.method(for: initPath), to: InitPath.self)(alloc, initPath, hardwarePoint(point), offset)
     }
 
     private static func record(with path: NSObject) throws -> NSObject {
+        try record(with: [path])
+    }
+
+    private static func record(with paths: [NSObject]) throws -> NSObject {
         guard let recordClass = NSClassFromString("XCSynthesizedEventRecord") as? NSObject.Type else {
             throw AgentError(message: "XCSynthesizedEventRecord is missing")
         }
@@ -160,7 +179,7 @@ enum Private {
         let add = NSSelectorFromString("addPointerEventPath:")
         guard record.responds(to: add) else { throw AgentError(message: "XCSynthesizedEventRecord.addPointerEventPath: is missing") }
         typealias Add = @convention(c) (NSObject, Selector, NSObject) -> Void
-        unsafeBitCast(record.method(for: add), to: Add.self)(record, add, path)
+        for path in paths { unsafeBitCast(record.method(for: add), to: Add.self)(record, add, path) }
         return record
     }
 

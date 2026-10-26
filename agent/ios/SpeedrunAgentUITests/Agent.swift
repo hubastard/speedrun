@@ -17,6 +17,8 @@
 //        iOS attribute mapping flows match against; frames in points
 //   3 TAP    i32 x, i32 y                   -> u32 prep_us, u32 inject_us, u8 inject_path (3)
 //  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
+//  23 TAPS   i32 x, i32 y, i32 count, i32 interval_ms -> same
+//        count taps, interval_ms apart, as one gesture (doubleTapOn)
 //   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same
 //        flags & 1 (fling): a swipe gliding over duration_ms; otherwise a drag that stops when
 //        the touch lifts (Input.drag; duration_ms unused)

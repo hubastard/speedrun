@@ -37,6 +37,7 @@ Op :: enum u8 {
 	Location    = 20, // Android agent: test-provider location, re-sent on a timer
 	Label       = 21, // Android agent: an app's name in the device's language
 	Perms       = 22, // Android agent: the permissions an app requests, and their state
+	Taps        = 23, // iOS agent: repeated taps as one gesture
 }
 
 KEYCODE_BACK :: 4
@@ -433,6 +434,21 @@ op_press :: proc(c: ^Conn, x, y, hold_ms: i32) -> (res: Action_Result, ok: bool)
 	put_i32(req[1:5], x)
 	put_i32(req[5:9], y)
 	put_i32(req[9:13], hold_ms)
+	body: []byte
+	body, _, ok = call(c, req[:])
+	if !ok do return
+	return read_action(body)
+}
+
+// iOS: count taps interval_ms apart in one gesture (each its own event record waits ~230 ms
+// for testmanagerd).
+op_taps :: proc(c: ^Conn, x, y, count, interval_ms: i32) -> (res: Action_Result, ok: bool) {
+	req: [17]byte
+	req[0] = u8(Op.Taps)
+	put_i32(req[1:5], x)
+	put_i32(req[5:9], y)
+	put_i32(req[9:13], count)
+	put_i32(req[13:17], interval_ms)
 	body: []byte
 	body, _, ok = call(c, req[:])
 	if !ok do return

@@ -23,8 +23,9 @@ MAX_RETRIES_ALLOWED        :: 3
 // longPressOn holds past the app's long-press delay: 400 ms on Android (the device's
 // "touch & hold delay", 1.5 s at most), 500 ms for iOS's recognizers, React Native and Flutter.
 // A flow does not say how long; the 3 s `input swipe x y x y 3000` holds are mostly waiting.
+SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a change ~1 s
 LONG_PRESS_APP_MS          :: 500
-LONG_PRESS_MARGIN_MS       :: 300
+LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
 
 // ---- hierarchy ------------------------------------------------------------------------
@@ -708,7 +709,9 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 }
 
 // iOS hideKeyboard: past the keyboard's introduction, then a short swipe up, and if the
-// keyboard is still there (its delete key), one to the left. It never fails.
+// keyboard is still there, one to the left. A keyboard still up fails the
+// command, as in Maestro: a screen without a scroll view that dismisses it on drag (React
+// Native's default) keeps it.
 @(private = "file")
 ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 	if !read_screen(r) do return "agent connection lost"
@@ -724,9 +727,10 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 		}
 		break
 	}
+	// The keyboard element, or its delete key (the number pad's has another id).
 	keyboard_shown :: proc(r: ^Runner) -> (shown: bool, err: Err) {
 		if !read_screen(r) do return false, "agent connection lost"
-		for &n in r.h.nodes do if n.kept && n.id == "delete" do return true, nil
+		for &n in r.h.nodes do if n.kept && (n.class == "Keyboard" || n.id == "delete") do return true, nil
 		return false, nil
 	}
 	w, h := r.w, r.h_px
@@ -734,7 +738,11 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 	swipe_points(r, w / 2, h / 2, w / 2, i32(f32(h) * 0.47), 50, nil) or_return
 	if !(keyboard_shown(r) or_return) do return nil
 	// swipe_points settled already.
-	return swipe_points(r, w / 2, h / 2, i32(f32(w) * 0.47), h / 2, 50, nil)
+	swipe_points(r, w / 2, h / 2, i32(f32(w) * 0.47), h / 2, 50, nil) or_return
+	if keyboard_shown(r) or_return {
+		return "Couldn't hide the keyboard. This can happen if the app uses a custom input or doesn't expose a standard dismiss action."
+	}
+	return nil
 }
 
 // A sub-flow: its own env scope, the caller's env then its own, then onFlowStart, commands,
@@ -765,6 +773,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		path:              u64, // class_path
 		window:            map[u64]struct{}, // window_texts
 	}
+	in_sheet := false // iOS: the element is in a system sheet or alert (sheet_retries)
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
 		ok: bool
@@ -775,6 +784,11 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		n := r.h.nodes[el]
 		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
+		if r.dev.platform == .IOS {
+			for k := r.h.nodes[el].parent; k >= 0 && !in_sheet; k = r.h.nodes[k].parent {
+				in_sheet = r.h.nodes[k].class == "Sheet" || r.h.nodes[k].class == "Alert"
+			}
+		}
 		if d.point != "" {
 			p := eval(r, d.point) or_return
 			ok: bool
@@ -788,7 +802,10 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	// ~180 ms on iOS).
 	read_since_tap := false
 	for attempt := 0; attempt < (2 if d.retry else 1); attempt += 1 {
-		for i in 0 ..< d.repeat {
+		// iOS: repeated taps (doubleTapOn) as one gesture, else they land ~230 ms apart.
+		if r.dev.platform == .IOS && d.repeat > 1 && !d.long_press {
+			if _, ok := op_taps(r.c, x, y, i32(d.repeat), i32(d.delay_ms)); !ok do return "agent connection lost"
+		} else do for i in 0 ..< d.repeat {
 			t := time.tick_now()
 			ok: bool
 			if d.long_press {
@@ -802,8 +819,22 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if left > 0 do time.sleep(time.Duration(left * f64(time.Millisecond)))
 			}
 		}
-		settle(r, d.settle_ms) or_return
+		status := settle_status(r, d.settle_ms) or_return
 		read_since_tap = false
+		// iOS presents a system sheet or alert (another process's view in the app, such as
+		// "Save Password?") a while before it takes touches, and in the meantime a tap on its
+		// buttons does nothing. Such a button always acts (it dismisses or changes the sheet),
+		// so one that left the screen unchanged and is still there is tapped again.
+		for retry := 0; in_sheet && status == .No_Change && !d.long_press && retry < SHEET_TAP_RETRIES; retry += 1 {
+			if !read_screen(r) do return "agent connection lost"
+			el := select(r, d.sel) or_return
+			if el < 0 do break
+			n := r.h.nodes[el]
+			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+			if r.debug do fmt.printf("      [a tap in a sheet changed nothing: tapping again]\n")
+			if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
+			status = settle_status(r, d.settle_ms) or_return
+		}
 		// The element moved between the lookup and the tap: an app that keeps laying out after
 		// it looked settled (Settings inserts a banner ~0.5 s after launch). If it is still
 		// there, unchanged (nothing reacted to the tap: a toggled switch would differ), in the
@@ -906,6 +937,65 @@ typing :: proc(r: ^Runner) -> bool {
 	return false
 }
 
+// Something else is on top at the element's center: a sticky footer or header over a list,
+// a node drawn after the element (later in the tree, outside its own subtree) that contains
+// the point. Containers as large as half the screen do not count: a transparent overlay
+// spanning the screen would hide everything.
+@(private = "file")
+covered_by :: proc(r: ^Runner, el: int) -> int {
+	n := r.h.nodes[el]
+	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+	k := el + 1
+	for k < len(r.h.nodes) && r.h.nodes[k].depth > n.depth do k += 1 // its own subtree
+	nodes: for ; k < len(r.h.nodes); k += 1 {
+		c := r.h.nodes[k]
+		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		// Content of another list is no fixed chrome (a closed drawer's menu, which
+		// accessibility still places on screen): only views outside any other scroll view
+		// count.
+		for a := c.parent; a >= 0; a = r.h.nodes[a].parent {
+			if !scroll_container(r.h.nodes[a]) do continue
+			holds := false
+			for e := r.h.nodes[el].parent; e >= 0 && !holds; e = r.h.nodes[e].parent do holds = e == a
+			if !holds do continue nodes
+		}
+		if 2 * i64(c.right - c.left) * i64(c.bottom - c.top) < i64(r.w) * i64(r.h_px) {
+			if r.debug do fmt.printf("      [%s covered by %s %d,%d-%d,%d]\n", n.class, c.class, c.left, c.top, c.right, c.bottom)
+			return k
+		}
+	}
+	return -1
+}
+
+// A scroll view: Android's scrollable flag, iOS's element types.
+@(private = "file")
+scroll_container :: proc(n: H_Node) -> bool {
+	if .Scrollable in n.flags do return true
+	switch n.class {
+	case "ScrollView", "Table", "CollectionView": return true
+	}
+	return false
+}
+
+// The end of a drag from (cx, cy) that moves the element just clear of its cover, along the
+// stride to (ex, ey) or back, with a margin of a twelfth of the screen width (past touch slop,
+// short of pulling a list's end much past its bounce).
+@(private = "file")
+clear_of :: proc(r: ^Runner, el, cover: int, cx, cy, ex, ey: i32) -> (i32, i32) {
+	n, c := r.h.nodes[el], r.h.nodes[cover]
+	margin := r.w / 12
+	if ey != cy {
+		shift := c.bottom - n.top + margin // the cover is above: content down
+		if c.top > n.top + (n.bottom - n.top) / 2 do shift = -(n.bottom - c.top + margin)
+		stride := i32(abs(int(ey - cy)))
+		return cx, cy + clamp(shift, -stride, stride)
+	}
+	shift := c.right - n.left + margin
+	if c.left > n.left + (n.right - n.left) / 2 do shift = -(n.right - c.left + margin)
+	stride := i32(abs(int(ex - cx)))
+	return cx + clamp(shift, -stride, stride), cy
+}
+
 // The last element containing the point, its own children first.
 @(private = "file")
 element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
@@ -921,6 +1011,7 @@ element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
 // scrollUntilVisible's drag on Android (iOS's has its own timing). Without a fling, its speed
 // does not change how far the content moves.
 SCROLL_DRAG_MS :: 50
+MAX_COVER_CLEARS :: 2 // scroll_until's drags to clear a cover
 
 // The hold: SPEEDRUN_LONG_PRESS_MS when set (an app with a longer delay of its own), else
 // past the longest of the device's delay (Android's setting) and the apps' usual 500 ms.
@@ -971,10 +1062,17 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	moving := false
 	swiped: time.Tick
 	swiped_from: u64 // the screen's hash when the last drag began
+	// Drags made to clear a cover. A real one (a sticky footer) clears in one; one that still
+	// covers after two is no cover: views a list shows through (a closed side drawer that
+	// accessibility still places on screen), and covers stop counting for this scroll.
+	clears := 0
 	for {
 		if moving {
 			if !read_screen(r) do return "agent connection lost"
-			if el := select(r, d.sel) or_return; el < 0 || visible_pct(r.h.nodes[el], r.w, r.h_px) <= 0 {
+			el := select(r, d.sel) or_return
+			cover := -1
+			if el >= 0 && clears < MAX_COVER_CLEARS && visible_pct(r.h.nodes[el], r.w, r.h_px) > 0 do cover = covered_by(r, el)
+			if el < 0 || visible_pct(r.h.nodes[el], r.w, r.h_px) <= 0 || cover >= 0 {
 				if time.tick_now()._nsec >= end do break
 				// The next drag waits for this one to show, up to 500 ms (an app can take a few
 				// frames to move its content, and drags piling up could carry the element past
@@ -984,8 +1082,15 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 					time.sleep(20 * time.Millisecond)
 					continue
 				}
+				// Shown under something drawn over it (a sticky footer or header), which would
+				// take a tap: drag it just clear.
+				tx, ty := ex, ey
+				if cover >= 0 {
+					tx, ty = clear_of(r, el, cover, cx, cy, ex, ey)
+					clears += 1
+				}
 				swiped, swiped_from = time.tick_now(), r.h.hash
-				if _, ok := op_swipe(r.c, cx, cy, ex, ey, SCROLL_DRAG_MS); !ok do return "agent connection lost"
+				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 				continue
 			}
 			// After a drag, a screen still as read is settled: no wait for a change to come.
@@ -994,6 +1099,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		}
 		el, found, ferr := try_find(r, d.sel, 0)
 		if ferr != nil do return ferr
+		tx, ty := ex, ey // the drag: from the screen center towards the edge
 		if found {
 			n := r.h.nodes[el]
 			vis := visible_pct(n, r.w, r.h_px)
@@ -1001,12 +1107,16 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				if near_center(n, dir, r.w, r.h_px) do return nil
 				retry_center += 1
 			} else if vis >= visibility {
-				return nil
+				// Something drawn over it (a sticky footer or header) would take a tap: drag
+				// it just clear.
+				cover := covered_by(r, el) if clears < MAX_COVER_CLEARS else -1
+				if cover < 0 do return nil
+				tx, ty = clear_of(r, el, cover, cx, cy, ex, ey)
+				clears += 1
 			}
 		}
-		// From the screen center towards the edge.
 		swiped, swiped_from = time.tick_now(), r.h.hash
-		if _, ok := op_swipe(r.c, cx, cy, ex, ey, SCROLL_DRAG_MS); !ok do return "agent connection lost"
+		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 		moving = true
 		if time.tick_now()._nsec >= end do break
 	}
@@ -1128,7 +1238,20 @@ adjusted :: proc(r: ^Runner, ms: i64) -> i64 {
 // the lookup default (17 s, optional 7 s) shortened by the time since the last interaction.
 find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -> (idx: int, err: Err) {
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
-	i, found := try_find(r, sel, limit) or_return
+	i, found := try_find(r, sel, 0) or_return
+	if !found {
+		start := time.tick_now()
+		i, found = try_find(r, sel, limit) or_return
+		// It appeared while the lookup waited: the screen is changing, and an element enters
+		// the hierarchy at its final place while it may still slide in (a sheet presented
+		// once a payment SDK has loaded; a tap mid-slide hits what is behind). Settle, then
+		// find it again where it rests.
+		if found {
+			settle(r, no_change_ms = 0) or_return
+			left := limit - i64(time.tick_since(start) / time.Millisecond)
+			i, found = try_find(r, sel, max(left, 1_000)) or_return
+		}
+	}
 	if !found {
 		return -1, fmt.aprintf("Element not found: %s\n%s", evaluated(r, filter_description(sel)), screen_summary(r), allocator = r.alloc)
 	}
