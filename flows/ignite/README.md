@@ -27,6 +27,15 @@ xcodebuild -workspace IgniteDemo.xcworkspace -scheme IgniteDemo -configuration R
 xcrun simctl install <udid> build/Build/Products/Release-iphonesimulator/IgniteDemo.app
 ```
 
+Android (Release, arm64 for an Apple-silicon emulator; the first build installs the NDK it
+needs, ~7 min):
+
+```
+cd apps/ignite && npx expo prebuild -p android && cd android
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
 Flows:
 
 - `bench_rn.yaml` — a scenario for both tools: login, the API list, favorites (switch, long
@@ -39,17 +48,27 @@ Flows:
   apps/ignite/.maestro/flows` (`FavoritePodcast.yaml` copies a title with `copyTextFrom`,
   then long-presses and asserts `${maestro.copiedText}`: flow 27.3 s vs Maestro's 37.9 s).
 
-Learned on it: on this React Native list a swipe's end hold changes how far it scrolls (510,
-700 and 1200 points for 601, 300 and 100 ms), so swipes stay exactly Maestro's; a field's
+Learned on it: Maestro's iOS swipe glides over its whole duration and lifts still moving,
+so this list flings on (~530 points and ~2 s for scrollUntilVisible's), which is why
+speedrun's scrollUntilVisible drags without a fling on iOS (`agent/ios/README.md`); a field's
 typed value is not exposed to accessibility (React Native groups it with its label), in
 Maestro either; an element counted visible can sit under the tab bar, which then takes the
 tap (`centerElement: true` avoids it). Since a field's value can't be read, typing can't
 watch for the first character and uses Maestro's pacing; looking for the focused field must
 not use a query snapshot, which retries for ~2.5 s when nothing matches.
 
-Last run (iOS simulator, `TIMES=1`): flow 55.0 s vs Maestro's 73.1 s, wall clock 57.9 s vs
-82.6 s. Slower per command: `launchApp` (speedrun waits there for the first screen; Maestro's
-first tap pays it) and Enter (the keyboard sliding away is waited for).
+Last runs (2026-10-25, `bench_rn.yaml -e TIMES=3`, every command faster in both):
+
+| | speedrun | Maestro | |
+|---|---|---|---|
+| iOS simulator (iPhone 17 Pro, iOS 26.2): flow | 75.1 s | 169.9 s | 2.3x |
+| iOS: wall clock | 80.3 s | 179.9 s | 2.2x |
+| Android emulator (API 37, `-gpu host`): flow | 58.2 s | 195.9 s | 3.4x |
+| Android: wall clock | 58.9 s | 205.0 s | 3.5x |
+
+speedrun on iOS trails its Android self mostly on typing (Maestro's pacing for a field that
+hides its value: 1.2 s vs 0.2 s), scrolling (3.7 s vs 2.6 s a scroll) and taps (~0.5 s vs
+~0.15 s for a tab).
 
 `simctl addmedia` is done by the simulator's service, which needs macOS's permission to read
 a file under Downloads, Documents or Desktop: until the "would like to access files" prompt
