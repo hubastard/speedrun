@@ -17,7 +17,9 @@
 //        iOS attribute mapping; frames in points
 //   3 TAP    i32 x, i32 y                   -> u32 prep_us, u32 inject_us, u8 inject_path (3)
 //  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
-//   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same   (Maestro's swipe; flags unused)
+//   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same
+//        flags & 1 (fling): Maestro's swipe over duration_ms; otherwise a drag that stops when
+//        the touch lifts (Input.drag; duration_ms unused)
 //   8 TYPE   str text                       -> same, u32 skipped (always 0)
 //   9 ERASE  i32 count                      -> same   (count deletes, at most the focused
 //                                                     field's length; inject_path 255: none)
@@ -50,6 +52,10 @@
 //  47 TYPE_RATE  str text, i32 chars_per_s  -> u32 inject_us          (_XCT_sendString)
 //  48 FOREGROUND                          -> str: what each way of listing the active apps returns
 //  49 TYPE_TEST  str text, i32 first_rate, i32 rest_rate, i32 wait_cap_ms -> u32 total_us
+//  50 DRAG_TEST  i32 n, n * (i32 x, i32 y, i32 offset_ms, i32 duration_ms), i32 lift_ms, i32 wait
+//                                         -> u32 inject_us
+//        down at the first point, a move to each next one (Private.drag), up at lift_ms;
+//        wait 0: returns once sent (spike/swipe.py traces the content meanwhile)
 import XCTest
 import Darwin
 

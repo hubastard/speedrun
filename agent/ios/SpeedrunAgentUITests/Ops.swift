@@ -26,11 +26,16 @@ final class Ops {
             try input.key(try conn.readI32(), out: &out)
         case 5: // SETTLE
             let quiet = try conn.readI32(), noChange = try conn.readI32(), timeout = try conn.readI32()
+            try Private.confirmPending()
             try onMain { try settle.run(quietMs: Int(quiet), noChangeMs: Int(noChange), timeoutMs: Int(timeout), out: &out) }
         case 7: // SWIPE
             let x1 = try conn.readI32(), y1 = try conn.readI32(), x2 = try conn.readI32(), y2 = try conn.readI32()
-            let duration = try conn.readI32(), _ /* flags */ = try conn.readI32()
-            try input.swipe(from: (x1, y1), to: (x2, y2), durationMs: duration, out: &out)
+            let duration = try conn.readI32(), flags = try conn.readI32()
+            if flags & 1 != 0 {
+                try input.swipe(from: (x1, y1), to: (x2, y2), durationMs: duration, out: &out)
+            } else {
+                try input.drag(from: (x1, y1), to: (x2, y2), out: &out)
+            }
         case 8: // TYPE
             let text = try conn.readStr()
             try input.type(text, screen: screen, out: &out)
@@ -76,7 +81,7 @@ final class Ops {
             out.str(udid)
             out.str(parts.joined(separator: " - "))
             out.str(env["SPEEDRUN_BUILD"] ?? "")
-        case 40...49:
+        case 40...50:
             try spike.handle(op: op, conn: conn, out: &out)
         default:
             throw AgentError(message: "unknown op \(op)")

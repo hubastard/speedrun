@@ -35,16 +35,49 @@ final class Input {
         Self.action(inject: micros(since: t), out: &out)
     }
 
-    /// Maestro's swipe (EventRecord.addSwipeEvent): down at the start, at the end 100 ms later,
-    /// held there for the duration, then up. The hold is kept whole: how far content scrolls
-    /// depends on it (a React Native list moved 510, 700 and 1200 points with 601, 300 and
-    /// 100 ms holds; UIKit Settings 480 with each).
+    /// Maestro's swipe (EventRecord.addSwipeEvent): a touch that rests 100 ms, glides to the
+    /// end over the duration and lifts there still moving, so content flings on at the glide's
+    /// speed (scrollUntilVisible's 601 ms over 350 points: ~540 points, still after ~2.6 s,
+    /// UIKit and React Native alike).
     func swipe(from a: (Int32, Int32), to b: (Int32, Int32), durationMs: Int32, out: inout Writer) throws {
         mark()
         lastWasSwipe = true
         let t = DispatchTime.now().uptimeNanoseconds
         try Private.swipe(from: CGPoint(x: Int(a.0), y: Int(a.1)), to: CGPoint(x: Int(b.0), y: Int(b.1)),
                           duration: TimeInterval(max(durationMs, 0)) / 1000)
+        Self.action(inject: micros(since: t), out: &out)
+    }
+
+    /// The drag that does not fling: content stops when the touch lifts. Momentum comes from
+    /// the speed of the touch's last moves (a touch that rests sends no events, so resting
+    /// before the lift does not help), so the drag ends slowly: dragKick points in dragKickMs
+    /// (at full speed the list starts following ~100 points late), the rest but the last
+    /// dragTail points in dragFastMs, those at 200 points/s (UIKit flung once in three tries
+    /// at 250, React Native at 333 and with a 125 ms tail). 350 points scroll 250-340 in
+    /// 390 ms. The content is still ~50 ms after the lift, testmanagerd confirms ~250 ms
+    /// after it: the drag returns dragDoneMs after the lift (Private.confirmPending).
+    static let dragKick = 12.0, dragKickMs = 40.0, dragFastMs = 150.0, dragTail = 40.0, dragTailMs = 200.0
+    static let dragDoneMs = 100.0
+
+    func drag(from a: (Int32, Int32), to b: (Int32, Int32), out: inout Writer) throws {
+        mark()
+        lastWasSwipe = true
+        let t = DispatchTime.now().uptimeNanoseconds
+        let start = CGPoint(x: Int(a.0), y: Int(a.1)), end = CGPoint(x: Int(b.0), y: Int(b.1))
+        let dx = end.x - start.x, dy = end.y - start.y, length = max(hypot(dx, dy), 1)
+        let kick = min(Self.dragKick, length / 10), tail = min(Self.dragTail, length / 4)
+        func along(_ d: Double) -> CGPoint { CGPoint(x: start.x + dx * d / length, y: start.y + dy * d / length) }
+        let kickS = Self.dragKickMs / 1000, fastS = Self.dragFastMs / 1000, tailS = Self.dragTailMs / 1000
+        let points: [(point: CGPoint, offset: TimeInterval, duration: TimeInterval)] = [
+            (start, 0, 0), (along(kick), 0, kickS), (along(length - tail), kickS, fastS), (end, kickS + fastS, tailS),
+        ]
+        let liftAt = kickS + fastS + tailS
+        if try Private.drag(through: points, liftAt: liftAt, wait: false) {
+            Thread.sleep(until: Date(timeIntervalSinceNow: liftAt + Self.dragDoneMs / 1000 - Double(micros(since: t)) / 1e6))
+        } else {
+            // An Xcode without explicit move events: Maestro's swipe, slow enough not to fling.
+            try Private.swipe(from: start, to: end, duration: length / 250)
+        }
         Self.action(inject: micros(since: t), out: &out)
     }
 
@@ -98,6 +131,7 @@ final class Input {
     /// Android key codes, mapped as Maestro's IOSDriver.pressKey does; other keys (back
     /// included) do nothing on iOS.
     func key(_ code: Int32, out: inout Writer) throws {
+        try Private.confirmPending()
         mark()
         let t = DispatchTime.now().uptimeNanoseconds
         switch code {

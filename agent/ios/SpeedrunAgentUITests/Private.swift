@@ -63,8 +63,10 @@ enum Private {
         try synthesize(try record(with: path), wait: wait)
     }
 
-    /// Down at start, at end 100 ms later, held there for duration, then up (Maestro's
-    /// EventRecord.addSwipeEvent).
+    /// Maestro's swipe (EventRecord.addSwipeEvent): down at start, a move to end at 100 ms, up
+    /// at 100 ms + duration. testmanagerd plays a move from its offset until the next event,
+    /// so the touch rests 100 ms, then glides to end over the whole duration and lifts while
+    /// still moving.
     static func swipe(from start: CGPoint, to end: CGPoint, duration: TimeInterval) throws {
         let path = try touchPath(at: start)
         let move = NSSelectorFromString("moveToPoint:atOffset:")
@@ -73,6 +75,37 @@ enum Private {
         unsafeBitCast(path.method(for: move), to: Move.self)(path, move, hardwarePoint(end), 0.1)
         try call(path, "liftUpAtOffset:", 0.1 + duration)
         try synthesize(try record(with: path))
+    }
+
+    /// A touch down at points[0] that moves through the others, each move starting at its
+    /// offset and lasting its duration (seconds), and lifts at the last point at liftAt. The
+    /// moves are explicit XCPointerEvents: moveToPoint:atOffset: glides on until the next
+    /// event, so a touch would never rest. False when this Xcode lacks the API.
+    static func drag(through points: [(point: CGPoint, offset: TimeInterval, duration: TimeInterval)],
+                     liftAt: TimeInterval, wait: Bool = true) throws -> Bool {
+        let makeSel = NSSelectorFromString("moveEventWithStartPoint:destination:offset:duration:")
+        let addSel = NSSelectorFromString("_addPointerEvent:")
+        guard let eventClass = NSClassFromString("XCPointerEvent"), let make = class_getClassMethod(eventClass, makeSel),
+              let first = points.first, let last = points.last else { return false }
+        let path = try touchPath(at: first.point)
+        guard path.responds(to: addSel) else { return false }
+        typealias Make = @convention(c) (AnyClass, Selector, CGPoint, CGPoint, TimeInterval, TimeInterval) -> NSObject
+        typealias Add = @convention(c) (NSObject, Selector, NSObject) -> Void
+        let makeMove = unsafeBitCast(method_getImplementation(make), to: Make.self)
+        let add = unsafeBitCast(path.method(for: addSel), to: Add.self)
+        for (from, to) in zip(points, points.dropFirst()) {
+            add(path, addSel, makeMove(eventClass, makeSel, hardwarePoint(from.point), hardwarePoint(to.point), to.offset, to.duration))
+        }
+        // The lift: liftUpAtOffset: lifts where the path's last moveToPoint went (here, the
+        // start), so take it from a path that is at the end point.
+        let liftPath = try touchPath(at: last.point)
+        try call(liftPath, "liftUpAtOffset:", liftAt)
+        let eventsSel = NSSelectorFromString("pointerEvents")
+        guard liftPath.responds(to: eventsSel),
+              let lift = (liftPath.perform(eventsSel)?.takeUnretainedValue() as? [NSObject])?.last else { return false }
+        add(path, addSel, lift)
+        try synthesize(try record(with: path), wait: wait)
+        return true
     }
 
     /// Text typed through the keyboard as key events (XCPointerEventPath typeText), at
@@ -132,7 +165,22 @@ enum Private {
     }
 
     private static func synthesize(_ record: NSObject, wait: Bool = true) throws {
+        try confirmPending()
         try callWithCompletion(try daemonProxy(), "_XCT_synthesizeEvent:completion:", record, wait: wait)
+    }
+
+    /// A synthesize not waited for: testmanagerd confirms one ~250 ms after its last event.
+    private static var unconfirmed: (done: DispatchSemaphore, failure: Box)?
+    private final class Box { var error: Error? }
+
+    /// Waits for the synthesize not waited for, if any, and throws its error: before the next
+    /// one (events overlapping in time could mix) and before a settle (the events must have
+    /// played). Not on the main thread.
+    static func confirmPending() throws {
+        guard let pending = unconfirmed else { return }
+        unconfirmed = nil
+        _ = pending.done.wait(timeout: .now() + 10)
+        if let error = pending.failure.error { throw error }
     }
 
     /// target.selector(offset), for XCPointerEventPath's offset setters.
@@ -145,6 +193,7 @@ enum Private {
 
     /// Text through the focused field's keyboard, at most charsPerSecond.
     static func type(_ text: String, charsPerSecond: Int) throws {
+        try confirmPending()
         let proxy = try daemonProxy()
         let sel = NSSelectorFromString("_XCT_sendString:maximumFrequency:completion:")
         guard proxy.responds(to: sel) else { throw AgentError(message: "_XCT_sendString:maximumFrequency:completion: is missing") }
@@ -265,13 +314,16 @@ enum Private {
         guard target.responds(to: sel) else { throw AgentError(message: "\(selector) is missing") }
         typealias Call = @convention(c) (NSObject, Selector, NSObject, @escaping (Error?) -> Void) -> Void
         let done = DispatchSemaphore(value: 0)
-        var failure: Error?
+        let failure = Box()
         unsafeBitCast(target.method(for: sel), to: Call.self)(target, sel, arg) {
-            failure = $0
+            failure.error = $0
             done.signal()
         }
-        guard wait else { return }
+        guard wait else {
+            unconfirmed = (done, failure)
+            return
+        }
         done.wait()
-        if let failure { throw failure }
+        if let error = failure.error { throw error }
     }
 }

@@ -922,15 +922,19 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	retry_center := 0
 	cx, cy := r.w / 2, r.h_px / 2
 	ex, ey := edge_point(r, cx, cy, dir)
-	// After a swipe the content drifts on (~1.5 s on iOS, a fling on Android) and a settle
-	// waits for it to stop. While the element is not on screen yet that wait is useless: the
-	// next swipe's touch stops the drift anyway. So read right away, swipe again if it is not
-	// there, and settle only once it shows, for Maestro's checks below on a still screen.
+	// After a swipe the content drifts on (a fling) and a settle waits for it to stop. While
+	// the element is not on screen yet that wait is useless: the next swipe's touch stops the
+	// drift anyway. So read right away, swipe again if it is not there, and settle only once
+	// it shows, for Maestro's checks below on a still screen.
 	// A swipe is over only after its own duration, as a finger's would be: Android's SWIPE
 	// injects it at once, and gestures overlapping in time can leave a list stuck.
+	// On iOS the swipe is a drag that does not fling instead (the agent's SWIPE without the
+	// flag; `speed` unused): Maestro's moves content ~1.6x as far, but it drifts for ~2 s
+	// that the settle would wait out, where the drag's content stops as the op returns.
+	fling := r.dev.platform != .IOS
 	moving := false
 	swiped: time.Tick
-	gesture := time.Duration(duration + 50) * time.Millisecond
+	gesture := time.Duration(duration + 50) * time.Millisecond if fling else 0
 	for {
 		if moving {
 			if !read_screen(r) do return "agent connection lost"
@@ -941,10 +945,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 					continue
 				}
 				swiped = time.tick_now()
-				if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling = true); !ok do return "agent connection lost"
+				if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling); !ok do return "agent connection lost"
 				continue
 			}
-			settle(r, d.settle_ms) or_return
+			// After a drag, a screen still as read is settled: no wait for a change to come.
+			settle(r, d.settle_ms, no_change_ms = SETTLE_NO_CHANGE_MS if fling else 0) or_return
 			moving = false
 		}
 		el, found, ferr := try_find(r, d.sel, 500)
@@ -961,7 +966,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		}
 		// swipeFromCenter: from the screen center towards the edge.
 		swiped = time.tick_now()
-		if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling = true); !ok do return "agent connection lost"
+		if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling); !ok do return "agent connection lost"
 		moving = true
 		if time.tick_now()._nsec >= end do break
 	}

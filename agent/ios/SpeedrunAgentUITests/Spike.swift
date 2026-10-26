@@ -49,6 +49,20 @@ final class Spike {
             let t = DispatchTime.now().uptimeNanoseconds
             try input.type(text, screen: screen, firstRate: Int(first), restRate: Int(rest), waitCapMs: Int(cap))
             out.u32(micros(since: t))
+        case 50: // DRAG_TEST
+            var points: [(point: CGPoint, offset: TimeInterval, duration: TimeInterval)] = []
+            for _ in 0..<Int(max(try conn.readI32(), 0)) {
+                let x = try conn.readI32(), y = try conn.readI32(), offset = try conn.readI32(), duration = try conn.readI32()
+                points.append((CGPoint(x: Int(x), y: Int(y)), TimeInterval(offset) / 1000, TimeInterval(duration) / 1000))
+            }
+            let lift = try conn.readI32(), wait = try conn.readI32()
+            guard !points.isEmpty else { throw AgentError(message: "DRAG_TEST without points") }
+            let t = DispatchTime.now().uptimeNanoseconds
+            input.mark()
+            guard try Private.drag(through: points, liftAt: TimeInterval(lift) / 1000, wait: wait != 0) else {
+                throw AgentError(message: "this Xcode has no explicit move events")
+            }
+            out.u32(micros(since: t))
         case 48: // FOREGROUND
             out.str(onMain { Private.foregroundReport() })
         default:

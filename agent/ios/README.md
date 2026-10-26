@@ -16,7 +16,7 @@ also how Maestro's iOS driver works.
   and checked before each use: a missing method is an error naming it, not a crash) and
   `Spike.swift` (measurement-only ops).
 - `spike/` — the Python client and the measurement scripts (`measure.py`, `measure_followup.py`
-  for the building blocks, `typing.py` for typing rates).
+  for the building blocks, `typing.py` for typing rates, `swipe.py` for swipe shapes).
 - `../../bench_scenario_ios.yaml` — the iOS version of `bench_scenario.yaml` (Settings, simulator
   in English), 12 commands per iteration.
 
@@ -26,9 +26,9 @@ How it does each part:
   testmanagerd, the last one checked first), then SpringBoard's status bars, re-read every 5 s
   (they cost as much as the app and change with the clock). A read right after SETTLE is
   served from settle's last snapshot (no action since, under 1 s old). ~70–90 ms otherwise.
-- **Input**: events synthesized through testmanagerd, as Maestro's runner does (a 100 ms tap,
-  Maestro's swipe, end hold included: holding 100 ms instead of 601 scrolled UIKit Settings
-  as far, but a React Native list 1200 points instead of 510). Text: the first character alone, then, once the focused field shows
+- **Input**: events synthesized through testmanagerd, as Maestro's runner does (a 100 ms tap;
+  Maestro's swipe for `swipe` and `scroll`, which glides over its whole duration, see below;
+  `scrollUntilVisible` a drag that does not fling, `Input.drag`). Text: the first character alone, then, once the focused field shows
   it (at most 0.5 s), the rest at 100 characters per second; Maestro types at 30 after a fixed
   0.5 s. Deleting from an empty field does not wait.
 - **Settle**: XCTest's quiescence (event loop, then animations, idle), then the screen's
@@ -102,6 +102,33 @@ What it means:
   command and back from ~1.0 to ~0.55 s; 0.01 was no faster. speedrun's `launchApp` does this
   (host/system.odin). The global defaults domain and `com.apple.UIKit` are not read without
   the flag.
+- Later (2026-10-25), swipes, traced with `spike/swipe.py` (a row's position polled during
+  and after a drag sent without waiting):
+  - testmanagerd plays a move (`moveToPoint:atOffset:`) from its offset until the next event.
+    Maestro's swipe (down, move at 100 ms, up at 100 ms + duration) is therefore a glide over
+    the whole duration that lifts still moving, never a hold. scrollUntilVisible's 601 ms
+    over 350 points moved a UIKit list ~540 points and a React Native one ~530, both still
+    only ~2.6 s after the touch began. (The earlier "holding 100 ms scrolled UIKit Settings
+    as far" was Settings' list ending.)
+  - A touch at rest sends no events, so UIKit takes the velocity of the last moves: a fast
+    move, a 100 ms rest and a lift flings as hard as no rest. Extra moves to the same point
+    during the rest made it fling to the list's end; one at 16 ms intervals also shortened
+    the whole gesture. XCTest's `press(forDuration:thenDragTo:withVelocity:
+    thenHoldForDuration:)` builds the same `moveToPoint` path (the hold becomes glide), and
+    waits for the app to go idle before and after.
+  - Explicit move events (`XCPointerEvent moveEventWithStartPoint:destination:offset:
+    duration:`, added with `_addPointerEvent:`) do take their duration. Constant speed: no
+    fling at 250 and 350 points/s (UIKit), at 250 (React Native); 500 flings both. Fast,
+    then a slow tail: no fling with a 200 ms tail at 200 points/s on both, flings with a
+    125 ms tail (React Native) or at 250 points/s (UIKit, once in three). At full speed
+    from the start the list follows ~100 points late; 12 points in 40 ms first fixes most
+    of it (still 160-340 of 350 points between runs).
+  - `liftUpAtOffset:` lifts where the last `moveToPoint` went, so after explicit moves it
+    lifted at the start point: the lift comes from a path made at the end point.
+  - testmanagerd confirms a synthesized event ~250 ms after its last event, while a drag's
+    content is still ~50 ms after it: the drag returns 100 ms after the lift, and the next
+    event or settle waits for the confirmation. scrollUntilVisible in Settings: 2.7 -> 2.4 s
+    down, 2.2 -> 1.4 s up; in the React Native demo 6.1 -> 3.9, 6.2 -> 3.8, 7.0 -> 5.4 s.
 - Start-up: 3.7 s here against ~10 s for Maestro, before keeping the runner alive between
   runs.
 

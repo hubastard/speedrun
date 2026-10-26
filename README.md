@@ -259,7 +259,11 @@ the field shows it, at 100 characters per second (Maestro: a fixed 0.5 s pause, 
 field that does not expose its value (React Native groups it with its label) gets Maestro's
 pacing. `eraseText` sends no more deletes than the focused field holds characters (its
 value's length, the placeholder's while it shows one) and none to an empty field.
-Swipes are Maestro's exactly, end hold included: how far content scrolls depends on it.
+`swipe` and `scroll` are Maestro's exactly: a touch that glides over the duration and lifts
+still moving, so the content flings on, and how far it goes depends on that.
+`scrollUntilVisible` drags without a fling instead: fast, then its last 40 points at 200
+points per second, so the content stops as the touch lifts (~0.5 s a swipe, where Maestro's
+moves content ~1.6 times as far but drifts for ~2 s that a settle waits out).
 Apps that `launchApp` starts run their UIKit animations 10 times faster, the counterpart of
 Android's animations being off: speedrun launches them with UIKit's
 `UIAnimationDragCoefficient` at 0.1 (the setting behind the simulator's Slow Animations,
@@ -298,7 +302,10 @@ Known differences in how, not what:
 - `scrollUntilVisible` settles only once the element is on screen: until then it reads the
   screen while the list still drifts and swipes again as soon as the last swipe has played
   out (the touch stops the drift). Maestro settles and polls 500 ms after every swipe. The
-  checks on visibility and centering run on a still screen, as Maestro's do.
+  checks on visibility and centering run on a still screen, as Maestro's do. On iOS its
+  swipes do not fling (see above): about 340 of the 350 points dragged each, against ~540
+  for Maestro's, so it takes more of them for the same distance, and `speed` changes
+  nothing.
 - Android `setLocation`/`travel` set the providers from the agent (one binder call each);
   `cmd location` is the fallback when the agent runs as the instrumentation.
 - Regexes use Odin's engine: Java-only syntax (lookaround, inline flags, `\p{...}`,
