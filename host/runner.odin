@@ -87,7 +87,7 @@ Runner :: struct {
 	location:             Location_Mock, // Android's mock location (setLocation, travel)
 	notifications:        string, // iOS: "allow" or "deny" answers the notification alert (system.odin)
 	settle_due:           bool, // a change's settle put off until a command needs the screen
-	launch_due:           string, // iOS: the app launched, its UI not waited for yet (exec)
+	launch_due:           string, // the app launched, its UI not waited for yet (exec)
 }
 
 Rx :: struct {
@@ -418,8 +418,8 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 @(private = "file")
 exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	// A settle put off (Android's dark mode restarting the apps) is paid by the first command
-	// that reads or touches the screen. So is the wait for an app's UI after an iOS launchApp
-	// (it returns once the process starts): commands that do not touch the screen run while
+	// that reads or touches the screen. So is the wait for an app's UI after launchApp (it
+	// returns once the app is asked to start): commands that do not touch the screen run while
 	// the app starts.
 	if r.settle_due || r.launch_due != "" {
 		switch _ in c.data {
@@ -428,6 +428,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		case Launch_App, App_Cmd, Tap, Assert, Input_Text, Erase_Text, Key_Press, Navigate,
 		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot, Copy_Text, Paste_Text,
 		     Input_Random, Set_Orientation, Assert_Screenshot:
+			no_change := i32(SETTLE_NO_CHANGE_MS)
 			if app := r.launch_due; app != "" {
 				r.launch_due = ""
 				t := time.tick_now()
@@ -435,10 +436,12 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 				debug_step(r, "app ready", &t)
 				if !ok do return false, "agent connection lost"
 				if !ready do return false, fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
-				r.settle_due = true
+				// Android: with the app's window up, a screen unchanged since the launch was
+				// the app's already (stopApp: false), with nothing to wait for.
+				if r.dev.platform != .IOS do no_change = 0
 			}
 			r.settle_due = false
-			settle(r) or_return
+			settle(r, no_change_ms = no_change) or_return
 		}
 	}
 	switch d in c.data {
@@ -447,7 +450,11 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		perms := d.permissions[:] if d.has_permissions else DEFAULT_PERMISSIONS
 		args := eval_launch_arguments(r, d.arguments[:]) or_return
 		// In this order: clear the keychain, clear the state, set the permissions, launch
-		// (stopping the app first unless stopApp: false).
+		// (stopping the app first unless stopApp: false). launchApp returns once the app is
+		// asked to start (`simctl launch` returns once the process starts, `am start` once the
+		// activity is requested). The next command that needs the screen waits for the app's
+		// UI, then settles (exec): a tap during the launch would be ignored, and a swipe could
+		// land on the home screen.
 		if r.dev.platform == .IOS {
 			if d.clear_keychain {
 				if out, ok := simctl("keychain", r.dev.udid, "reset"); !ok do return true, out
@@ -460,9 +467,6 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			// Just reinstalled, the app is not running.
 			if d.stop_app && !d.clear_state do simctl("terminate", r.dev.udid, app)
 			debug_step(r, "terminate", &t)
-			// `simctl launch` returns once the process starts; Android's `am start -W` once
-			// it has launched. The next command that needs the screen waits for the app's UI,
-			// then settles (exec): a tap during the launch would be ignored.
 			if !op_mark(r.c) do return true, "agent connection lost"
 			cmd := make([dynamic]string, 0, 3 + 2 * len(args), context.temp_allocator)
 			append(&cmd, "launch", r.dev.udid, app)
@@ -477,7 +481,10 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		set_permissions(r, app, perms) or_return
 		if d.stop_app do _ = shell(r, "am force-stop %s", app)
 		comp := launcher(r, app) or_return
-		return true, android_launch(r, comp, args)
+		if !op_mark(r.c) do return true, "agent connection lost"
+		if err := android_launch(r, comp, args); err != nil do return true, err
+		r.launch_due = strings.clone(app, r.alloc)
+		return true, nil
 	case App_Cmd:
 		app := eval(r, d.app_id) or_return
 		if r.dev.platform == .IOS {
@@ -906,52 +913,62 @@ element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
 	return -1
 }
 
+// scrollUntilVisible's drag on Android (iOS's has its own timing). Without a fling, its speed
+// does not change how far the content moves.
+SCROLL_DRAG_MS :: 50
+
 @(private = "file")
 scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	timeout := parse_timeout(r, d.timeout) or_return
 	if timeout < 0 do timeout = 20_000
 	speed_s := eval(r, d.speed) or_return
-	speed, sok := strconv.parse_i64(strings.trim_space(speed_s))
-	if !sok do return fmt.aprintf("invalid scroll speed `%s`", speed_s, allocator = r.alloc)
-	duration := i64(1000 * f64(100 - speed) / 100) + 1 // speed (0-100) as a swipe duration
-	if duration < 0 do duration = 40
+	// `speed` sets a flinging swipe's duration; the drags below do not fling, so only its
+	// value is checked.
+	if _, sok := strconv.parse_i64(strings.trim_space(speed_s)); !sok {
+		return fmt.aprintf("invalid scroll speed `%s`", speed_s, allocator = r.alloc)
+	}
 	visibility := f64(d.visibility / 100) // integer division: below 100% counts as 0
 	dir := swipe_for_scroll(d.direction)
 	end := time.tick_now()._nsec + timeout * 1_000_000
 	retry_center := 0
 	cx, cy := r.w / 2, r.h_px / 2
 	ex, ey := edge_point(r, cx, cy, dir)
-	// After a swipe the content drifts on (a fling) and a settle waits for it to stop. While
-	// the element is not on screen yet that wait is useless: the next swipe's touch stops the
-	// drift anyway. So read right away, swipe again if it is not there, and settle only once
-	// it shows, for the checks below on a still screen.
-	// A swipe is over only after its own duration, as a finger's would be: Android's SWIPE
-	// injects it at once, and gestures overlapping in time can leave a list stuck.
-	// On iOS the swipe is a drag that does not fling instead (the agent's SWIPE without the
-	// flag; `speed` unused): a flinging swipe moves content ~1.6x as far, but it drifts for
-	// ~2 s that the settle would wait out, where the drag's content stops as the op returns.
-	fling := r.dev.platform != .IOS
+	// Each swipe is a drag that does not fling (the agent's SWIPE without the flag): the
+	// content stops as the touch lifts. A flinging swipe moves it farther, but it drifts on
+	// for 0.5-2 s that a settle would wait out.
+	// So the element is looked for right away, without the 500 ms lookups between swipes the
+	// flow format specifies: the screen was settled by the previous command, and after a
+	// drag it is final once read. A swipe follows as soon as the element is not on screen,
+	// and the settle comes once it shows, for the checks below on a still screen.
+	// Android's SWIPE injects the drag at once, its events stamped as if it had just ended
+	// (the pointer still for 60 ms before lifting): the next one starts after that, as
+	// gestures overlapping in time can leave a list stuck. iOS's drag plays out in real time.
+	gesture := time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond if r.dev.platform != .IOS else 0
 	moving := false
 	swiped: time.Tick
-	gesture := time.Duration(duration + 50) * time.Millisecond if fling else 0
+	swiped_from: u64 // the screen's hash when the last drag began
 	for {
 		if moving {
 			if !read_screen(r) do return "agent connection lost"
 			if el := select(r, d.sel) or_return; el < 0 || visible_pct(r.h.nodes[el], r.w, r.h_px) <= 0 {
 				if time.tick_now()._nsec >= end do break
-				if time.tick_since(swiped) < gesture {
-					time.sleep(50 * time.Millisecond)
+				// The next drag waits for this one to show, up to 500 ms (an app can take a few
+				// frames to move its content, and drags piling up could carry the element past
+				// the screen), and on Android for it to have ended.
+				since := time.tick_since(swiped)
+				if since < gesture || (r.h.hash == swiped_from && since < 500 * time.Millisecond) {
+					time.sleep(20 * time.Millisecond)
 					continue
 				}
-				swiped = time.tick_now()
-				if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling); !ok do return "agent connection lost"
+				swiped, swiped_from = time.tick_now(), r.h.hash
+				if _, ok := op_swipe(r.c, cx, cy, ex, ey, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 				continue
 			}
 			// After a drag, a screen still as read is settled: no wait for a change to come.
-			settle(r, d.settle_ms, no_change_ms = SETTLE_NO_CHANGE_MS if fling else 0) or_return
+			settle(r, d.settle_ms, no_change_ms = 0) or_return
 			moving = false
 		}
-		el, found, ferr := try_find(r, d.sel, 500)
+		el, found, ferr := try_find(r, d.sel, 0)
 		if ferr != nil do return ferr
 		if found {
 			n := r.h.nodes[el]
@@ -964,8 +981,8 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 			}
 		}
 		// From the screen center towards the edge.
-		swiped = time.tick_now()
-		if _, ok := op_swipe(r.c, cx, cy, ex, ey, i32(duration), fling); !ok do return "agent connection lost"
+		swiped, swiped_from = time.tick_now(), r.h.hash
+		if _, ok := op_swipe(r.c, cx, cy, ex, ey, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 		moving = true
 		if time.tick_now()._nsec >= end do break
 	}

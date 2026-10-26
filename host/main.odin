@@ -31,7 +31,7 @@ Op :: enum u8 {
 	Screenshot = 14,
 	Quit       = 15, // iOS agent: stop the runner
 	Info       = 16, // iOS agent: simulator udid and name, build
-	Launched   = 17, // iOS agent: wait for a launched app to be ready
+	Launched   = 17, // wait for a launched app to be ready
 	Orientation = 18, // iOS agent: rotate the device (UIDeviceOrientation)
 	Appearance  = 19, // iOS agent: read or set light/dark mode
 	Location    = 20, // Android agent: test-provider location, re-sent on a timer
@@ -207,7 +207,7 @@ op_ping :: proc(c: ^Conn) -> (agent_us: u32, ok: bool) {
 	return
 }
 
-// iOS: waits until the app runs in the foreground with a readable UI.
+// Waits until the app shows a readable UI (iOS: running in the foreground).
 op_launched :: proc(c: ^Conn, app_id: string, timeout_ms: i32, alloc: mem.Allocator) -> (ready, ok: bool) {
 	req := make([dynamic]byte, 0, len(app_id) + 8, alloc)
 	append(&req, u8(Op.Launched), u8(len(app_id) >> 8), u8(len(app_id)))

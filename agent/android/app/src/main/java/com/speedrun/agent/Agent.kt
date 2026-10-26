@@ -100,6 +100,9 @@ internal object AgentLog {
  *  12 MARK                                   -> (empty)
  *        an action without input: the next SETTLE measures from here (waiting for a screen
  *        that is already changing, e.g. waitForAnimationToEnd).
+ *  17 LAUNCHED str package, i32 timeout_ms   -> u8 ok
+ *        waits until a window of the package shows a UI that answers (its root can be
+ *        read), the app being launched; ok 0 at the timeout.
  *  11 SHELL  str command                     -> bytes stdout
  *        runs as the shell user through UiAutomation (no shell syntax: the line is split on
  *        spaces). For app control: am force-stop, pm clear, pm grant, am start...
@@ -149,6 +152,7 @@ private object Op {
     const val MARK = 12
     const val PRESS = 13
     const val SCREENSHOT = 14
+    const val LAUNCHED = 17
     const val LOCATION = 20
     const val LABEL = 21
     const val PERMS = 22
@@ -262,6 +266,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.LOCATION -> location(readStr(input))
             Op.LABEL -> writeStr(AppLabel.of(readStr(input)) ?: "")
             Op.PERMS -> writePermissions(readStr(input))
+            Op.LAUNCHED -> body.writeByte(if (launched(readStr(input), input.readInt())) 1 else 0)
             else -> throw IOException("unknown op $op")
         }
         body.flush()
@@ -530,8 +535,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         }
         if (!fling) {
             // A second sample at the end leaves zero motion for touch resampling to
-            // extrapolate, and lifting SWIPE_HOLD_MS after the drag stops means zero velocity.
+            // extrapolate. A third one, still, over 40 ms later: VelocityTracker takes the
+            // pointer as stopped and drops the drag's samples. Lifting SWIPE_HOLD_MS after the
+            // drag stops would do it too, but ScrollView (React Native's lists) reads the
+            // velocity before adding the UP to its tracker; RecyclerView adds it first.
             injectMotion(MotionEvent.obtain(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2, 0))
+            injectMotion(MotionEvent.obtain(down, down + duration + SWIPE_HOLD_MS - 5, MotionEvent.ACTION_MOVE, x2, y2, 0))
         }
         val up = maxOf(SystemClock.uptimeMillis(), down + duration + hold)
         injectMotion(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x2, y2, 0))
@@ -621,6 +630,17 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     // ---- settle -----------------------------------------------------------------------
+
+    private fun launched(pkg: String, timeoutMs: Int): Boolean {
+        val end = SystemClock.uptimeMillis() + timeoutMs.coerceIn(0, 60_000)
+        while (true) {
+            val windows = try { ua.windows } catch (e: Exception) { emptyList() }
+            // The root is read from the app: null while it starts, before it can answer.
+            if (windows.any { w -> try { w.root?.packageName?.toString() == pkg } catch (e: Exception) { false } }) return true
+            if (SystemClock.uptimeMillis() >= end) return false
+            Thread.sleep(20)
+        }
+    }
 
     /** System-side query (does not touch the app's main thread). */
     private fun activeWindowId(): Int {
