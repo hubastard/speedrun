@@ -1,0 +1,14 @@
+Speedrun
+Copyright 2026 Hubert Gendron
+
+This product is licensed under the Apache License, Version 2.0 (LICENSE).
+
+It includes third-party software, each under its own license (in a release archive, their
+texts are in licenses/):
+
+- QuickJS-ng (host/js/quickjs-ng), MIT License: host/js/quickjs-ng/LICENSE.
+  https://github.com/quickjs-ng/quickjs
+- Datafaker's English word lists (host/js/datafaker/data.json), Apache License 2.0:
+  host/js/datafaker/LICENSE. https://github.com/datafaker-net/datafaker
+- stb_image and stb_image_write (host/image), public domain or MIT License, at the end of
+  each header. https://github.com/nothings/stb

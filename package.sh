@@ -22,6 +22,12 @@ rm -rf "$stage" "dist/$name.tar.gz"
 mkdir -p "$stage"
 
 cp speedrun "$stage/"
+# The license, and those of the third-party code built into the binary (NOTICE lists them).
+cp LICENSE NOTICE "$stage/"
+mkdir -p "$stage/licenses"
+cp host/js/quickjs-ng/LICENSE "$stage/licenses/quickjs-ng.txt"
+cp host/js/datafaker/LICENSE "$stage/licenses/datafaker.txt"
+sed -n '/This software is available under 2 licenses/,$p' host/image/stb_image.h > "$stage/licenses/stb.txt"
 products=agent/ios/build/Build/Products
 if [ -d "$products" ]; then
   # The test run file and the runner app; the Swift module is a build product only.
@@ -42,6 +48,8 @@ Run it from this folder, or put the folder on your PATH (a symlink to the binary
 
 Android needs adb on PATH and an emulator or device; iOS needs Xcode and a booted simulator.
 Keep agent/ next to the binary: speedrun starts its iOS agent from there.
+
+Licensed under the Apache License 2.0 (LICENSE); third-party code: NOTICE and licenses/.
 EOF
 
 tar -czf "dist/$name.tar.gz" -C dist "$name"
