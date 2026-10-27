@@ -13,7 +13,7 @@ against Maestro on hard, real-world screens.
 | Home | A ticker that never stops, spinning story rings, a skeleton loader, a banner that pushes the feed down, likes, pull to refresh, more posts at the end | Endless animations, `doubleTapOn`, `scrollUntilVisible` with loading, `swipe` to refresh |
 | Shop | Debounced search, category chips, product page (photo carousel, color, size, quantity, gift wrap), cart (swipe to remove, a promo code that fails once), checkout (keyboard over a sticky footer), confirmation with confetti | `pressKey`, `selected`/`checked`/`enabled`, `repeat`, `retry`, `hideKeyboard`, `copyTextFrom`, `inputRandom*`, popups after an order |
 | Chats | A bot that "types" (bouncing dots) before answering, a long-press menu, double tap to react | `longPressOn`, `doubleTapOn`, `setClipboard`, `pasteText`, `tapOn` at a point |
-| Profile | Edit form (validation on blur), settings (switches, a native alert, a long list), PIN on a custom keypad | Native alerts, keypads, a layout that moves under the keypad |
+| Profile | Edit form (validation on blur), settings (switches, a native alert, a long list), PIN on a custom keypad under a loading overlay for its first 1.5 s | Native alerts, keypads, a layout that moves under the keypad, a see-through overlay that takes the taps |
 | Lab | One screen per kind of animation, gestures, selectors, inputs and keys, device APIs | See below |
 
 The lab:

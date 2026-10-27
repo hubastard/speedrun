@@ -49,28 +49,58 @@ export function Header({ title, back = true, right }: { title: string; back?: bo
   );
 }
 
+// overlay: drawn over the body, below the header (as a native navigation bar stays above a
+// screen's own views).
 export function Screen({
-  title, back, right, children, scroll = true, footer, testID,
+  title, back, right, children, scroll = true, footer, testID, overlay,
 }: {
   title: string; back?: boolean; right?: React.ReactNode; children: React.ReactNode; scroll?: boolean;
-  footer?: React.ReactNode; testID?: string;
+  footer?: React.ReactNode; testID?: string; overlay?: React.ReactNode;
 }) {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const body = scroll ? (
+    <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ padding: 16, paddingBottom: footer ? 120 : 40 }}>
+      {children}
+    </ScrollView>
+  ) : (
+    <View style={{ flex: 1 }}>{children}</View>
+  );
   return (
     <View testID={testID} style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
       <Header title={title} back={back} right={right} />
-      {scroll ? (
-        <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ padding: 16, paddingBottom: footer ? 120 : 40 }}>
-          {children}
-        </ScrollView>
+      {overlay ? (
+        <View style={{ flex: 1 }}>
+          {body}
+          {overlay}
+        </View>
       ) : (
-        <View style={{ flex: 1 }}>{children}</View>
+        body
       )}
       {footer ? (
         <View style={[s.footer, { backgroundColor: c.bg, borderColor: c.border, paddingBottom: 12 + insets.bottom }]}>{footer}</View>
       ) : null}
     </View>
+  );
+}
+
+// A loading overlay over a screen's body (Screen's overlay): fades in with a spinner while
+// `loading`, out after. Always mounted, transparent when idle; see-through while loading, the
+// controls behind it showing, but taking the touches.
+export function Fade({ loading }: { loading: boolean }) {
+  const c = useColors();
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withTiming(loading ? 1 : 0, { duration: 250 });
+  }, [loading, opacity]);
+  const shown = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Animated.View
+      pointerEvents={loading ? 'auto' : 'none'}
+      style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0, 0, 0, 0.25)', justifyContent: 'center', alignItems: 'center' }, shown]}
+    >
+      <ActivityIndicator size="large" color={c.accent} />
+    </Animated.View>
   );
 }
 

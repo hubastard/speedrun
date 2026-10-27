@@ -1,13 +1,13 @@
 // Profile: stats, an edit form (validation on blur, a sticky Save), settings (switches, a
-// native confirmation alert, a long list ending with the version), a PIN set on a keypad,
-// and sign out behind a native alert.
+// native confirmation alert, a long list ending with the version), a PIN set on a keypad
+// that a loading overlay covers for a moment, and sign out behind a native alert.
 import { useNavigation } from '@react-navigation/native';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Switch, Text, useColorScheme, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 
 import { remember, setState, toast, useStore } from '../store';
-import { Body, Button, Checkbox, CountUp, Field, Gap, Radio, Row, s, Screen, Title, useColors } from '../ui';
+import { Body, Button, Checkbox, CountUp, Fade, Field, Gap, Radio, Row, s, Screen, Title, useColors } from '../ui';
 
 export function Profile() {
   const c = useColors();
@@ -145,6 +145,14 @@ export function Pin() {
   const [error, setError] = useState<string | null>(null);
   const shake = useSharedValue(0);
   const shaking = useAnimatedStyle(() => ({ transform: [{ translateX: shake.value }] }));
+  // The screen loads for a moment when it opens (an account check, as payment apps do), under
+  // a see-through overlay with a spinner (Fade): the keys show through it, but it takes the
+  // touches.
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 1500);
+    return () => clearTimeout(t);
+  }, []);
 
   function press(key: string) {
     setError(null);
@@ -177,7 +185,7 @@ export function Pin() {
   }
 
   return (
-    <Screen title="Security">
+    <Screen title="Security" overlay={<Fade loading={loading} />}>
       <Title testID="pin-title">{first === null ? 'Create a PIN' : 'Confirm your PIN'}</Title>
       <Animated.View testID="pin-dots" accessible accessibilityLabel={`${digits.length} of 4 digits`} style={[{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginVertical: 24 }, shaking]}>
         {[0, 1, 2, 3].map((i) => (
