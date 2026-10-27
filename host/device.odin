@@ -8,6 +8,7 @@
 // it runs this build on the chosen simulator. App control goes through `xcrun simctl`.
 package speedrun
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:hash"
@@ -59,6 +60,7 @@ Device :: struct {
 	local_apk:  string, // the embedded APK written to a temp file, for `adb push`/`install`
 	runner:     os.Process, // iOS: the xcodebuild running the agent's UI test
 	started:    bool, // iOS: this run is starting the runner (else it reuses one already serving)
+	serving:    bool, // iOS: the runner this run started answered (it stays up for the next run)
 	warm:       bool, // iOS: a runner of this build serves this simulator already
 }
 
@@ -254,8 +256,10 @@ simctl_env :: proc(env: []string, args: ..string) -> (out: string, ok: bool) {
 // when the Android shell agent cannot start and the instrumentation takes over.
 device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 	current = d
-	posix.signal(.SIGINT, on_signal)
-	posix.signal(.SIGTERM, on_signal)
+	// Not blocked while its handler runs: a second Ctrl-C ends a cleanup that hangs.
+	act := posix.sigaction_t{sa_handler = on_signal, sa_flags = {.RESTART, .SA_NODEFER}}
+	posix.sigaction(.SIGINT, &act, nil)
+	posix.sigaction(.SIGTERM, &act, nil)
 	if d.platform == .IOS do return ios_start(d)
 
 	present, perr := device_prepare()
@@ -410,7 +414,10 @@ ios_start :: proc(d: ^Device) -> string {
 
 	start := time.tick_now()
 	for time.tick_since(start) < IOS_START_TIMEOUT {
-		if answers_ping(d.port) do return ""
+		if answers_ping(d.port) {
+			d.serving = true
+			return ""
+		}
 		if state, werr := os.process_wait(p, 0); werr == nil && state.exited {
 			d.started = false
 			data, _ := os.read_entire_file(log, context.temp_allocator)
@@ -423,10 +430,11 @@ ios_start :: proc(d: ^Device) -> string {
 }
 
 // The runner stays up for the next run (it stops itself when idle). Only one that never came
-// up is ended here.
+// up is ended here. No ping to tell: the runner serves one client at a time, and a Ctrl-C
+// comes while this run's connection is still open (the ping waited forever).
 @(private = "file")
 ios_stop :: proc(d: ^Device) {
-	if !d.started || answers_ping(d.port) do return
+	if !d.started || d.serving do return
 	_ = os.process_kill(d.runner)
 	_, _ = os.process_wait(d.runner, 0)
 	simctl("terminate", d.udid, IOS_RUNNER_APP)
@@ -496,9 +504,14 @@ indent :: proc(s: string) -> string {
 }
 
 // Ctrl-C: leave the device as it was found (no agent holding the UiAutomation slot, which
-// would block the next tool), then exit.
+// would block the next tool), then exit. A second Ctrl-C while that runs exits at once (the
+// cleanup runs adb, and the signal can come while the run holds a lock it needs).
+@(private = "file")
+interrupted: i32
+
 @(private = "file")
 on_signal :: proc "c" (sig: posix.Signal) {
+	if intrinsics.atomic_exchange(&interrupted, 1) != 0 do posix._exit(130)
 	context = runtime.default_context()
 	os.write_string(os.stdout, "\x1b[0m\n")
 	if current != nil do device_stop(current)

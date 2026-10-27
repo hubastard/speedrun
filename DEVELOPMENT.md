@@ -28,7 +28,10 @@ How speedrun is built and how it behaves in detail, for working on it. Using it:
     when that finds no visible exact match.
   - `device.odin`: the agent's lifecycle. The agent APK is embedded in the binary; each run
     pushes it if the device does not have this build yet, starts it, forwards its port and
-    stops it at exit (Ctrl-C too).
+    stops it at exit (Ctrl-C too). On iOS the runner stays up for the next run; Ctrl-C ends
+    only one that never answered, without asking it: it serves one client at a time, and
+    the run's own connection is still open (a ping there waited forever, and Ctrl-C did
+    nothing). A second Ctrl-C exits at once, whatever the cleanup is doing.
   - `yaml.odin`, `flow.odin`, `runner.odin`, `console.odin`: reads flow files, runs them and
     prints their progress (see below).
   - `js.odin`, `js/`: JavaScript for flows, on QuickJS-ng (vendored in `js/quickjs-ng`, MIT):
@@ -341,12 +344,13 @@ Known differences in how, not what:
   the tap when that is neither the element, inside it, nor one of its containers. The tree
   cannot tell: iOS orders siblings by their place on screen, not as drawn (an overlay from a
   screen's top edge comes before content below a padding), and reports a spinner at its own
-  size whatever its view's (`flex: 1`). Android's tree is in drawing order: a spinner over
-  the element's center, or a node drawn over it with a spinner within it (in its subtree,
-  or right after it). Once the overlay is gone, the screen settles and the element is found
-  again; after the lookup's time (17 s) the tap goes ahead anyway. A payment app's amount
-  keypad lost its first digit this way (v0.1.5 looked at the tree on iOS too, and missed
-  it); Speedrun Bench's PIN screen loads under such an overlay for 1.5 s. Maestro waits out
+  size whatever its view's (`flex: 1`). Android orders its tree by place on screen too, but
+  its parents are the views' own: there the overlay is a node over the element's center,
+  outside it and not one of its containers, that is a spinner or holds one. Once the overlay
+  is gone, the screen settles and the element is found again; after the lookup's time (17 s)
+  the tap goes ahead anyway. A payment app's amount keypad lost its first digit this way
+  (v0.1.5 relied on the tree's order on both platforms, and missed it; v0.1.6 still did on
+  Android); Speedrun Bench's PIN screen loads under such an overlay for 1.5 s. Maestro waits out
   the spinner (its screenshots change). Assertions still see the element, as Maestro's do.
 - iOS: a tap in a system sheet or alert (another process's view, "Save Password?") that
   changes nothing is tapped again, up to 3 times: such sheets ignore touches while they
