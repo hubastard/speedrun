@@ -162,6 +162,9 @@ private object Op {
 // 40 ms "pointer stopped" threshold, so the gesture never flings.
 private const val SWIPE_HOLD_MS = 60
 private const val SWIPE_STEP_MS = 8 // one MOVE per ~120 Hz touch sample
+// A drag's lift waits this long after its moves (real time): over a frame, so the app handles
+// the moves and the lift in different frames, as a finger's.
+private const val SWIPE_LIFT_GAP_MS = 25L
 
 // Quiet time needed after a UI-change accessibility event: apps send content-change and
 // scroll events at most every ~100 ms, so a shorter gap does not prove the UI stopped.
@@ -505,24 +508,45 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun injectMotion(e: MotionEvent, sync: Boolean = false) {
         e.source = InputDevice.SOURCE_TOUCHSCREEN
-        if (e.actionMasked == MotionEvent.ACTION_DOWN) lastDownTime = e.downTime
+        lastEventTime = maxOf(lastEventTime, e.eventTime)
         injector.inject(e, sync)
         e.recycle()
     }
 
-    // The last gesture's down time. Android 17's input verifier refuses a gesture whose down
-    // time is earlier ("Down time went backwards"), so a SWIPE stamped in the past waits until
-    // its start comes after it.
-    private var lastDownTime = 0L
+    // The latest event time injected. A SWIPE stamped in the past starts after it: Android 17's
+    // input verifier refuses a gesture whose down time is earlier than the last one's ("Down
+    // time went backwards"), and a gesture that starts before the previous one lifted (in event
+    // time) came out reversed: touch resampling mixed the two (a swipe up seen as a swipe down
+    // right after a swipe right).
+    private var lastEventTime = 0L
 
     private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean) = timedAction {
         val duration = durationMs.coerceIn(0, 10_000)
         val hold = if (fling) 0 else SWIPE_HOLD_MS
         val dx = x2 - x1
         val dy = y2 - y1
+        if (fling) {
+            // A swipe (the flow's `swipe`) plays out in real time, as a finger's does. Stamped
+            // in the past and sent at once, a React Native Gesture Handler pan sometimes ended
+            // with no movement (a swipe left read as a swipe down, 1 run in 3).
+            val early = lastEventTime + 1 - SystemClock.uptimeMillis()
+            if (early > 0) Thread.sleep(early)
+            val down = SystemClock.uptimeMillis()
+            injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x1, y1, 0))
+            val steps = maxOf(1, duration / SWIPE_STEP_MS)
+            for (i in 1..steps) {
+                val f = i.toFloat() / steps
+                val at = down + (duration * f).toLong()
+                val wait = at - SystemClock.uptimeMillis()
+                if (wait > 0) Thread.sleep(wait)
+                injectMotion(MotionEvent.obtain(down, maxOf(at, SystemClock.uptimeMillis()), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f, 0))
+            }
+            injectMotion(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x2, y2, 0))
+            return@timedAction
+        }
         // Timestamps end now, so the app sees the gesture's speed without us waiting it out,
         // unless that would start it before the last gesture did (a tap just before).
-        val early = lastDownTime + 1 - (SystemClock.uptimeMillis() - duration - hold)
+        val early = lastEventTime + 1 - (SystemClock.uptimeMillis() - duration - hold)
         if (early > 0) Thread.sleep(early)
         val down = SystemClock.uptimeMillis() - duration - hold
         fun move(f: Float, sync: Boolean = false) = injectMotion(
@@ -551,6 +575,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             injectMotion(MotionEvent.obtain(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2, 0))
             injectMotion(MotionEvent.obtain(down, down + duration + SWIPE_HOLD_MS - 5, MotionEvent.ACTION_MOVE, x2, y2, 0))
         }
+        Thread.sleep(SWIPE_LIFT_GAP_MS)
         val up = maxOf(SystemClock.uptimeMillis(), down + duration + hold)
         injectMotion(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x2, y2, 0))
     }

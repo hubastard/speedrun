@@ -1110,6 +1110,14 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 				continue
 			}
+			// The element was on screen before the drag too (centering it, clearing a cover):
+			// the drag may not show yet, and a tap on a list that starts moving is taken to
+			// stop it (React Native). Wait for it as before the next drag.
+			since := time.tick_since(swiped)
+			if since < gesture || (r.h.hash == swiped_from && since < 500 * time.Millisecond) {
+				time.sleep(20 * time.Millisecond)
+				continue
+			}
 			// After a drag, a screen still as read is settled: no wait for a change to come.
 			settle(r, d.settle_ms, no_change_ms = 0) or_return
 			moving = false

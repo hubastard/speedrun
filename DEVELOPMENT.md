@@ -41,12 +41,16 @@ How speedrun is built and how it behaves in detail, for working on it. Using it:
 - `build.sh` — builds the agent APK, the JavaScript engine and the image codecs, then
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
-- `bench.yaml`, `bench_scenario.yaml` — benchmark flows; `flows/features.yaml` — coverage of
-  the supported commands, each tap checked by an assertion; `flows/javascript` (no
-  app needed), `flows/device/settings.yaml` (Android) and `flows/ignite/device.yaml` (iOS)
-  cover scripts and the device commands; `flows/notifications` the iOS notification alert
-  (its test app: `flows/notifications/install.sh`).
-- `compare.sh` — benchmarks against Maestro (see `TO_IMPROVE.md`).
+- `bench/app` — Speedrun Bench, a React Native app made to be tested, and its 19 flows: the
+  regression suite (every command and selector, on Android and iOS with the same files) and
+  the benchmark against Maestro (`bench/app/bench.sh`; see its README).
+- `flows/features.yaml` — coverage of the supported commands on Android's Settings, each tap
+  checked by an assertion; `flows/javascript` (no app needed) and
+  `flows/device/settings.yaml` (Android) cover scripts and the device commands;
+  `flows/notifications` the iOS notification alert (its test app:
+  `flows/notifications/install.sh`).
+- `compare.sh` — one flow with speedrun, then Maestro, side by side per command (see
+  `TO_IMPROVE.md`).
 
 ## Setup
 
@@ -68,8 +72,8 @@ for flows whose scripts make HTTP requests.
 Maestro flow files run as they are:
 
 ```
-./speedrun test bench_scenario.yaml -e TIMES=5
-./speedrun test -p ios bench_scenario_ios.yaml -e TIMES=5   # iOS simulator
+./speedrun test flows/features.yaml
+./speedrun test -p ios bench/app/flows/        # the benchmark app's suite, on a simulator
 ```
 
 speedrun picks a connected Android device, else the one booted simulator; `--platform` and
@@ -308,9 +312,11 @@ Known differences in how, not what:
 - iOS `hideKeyboard` fails when the keyboard stays up, as Maestro's does ("Couldn't hide the
   keyboard"); the keyboard is found by its element (the number pad's delete key has another
   id).
-- Android `SWIPE` waits when its back-dated down time would come before the last gesture's
-  (a tap just before): Android 17's input verifier drops such a gesture ("Down time went
-  backwards").
+- Android `SWIPE` waits when its back-dated down time would come before the last event
+  injected: Android 17's input verifier drops a gesture whose down time goes backwards
+  ("Down time went backwards"), and one that starts, in event time, before the previous one
+  lifted came out reversed (touch resampling mixed the two: a swipe up after a swipe right
+  read as down).
 - On iOS a quiescence wait is cut at 2 s (XCTest's application-state timeout, set through
   `_XCTSetApplicationStateTimeout`, as WebDriverAgent does), then the settle waits for the
   event loop only and compares signatures: under an open context menu animations never
@@ -346,6 +352,11 @@ Known differences in how, not what:
     settle (a badge 0.8 s after a rating prompt closed) is still sliding in and takes no tap.
     Nothing changes between commands on most screens, so it costs nothing there (Settings
     13.6 s, as before).
+  - `scrollUntilVisible` that drags an element already on screen (centering it, clearing a
+    cover) waits for the drag to show before it ends, as it does before the next drag:
+    Android's SWIPE is injected at once and played out by the app after, so the next read
+    could still be the screen before the drag, and the tap that followed landed on a list
+    starting to move, which React Native takes as a touch to stop it (1 run in 6 failed).
 - iOS screens with an endless animation: an element moving on every read (an Animated or
   Reanimated loop updates the model layer every frame, so its accessibility frame changes)
   kept signatures from ever agreeing, and each settle ran to its 10 s timeout. Screen tracks
@@ -387,11 +398,15 @@ Known differences in how, not what:
   ~100 ms, so an in-place change costs a 120 ms quiet window. Ways under it: per-layer frames
   from SurfaceFlinger (`--frametimeline` has them, but a dump takes ~12 ms), or an in-app
   debug library that hooks `Choreographer` (the Espresso/Detox approach).
-- **`SWIPE` timestamps are synthetic:** the gesture is injected at once with the timing of
-  a real drag, so the app sees the right speed without the tool waiting it out. Only the
-  first MOVE waits about one frame for the app (a scroll container must intercept it). Flows
-  fling like `adb shell input swipe`, as Maestro does; without the fling flag the pointer
-  stops before lifting and the content moves by the drag distance: a still MOVE more than
+- **`SWIPE` timestamps are synthetic for drags:** scrollUntilVisible's drag is injected at
+  once with the timing of a real drag, so the app sees the right speed without the tool
+  waiting it out. Only the first MOVE waits about one frame for the app (a scroll container
+  must intercept it), and the lift ~25 ms after the moves, a frame later. The flow's `swipe`
+  and `scroll` (the fling flag) play out in real time instead, as a finger's: sent at once, a
+  React Native Gesture Handler pan sometimes ended with no movement (1 run in 3 of the
+  benchmark app's gestures flow). Flows fling like `adb shell input swipe`, as Maestro does;
+  without the fling flag the pointer stops before lifting and the content moves by the drag
+  distance: a still MOVE more than
   VelocityTracker's 40 ms "pointer stopped" threshold after the last moving one clears the
   velocity. Lifting late is not enough for `ScrollView` (React Native's lists), which reads
   the velocity before adding the UP to its tracker; `RecyclerView` adds it first.
