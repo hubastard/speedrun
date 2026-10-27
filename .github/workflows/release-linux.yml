@@ -1,0 +1,57 @@
+# Builds speedrun for Linux when a release is tagged (Android only: the iOS agent needs a Mac)
+# and attaches the package to the tag's GitHub release, created if the tag has none yet.
+# Run by hand (Actions > Linux release > Run workflow) to build an existing tag again.
+name: Linux release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build and attach (e.g. v0.1.7)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  ODIN_VERSION: dev-2026-09
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install Odin
+        run: |
+          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/$ODIN_VERSION/odin-linux-amd64-$ODIN_VERSION.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          dirname "$(find "$RUNNER_TEMP" -maxdepth 3 -name odin -type f | head -1)" >> "$GITHUB_PATH"
+
+      - name: Build and package
+        run: SPEEDRUN_VERSION="$TAG" ./package.sh
+
+      - name: Check the package
+        run: |
+          tar -xzf dist/speedrun-*-linux-*.tar.gz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP"/speedrun-*-linux-*/speedrun --version
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "speedrun $TAG" --notes "speedrun $TAG"
+          gh release upload "$TAG" dist/speedrun-*-linux-*.tar.gz --clobber
