@@ -44,8 +44,8 @@ cd bench/app
 ./bench.sh compare ios             # the suite with speedrun, then Maestro: results/ios.md
 ./bench.sh compare android
 cd ../.. && ./compare.sh bench/app/flows/gestures.yaml    # one flow, per command
-./compare.sh bench_scenario.yaml -e TIMES=3                # the Settings benchmark (Android)
-./compare.sh bench_scenario_ios.yaml -e TIMES=3            # and on iOS (simulator in English)
+./compare.sh bench/settings/bench_scenario_android.yaml -e TIMES=3   # the Settings benchmark
+./compare.sh bench/settings/bench_scenario_ios.yaml -e TIMES=3       # and on iOS (in English)
 ```
 
 `bench.sh compare` runs the benchmark app's suite (`bench/app/flows`, 19 flows) with each
@@ -55,9 +55,9 @@ run, so both start cold. `compare.sh` takes one flow file: it starts the flow's 
 before each tool, lines the two runs up command by command (warning if their command
 sequences or statuses differ) and prints medians per command, then the flow, the time outside
 it and the wall clock per tool. Both need `maestro` and `python3` on PATH. The Settings
-benchmark (`bench_scenario.yaml`, `bench_scenario_ios.yaml`) is 14 commands on the system
-Settings app, native screens: navigation two levels deep and back, scrolling down and up,
-text input; TIMES=3 runs it three times.
+benchmark (`bench/settings`) is 14 commands on the system Settings app, native screens:
+navigation two levels deep and back, scrolling down and up, text input; TIMES=3 runs it
+three times.
 
 Before a run: shut the iOS simulator down for Android numbers (memory pressure on a 16 GB Mac
 stalls the emulator; stop speedrun's iOS agent first with `./speedrun --stop-agent`, or
@@ -88,8 +88,8 @@ with each tool's start-up and shutdown, speedrun's iOS agent started cold):
 
 | flow | device | Speedrun | Maestro | ratio (wall) |
 |---|---|---|---|---|
-| `bench_scenario.yaml` | Android 17 emulator, `-gpu host` | 10.9 s, 13.4 s | 104.7 s, 113.1 s | 8.4x |
-| `bench_scenario_ios.yaml` | iPhone 17 Pro simulator, iOS 26.2 | 29.8 s, 32.8 s | 80.5 s, 90.5 s | 2.8x |
+| `bench/settings/bench_scenario_android.yaml` | Android 17 emulator, `-gpu host` | 10.9 s, 13.4 s | 104.7 s, 113.1 s | 8.4x |
+| `bench/settings/bench_scenario_ios.yaml` | iPhone 17 Pro simulator, iOS 26.2 | 29.8 s, 32.8 s | 80.5 s, 90.5 s | 2.8x |
 
 On 2026-10-26: Android 10.5 s vs 88.0 s, iOS 26.9 s vs 78.8 s. Maestro's Android run was
 slower this time (its taps took up to 4.9 s; the emulator's load was 2.5–3.5). Speedrun's iOS

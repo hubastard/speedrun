@@ -44,9 +44,10 @@ How speedrun is built and how it behaves in detail, for working on it. Using it:
 - `bench/app` — Speedrun Bench, a React Native app made to be tested, and its 19 flows: the
   regression suite (every command and selector, on Android and iOS with the same files) and
   the benchmark against Maestro (`bench/app/bench.sh`; see its README).
-- `bench_scenario.yaml`, `bench_scenario_ios.yaml` — the Settings benchmark: 14 commands per
-  lap on Android's and iOS's Settings app (navigation two levels deep, scrolling both ways,
-  text input), `-e TIMES=3` for three laps; `./compare.sh bench_scenario.yaml -e TIMES=3`.
+- `bench/settings` — the Settings benchmark, `bench_scenario_android.yaml` and
+  `bench_scenario_ios.yaml`: 14 commands per lap on Android's and iOS's Settings app
+  (navigation two levels deep, scrolling both ways, text input), `-e TIMES=3` for three laps;
+  `./compare.sh bench/settings/bench_scenario_android.yaml -e TIMES=3`.
 - `flows/features.yaml` — coverage of the supported commands on Android's Settings, each tap
   checked by an assertion; `flows/javascript` (no app needed) and
   `flows/device/settings.yaml` (Android) cover scripts and the device commands;

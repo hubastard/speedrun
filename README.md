@@ -55,9 +55,9 @@ then Maestro's, on the same device), on 2026-10-27, Apple M1 Pro with 16 GB, an 
 emulator and an iPhone 17 Pro simulator (iOS 26.2). The per-flow tables are in the app's
 [README](bench/app/README.md).
 
-On native screens, the system Settings app (`bench_scenario.yaml` and
-`bench_scenario_ios.yaml`: 14 commands, navigation, scrolling and text input, run three
-times), with `./compare.sh <flow> -e TIMES=3`:
+On native screens, the system Settings app ([`bench/settings`](bench/settings): 14
+commands, navigation, scrolling and text input, run three times), with
+`./compare.sh <flow> -e TIMES=3`:
 
 | Platform | Speedrun | Maestro 2.11 | Speedrun is |
 |---|---:|---:|---:|
