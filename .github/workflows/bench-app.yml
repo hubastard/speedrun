@@ -1,0 +1,72 @@
+# Publishes Speedrun Bench (bench/app) prebuilt, for an Android emulator and an iOS
+# simulator, when its sources change on main: assets of the bench-app pre-release, named after
+# the sources' hash (bench.sh hash), which `bench.sh install` and the Journey workflow fetch
+# instead of building the app. Sources already published are skipped.
+name: Bench app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bench/app/app.json
+      - bench/app/App.tsx
+      - bench/app/index.ts
+      - bench/app/tsconfig.json
+      - bench/app/package.json
+      - bench/app/package-lock.json
+      - bench/app/assets/**
+      - bench/app/modules/**
+      - bench/app/plugins/**
+      - bench/app/src/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: bench/app/package-lock.json
+
+      - name: Build and publish
+        working-directory: bench/app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./bench.sh publish android
+
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: bench/app/package-lock.json
+
+      - name: Build and publish
+        working-directory: bench/app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./bench.sh publish ios

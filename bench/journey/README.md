@@ -69,7 +69,7 @@ suite's job ([`../app/flows`](../app/flows), Speedrun and Maestro).
 ## Running it
 
 ```sh
-../app/bench.sh build ios                  # or android: Speedrun Bench, installed
+../app/bench.sh install ios                # or android: Speedrun Bench, prebuilt, installed
 (cd appium && npm install && npm run setup) # Appium, its two drivers, WebdriverIO
 ./run.sh ios                                # or: ./run.sh android speedrun appium
 ```

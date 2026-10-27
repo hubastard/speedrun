@@ -86,6 +86,11 @@ for flows whose scripts make HTTP requests.
   Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
   speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
   newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
+- `.github/workflows/bench-app.yml`: when Speedrun Bench's sources change on `main`, builds
+  it for an Android emulator and an iOS simulator and uploads both to the `bench-app`
+  pre-release, named after the sources' hash (`bench/app/bench.sh hash`).
+  `bench.sh install <platform>` and the Journey workflow download the app matching the
+  checkout instead of building it (no Node needed), and build it only when none matches.
 
 Both pin Odin (`ODIN_VERSION`) to the version speedrun is developed with.
 

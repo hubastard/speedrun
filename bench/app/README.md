@@ -36,7 +36,8 @@ The lab:
 ## Running it
 
 ```sh
-./bench.sh build ios          # or android: expo prebuild, a Release build, installed
+./bench.sh install ios        # or android: the prebuilt app for this checkout, installed
+./bench.sh build ios          # or build it yourself (Node): expo prebuild, a Release build
 ./bench.sh test ios           # the suite with speedrun
 ./bench.sh compare ios        # speedrun, then Maestro: results/ios.md
 ./bench.sh maestro ios        # Maestro alone, merged with speedrun's last results

@@ -5,7 +5,7 @@
 # included. The table goes to results/<platform>.md: the median of the runs that passed (a
 # failed run stops early), the pass count, and each run's time (✗: failed).
 #   ./run.sh android|ios [tool...]     tools: speedrun maestro appium xcuitest (iOS only)
-# Needs ../../speedrun (./build.sh), Speedrun Bench installed (../app/bench.sh build <platform>),
+# Needs ../../speedrun (./build.sh), Speedrun Bench installed (../app/bench.sh install <platform>),
 # maestro, Node (cd appium && npm install && npm run setup), and Xcode for xcuitest.
 # The device: DEVICE=<serial or simulator UDID>, else the first adb device (Android) or the
 # booted simulator (iOS).
@@ -17,7 +17,7 @@ shift
 RUNS="${RUNS:-3}"
 APP_ID=dev.speedrun.bench
 SPEEDRUN="$(cd ../.. && pwd)/speedrun"
-IOS_APP=../app/ios/build/Build/Products/Release-iphonesimulator/SpeedrunBench.app
+IOS_APP=../app/prebuilt/SpeedrunBench.app
 mkdir -p results
 
 case "$PLATFORM" in
