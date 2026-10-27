@@ -1080,7 +1080,8 @@ sub_flow :: proc(l: ^Loader, arg: ^Yaml, name: string) -> (s: Sub_Flow, ok: bool
 
 @(private = "file")
 sub_flow_file :: proc(l: ^Loader, y: ^Yaml, rel: string) -> (s: Sub_Flow, ok: bool) {
-	path, _ := filepath.join({filepath.dir(l.file), rel}, l.alloc)
+	path := rel // an absolute path is taken as is (Path.resolve)
+	if !filepath.is_abs(rel) do path, _ = filepath.join({filepath.dir(l.file), rel}, l.alloc)
 	if path == l.file {
 		fail(l, y, "a flow cannot run itself")
 		return

@@ -14,6 +14,9 @@ final class Input {
     /// value, so typing cannot watch the first character land, gets 30/s after a fixed wait.
     static let charactersPerSecond = 100
     static let pacedCharactersPerSecond = 30
+    /// Typing key by key (the focus moves after each): how long a key may take to land.
+    static let keyWaitMs = 400
+    static let keyTries = 3
     /// Response field inject_path: XCTest-synthesized event (Android uses 0-2), or nothing
     /// sent (deleting from an empty field).
     static let injectPath: UInt8 = 3
@@ -139,12 +142,55 @@ final class Input {
         }
         let cap = waitCapMs
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(cap, 0)) * 1_000_000
+        let start = Focus(field)
+        var moved = false
         while DispatchTime.now().uptimeNanoseconds < deadline {
-            if let now = onMain({ Self.focusedField(screen).map(Self.shownValue) }), now != before { break }
+            let now = onMain { Focus(Self.focusedField(screen)) }
+            if now.frame != start.frame { moved = true; break }
+            if now.value != start.value { break }
             Thread.sleep(forTimeInterval: 0.02)
+        }
+        if moved {
+            // The app moved the focus on (a code typed into one box per digit): keys sent while
+            // the focus moves are lost. One key at a time: once the focus holds still (the
+            // same field on two reads in a row), type it, then wait for it to land (the field
+            // shows it, or the focus moves on). A field just focused can drop keys for a while
+            // (up to ~0.8 s seen): a key that changed nothing is typed again, three times at
+            // most.
+            for key in rest {
+                var at = onMain { Focus(Self.focusedField(screen)) }
+                let still = DispatchTime.now().uptimeNanoseconds + UInt64(Self.keyWaitMs) * 1_000_000
+                while DispatchTime.now().uptimeNanoseconds < still {
+                    Thread.sleep(forTimeInterval: 0.015)
+                    let again = onMain { Focus(Self.focusedField(screen)) }
+                    if again == at { break }
+                    at = again
+                }
+                for _ in 0..<Self.keyTries {
+                    try Private.typeText(String(key), charactersPerSecond: restRate, wait: false)
+                    var landed = false
+                    let keyDeadline = DispatchTime.now().uptimeNanoseconds + UInt64(Self.keyWaitMs) * 1_000_000
+                    while DispatchTime.now().uptimeNanoseconds < keyDeadline {
+                        if onMain({ Focus(Self.focusedField(screen)) }) != at { landed = true; break }
+                        Thread.sleep(forTimeInterval: 0.01)
+                    }
+                    if landed { break }
+                }
+            }
+            return true
         }
         try Private.typeText(rest, charactersPerSecond: restRate, wait: false)
         return true
+    }
+
+    /// The focused field as typing watches it: where it is and what it shows (nil: none).
+    private struct Focus: Equatable {
+        var frame: CGRect?
+        var value: String?
+        init(_ field: XCUIElementSnapshot?) {
+            frame = field?.frame
+            value = field.map(Input.shownValue)
+        }
     }
 
     /// Android key codes, mapped to iOS keys; other keys (back included) do nothing on iOS.
@@ -172,7 +218,7 @@ final class Input {
     }
 
     /// A field's value, "" when it only shows its placeholder.
-    private static func shownValue(_ field: XCUIElementSnapshot) -> String {
+    fileprivate static func shownValue(_ field: XCUIElementSnapshot) -> String {
         let value = field.value as? String ?? ""
         return value == field.placeholderValue ? "" : value
     }

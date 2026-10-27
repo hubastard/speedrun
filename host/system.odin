@@ -493,6 +493,13 @@ dark_enabled :: proc(r: ^Runner) -> (on: bool, err: Err) {
 
 // ---- screenshots ----------------------------------------------------------------------------
 
+// Creates `path` and the folders above it; true if it exists afterwards (make_directory_all
+// reports .Exist for a folder already there: a second screenshot in the same folder).
+make_dirs :: proc(path: string) -> bool {
+	err := os.make_directory_all(path)
+	return err == nil || err == .Exist
+}
+
 // Where takeScreenshot and startRecording write (ArtifactCollector.allocateCommandOutput):
 // `<path><ext>` in the flow's debug output, under a folder named after the command, which
 // the path must stay inside; with no debug output, relative to the current directory.
@@ -513,7 +520,7 @@ command_output :: proc(r: ^Runner, command, path, ext: string) -> (file: string,
 	if filepath.is_abs(name) || !strings.has_prefix(file, strings.concatenate({folder, "/"}, context.temp_allocator)) {
 		return "", invalid(r, path, command, fmt.tprintf("it resolves outside this run's %s output folder", command))
 	}
-	if os.make_directory_all(filepath.dir(file)) != nil {
+	if !make_dirs(filepath.dir(file)) {
 		return "", fmt.aprintf("cannot create %s", filepath.dir(file), allocator = r.alloc)
 	}
 	return file, nil

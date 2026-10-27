@@ -12,7 +12,7 @@
 //
 // The Android agent's ops, same numbers and responses (see Agent.kt), as iOS does them:
 //   1 PING                                  -> (empty)
-//  10 SCREEN                                -> u32 count, count * node        (Screen.swift)
+//  10 SCREEN                                -> u32 count, count * node, u8 changed since SETTLE (Screen.swift)
 //        the foreground app, then SpringBoard's status bars, each a root at depth 0; the
 //        iOS attribute mapping flows match against; frames in points
 //   3 TAP    i32 x, i32 y                   -> u32 prep_us, u32 inject_us, u8 inject_path (3)

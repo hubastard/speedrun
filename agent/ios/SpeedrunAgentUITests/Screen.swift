@@ -21,6 +21,9 @@ final class Screen {
     private var foreground: XCUIApplication?
     /// Signature of the foreground app's last snapshot.
     private(set) var lastSignature: Int?
+    /// The signature SETTLE ended on: a read that differs (the screen changed after the settle,
+    /// such as a popup presenting) says so, and the host settles before acting on it.
+    var settledSignature: Int?
     /// The app's nodes from the last signature, for the next read (see above).
     private var settled = (nodes: Writer(), count: UInt32(0), at: UInt64(0))
     private static let settledMaxAgeNs: UInt64 = 1_000_000_000
@@ -37,6 +40,7 @@ final class Screen {
     /// Forgets every cached read (a new client). Main thread.
     func reset() {
         lastSignature = nil
+        settledSignature = nil
         settled.at = 0
         statusBars.at = 0
         lastFrames = [:]
@@ -44,9 +48,12 @@ final class Screen {
     }
 
     /// lastActionNs: when the last action began (a settled snapshot older than it is stale).
+    /// Response: u32 count, the nodes, then u8 1 when the app's part differs from what the
+    /// last SETTLE ended on.
     func read(lastActionNs: UInt64, out: inout Writer) throws {
         var nodes = Writer()
         var count: UInt32 = 0
+        var changed = false
         let now = DispatchTime.now().uptimeNanoseconds
         if settled.at > lastActionNs && now - settled.at < Self.settledMaxAgeNs {
             nodes = settled.nodes
@@ -58,6 +65,7 @@ final class Screen {
             var marks: [Mark] = []
             walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks)
             lastSignature = digest(marks, nodes: &nodes)
+            changed = settledSignature != nil && lastSignature != settledSignature
         }
         if statusBars.at == 0 || now - statusBars.at > Self.statusBarsMaxAgeNs {
             var bars = Writer(), barCount: UInt32 = 0, ignored: [Mark] = []
@@ -69,6 +77,7 @@ final class Screen {
         out.u32(count + statusBars.count)
         out.data.append(nodes.data)
         out.data.append(statusBars.nodes.data)
+        out.u8(changed ? 1 : 0)
     }
 
     /// A hash of the foreground app's elements (frames, labels, values, identifiers): equal

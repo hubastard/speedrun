@@ -71,6 +71,7 @@ final class Settle {
             if DispatchTime.now().uptimeNanoseconds >= deadline { break }
         }
 
+        screen.settledSignature = screen.lastSignature
         out.u8(status)
         out.u32(doneAt > start ? UInt32(clamping: (doneAt - start) / 1000) : 0)
         out.u32(micros(since: start))

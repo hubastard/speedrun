@@ -315,6 +315,37 @@ Known differences in how, not what:
   `_XCTSetApplicationStateTimeout`, as WebDriverAgent does), then the settle waits for the
   event loop only and compares signatures: under an open context menu animations never
   finish, and XCTest waited 60 s after every long press that opened one.
+- Found by the benchmark app (bench/app), fixed:
+  - `runFlow: file:` with an absolute path is taken as is (Maestro's Path.resolve); it was
+    joined onto the flow's folder.
+  - A selector without text, id or size whose first filter is relative (`below`, `above`,
+    `leftOf`, `rightOf`) orders its matches by distance, centers to the nearest anchor, then
+    keeps the deepest (Maestro's relativeTo sorts by distance and its intersect keeps the
+    first filter's order; with a text filter first, document order stays).
+  - A tap whose element moved is repeated only if every text of its window is still there: a
+    keypad's fourth digit replaced the title and showed an error above the keys, which moved
+    them, and the repeated tap typed a fifth digit.
+  - iOS typing: when the focus moves to another field after the first character (a code
+    split into one box per digit), the rest goes one key at a time, each once the focus
+    moved on (at most 400 ms): keys sent while the focus moves are lost.
+  - A second `takeScreenshot` into the same folder failed: Odin's make_directory_all
+    reports `.Exist` for a folder already there (make_dirs).
+  - iOS's scroll indicators ("Horizontal scroll bar, 1 page", value "0%", a 30-point touch
+    area over the list's bottom) no longer count as covers in `scrollUntilVisible`.
+  - `scrollUntilVisible` measures an element's visible part against its whole frame where a
+    scroll view cut it (iOS clipping kept only the visible part, so a row half under the
+    list's edge counted as fully visible). It stopped with a row's visible part centered 5
+    points above the screen's bottom, in the home indicator's strip, where iOS took the tap
+    and then lost the next one.
+  - A `when: visible` whose element shows up while it waits settles before it says yes, as
+    find_element does: the tap that follows landed while a React Native modal was still
+    presenting, and UIKit dropped it.
+  - iOS SCREEN ends with a byte: 1 when the app's part differs from the signature the last
+    SETTLE ended on (Screen.settledSignature). find_element and `when: visible`, finding
+    their element on such a read, settle first: a popup that came up just after the last
+    settle (a badge 0.8 s after a rating prompt closed) is still sliding in and takes no tap.
+    Nothing changes between commands on most screens, so it costs nothing there (Settings
+    13.6 s, as before).
 - iOS screens with an endless animation: an element moving on every read (an Animated or
   Reanimated loop updates the model layer every frame, so its accessibility frame changes)
   kept signatures from ever agreeing, and each settle ran to its 10 s timeout. Screen tracks

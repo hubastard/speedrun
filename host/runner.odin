@@ -35,6 +35,7 @@ H_Node :: struct {
 	parent:     int,
 	children:   [dynamic]int, // kept children only (after the bounds filter)
 	kept:       bool,
+	full_area:  f64, // iOS: the frame's area before clip_to_scroll_views cut it (0: not cut)
 }
 
 // The screen as flows see it: every window, nodes the system reports visible, minus those
@@ -42,8 +43,9 @@ H_Node :: struct {
 Hierarchy :: struct {
 	nodes: [dynamic]H_Node,
 	roots: [dynamic]int,
-	order: [dynamic]int, // aggregate(): pre-order of kept nodes
-	hash:  u64, // for retryTapIfNoChange
+	order:     [dynamic]int, // aggregate(): pre-order of kept nodes
+	hash:      u64, // for retryTapIfNoChange
+	unsettled: bool, // iOS: the screen changed since the last settle ended
 }
 
 Record :: struct {
@@ -286,7 +288,7 @@ COMMANDS_JSON_NAMES :: [][2]string {
 // on failure screenshots/final.png.
 @(private = "file")
 write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
-	if os.make_directory_all(fmt.tprintf("%s/logs", dir)) != nil {
+	if !make_dirs(fmt.tprintf("%s/logs", dir)) {
 		fmt.eprintln("could not create", dir)
 		return
 	}
@@ -321,7 +323,7 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 	write_file(fmt.tprintf("%s/logs/maestro.log", dir), transmute([]byte)strings.to_string(log))
 	if !passed {
 		if png, ok := op_screenshot(r.c, context.temp_allocator); ok {
-			os.make_directory_all(fmt.tprintf("%s/screenshots", dir))
+			make_dirs(fmt.tprintf("%s/screenshots", dir))
 			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
 		}
 	}
@@ -839,9 +841,11 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// The element moved between the lookup and the tap: an app that keeps laying out after
 		// it looked settled (Settings inserts a banner ~0.5 s after launch). If it is still
 		// there, unchanged (nothing reacted to the tap: a toggled switch would differ), in the
-		// same containers, on the same screen (most of its window's texts still there), the
-		// tap missed it: tap it where it is now. Once. The screen a tap opened can repeat the
-		// tapped text elsewhere: iOS titles a pushed screen with the row that opened it.
+		// same containers, on the same screen with every text of its window still there, the
+		// tap missed it: tap it where it is now. Once. A text gone means the app reacted (a
+		// keypad's fourth digit replaced the title and pushed the keys down with an error:
+		// tapping again typed a fifth). The screen a tap opened can repeat the tapped text
+		// elsewhere: iOS titles a pushed screen with the row that opened it.
 		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
 			if !read_screen(r) do return "agent connection lost"
 			read_since_tap = true
@@ -855,7 +859,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 					window := window_texts(r, el)
 					shared := 0
 					for t in tapped.window do if t in window do shared += 1
-					same = containers && shared * 2 > len(tapped.window)
+					same = containers && shared == len(tapped.window)
 					if r.debug do fmt.printf("      [tapped %s moved by %d,%d; same containers %v, %d of %d texts still there]\n", tapped.class, nx - x, ny - y, containers, shared, len(tapped.window))
 				}
 				// A field the tap focused moves out of the keyboard's way (and the read can
@@ -951,6 +955,7 @@ covered_by :: proc(r: ^Runner, el: int) -> int {
 	nodes: for ; k < len(r.h.nodes); k += 1 {
 		c := r.h.nodes[k]
 		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		if scroll_indicator(r, c) do continue
 		// Content of another list is no fixed chrome (a closed drawer's menu, which
 		// accessibility still places on screen): only views outside any other scroll view
 		// count.
@@ -966,6 +971,17 @@ covered_by :: proc(r: ^Runner, el: int) -> int {
 		}
 	}
 	return -1
+}
+
+// iOS's scroll indicators are elements over the content they scroll ("Horizontal scroll
+// bar, 1 page", value "0%"), with a touch area ~30 points wide: no cover. Known by their
+// value, a percentage, under a scroll view.
+@(private = "file")
+scroll_indicator :: proc(r: ^Runner, n: H_Node) -> bool {
+	if r.dev.platform != .IOS || n.parent < 0 || !scroll_container(r.h.nodes[n.parent]) do return false
+	if len(n.text) < 2 || n.text[len(n.text) - 1] != '%' do return false
+	_, ok := strconv.parse_int(n.text[:len(n.text) - 1])
+	return ok
 }
 
 // A scroll view: Android's scrollable flag, iOS's element types.
@@ -1103,7 +1119,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		tx, ty := ex, ey // the drag: from the screen center towards the edge
 		if found {
 			n := r.h.nodes[el]
-			vis := visible_pct(n, r.w, r.h_px)
+			vis := visible_share(n, r.w, r.h_px)
 			if d.center && vis > 0.1 && retry_center <= 4 {
 				if near_center(n, dir, r.w, r.h_px) do return nil
 				retry_center += 1
@@ -1216,8 +1232,18 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 	}
 	limit := timeout if timeout >= 0 else condition_timeout(r)
 	if cond.visible != nil {
-		_, found := try_find(r, cond.visible, adjusted(r, limit)) or_return
-		if !found do return false, nil
+		_, found := try_find(r, cond.visible, 0) or_return
+		if found && r.h.unsettled {
+			settle(r, no_change_ms = 0) or_return // as find_element
+			_, found = try_find(r, cond.visible, 0) or_return
+		}
+		if !found {
+			_, found = try_find(r, cond.visible, adjusted(r, limit)) or_return
+			if !found do return false, nil
+			// It appeared while the check waited (a popup presenting): let it come to rest, as
+			// find_element does, or the tap that follows lands mid-transition and is lost.
+			settle(r, no_change_ms = 0) or_return
+		}
 	}
 	if cond.not_visible != nil {
 		end := time.tick_now()._nsec + adjusted(r, limit) * 1_000_000
@@ -1253,6 +1279,12 @@ adjusted :: proc(r: ^Runner, ms: i64) -> i64 {
 find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -> (idx: int, err: Err) {
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
 	i, found := try_find(r, sel, 0) or_return
+	// Found at once on a screen that changed after the last settle (a popup that came up just
+	// after it, still sliding in, takes no tap yet): settle, then find it again.
+	if found && r.h.unsettled {
+		settle(r, no_change_ms = 0) or_return
+		i, found = try_find(r, sel, 0) or_return
+	}
 	if !found {
 		start := time.tick_now()
 		i, found = try_find(r, sel, limit) or_return
@@ -1294,8 +1326,10 @@ clip_to_scroll_views :: proc(r: ^Runner) {
 	for &n, k in r.h.nodes {
 		c := Clip{min(i32), min(i32), max(i32), max(i32)}
 		if n.parent >= 0 do c = clips[n.parent]
+		area := f64(n.right - n.left) * f64(n.bottom - n.top)
 		n.left, n.top = clamp(n.left, c.left, c.right), clamp(n.top, c.top, c.bottom)
 		n.right, n.bottom = clamp(n.right, n.left, c.right), clamp(n.bottom, n.top, c.bottom)
+		if f64(n.right - n.left) * f64(n.bottom - n.top) != area do n.full_area = area
 		switch n.class {
 		case "ScrollView", "Table", "CollectionView":
 			c = {n.left, n.top, n.right, n.bottom}
@@ -1477,6 +1511,20 @@ apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) 
 		}
 		resize(&out, k)
 	}
+	// Without a text, id or size, a relative filter comes first among the filters, and its
+	// order is kept: the nearest element first (centers' distance, to the nearest anchor).
+	// Then deepestMatchingElement: matches with no other match below them.
+	if text_rx == nil && id_rx == nil && !hw && !hh {
+		by_distance(r, s, nodes, out[:]) or_return
+		inner := make([]bool, len(r.h.nodes), context.temp_allocator) // has a match below it
+		for n in out do for p := r.h.nodes[n].parent; p >= 0; p = r.h.nodes[p].parent do inner[p] = true
+		k := 0
+		for n in out do if !inner[n] {
+			out[k] = n
+			k += 1
+		}
+		resize(&out, k)
+	}
 
 	if idx_s, has := s.index.?; has {
 		v := eval(r, idx_s) or_return
@@ -1497,6 +1545,42 @@ apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) 
 	for n in out do if .Clickable in r.h.nodes[n].flags do append(&clickable, n)
 	for n in out do if .Clickable not_in r.h.nodes[n].flags do append(&clickable, n)
 	return clickable[:], nil
+}
+
+// Orders `list` (stably) by the distance from each node's center to the nearest center of the
+// first relative filter's anchors that it lies below / above / left / right of. No relative
+// filter: unchanged.
+@(private = "file")
+by_distance :: proc(r: ^Runner, s: ^Selector, nodes: []int, list: []int) -> Err {
+	other: ^Selector
+	pred: proc(a, b: H_Node) -> bool
+	switch {
+	case s.below != nil:    other, pred = s.below, proc(a, b: H_Node) -> bool {return a.top > b.top}
+	case s.above != nil:    other, pred = s.above, proc(a, b: H_Node) -> bool {return a.top < b.top}
+	case s.left_of != nil:  other, pred = s.left_of, proc(a, b: H_Node) -> bool {return a.left < b.left}
+	case s.right_of != nil: other, pred = s.right_of, proc(a, b: H_Node) -> bool {return a.left > b.left}
+	case:                   return nil
+	}
+	anchors := apply(r, other, nodes) or_return
+	Keyed :: struct {
+		i: int,
+		d: f64,
+	}
+	keyed := make([]Keyed, len(list), context.temp_allocator)
+	for n, k in list {
+		a := r.h.nodes[n]
+		keyed[k] = {n, math.F64_MAX}
+		for o in anchors {
+			b := r.h.nodes[o]
+			if !has_bounds(b) || !pred(a, b) do continue
+			dx := f64(a.left + a.right - b.left - b.right) / 2
+			dy := f64(a.top + a.bottom - b.top - b.bottom) / 2
+			keyed[k].d = min(keyed[k].d, math.sqrt(dx * dx + dy * dy))
+		}
+	}
+	slice.stable_sort_by(keyed, proc(a, b: Keyed) -> bool {return a.d < b.d})
+	for k, j in keyed do list[j] = k.i
+	return nil
 }
 
 @(private = "file")
@@ -1627,6 +1711,18 @@ visible_pct :: proc(n: H_Node, w, h: i32) -> f64 {
 	area := f64(bw) * f64(bh)
 	if area == 0 do return 0
 	return f64(vx) * f64(vy) / area
+}
+
+// visible_pct, of the whole element where a scroll view cut its frame (iOS): a row half
+// under a list's edge is half visible, as Maestro measures it on iOS (and a tap at its
+// visible part's center can land in the home indicator's strip, where iOS loses the next
+// tap).
+@(private = "file")
+visible_share :: proc(n: H_Node, w, h: i32) -> f64 {
+	if n.full_area <= 0 do return visible_pct(n, w, h)
+	vx := max(0, min(n.right, w) - max(n.left, 0))
+	vy := max(0, min(n.bottom, h) - max(n.top, 0))
+	return f64(vx) * f64(vy) / n.full_area
 }
 
 // Whether the element is near the screen's center along the scroll direction.
@@ -1837,6 +1933,8 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		for c in transmute([]u8)n.text do hash = (hash ~ u64(c)) * 1099511628211
 	}
 	r.h.hash = hash
+	// iOS: a byte after the nodes, 1 when the screen differs from where the last settle ended.
+	r.h.unsettled = rd.off < len(rd.b) && rd_u8(&rd) == 1
 	// Display size: the extent of the window roots, in the current orientation (it changes
 	// with setOrientation).
 	w, h: i32

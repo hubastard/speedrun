@@ -3,6 +3,24 @@
 speedrun against Maestro on the same flow files: how it is measured, the latest numbers, and
 the commands where speedrun is still closest to Maestro, with what is known about why.
 
+## Open questions from the benchmark app (bench/app, 2026-10-26)
+
+- **A tap on an element under the keyboard hits the keyboard** (Maestro too): the target's
+  center is inside the keyboard's frame, so the tap types a key or a suggestion, and the
+  next typing goes to the field that still has the focus. speedrun could fail such a tap at
+  once ("covered by the keyboard: hideKeyboard first") instead of typing junk; that would
+  fail flows that pass by accident today, so it is not done.
+- **One field per digit, the focus jumping after each key**: both tools lose digits on iOS
+  (Maestro 2/2 runs failed, speedrun most). speedrun types key by key once it sees the focus
+  move, which helps but does not make it reliable; the app now uses one field drawn as six
+  boxes, as code-entry libraries do.
+- **iOS `setPermissions` takes effect at the next launch** (the TCC database is written; a
+  running app keeps what it read), and `launchApp` without `permissions:` grants everything
+  again, as in Maestro.
+- **The iOS simulator's hardware keyboard setting** decides whether the software keyboard
+  shows; this one has it on, yet the keyboard showed in some fields: flows should not depend
+  on it either way.
+
 ## Measuring
 
 ```
