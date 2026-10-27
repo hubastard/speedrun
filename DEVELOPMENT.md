@@ -1,4 +1,4 @@
-# speedrun: development notes
+# Speedrun: development notes
 
 How speedrun is built and how it behaves in detail, for working on it. Using it:
 `README.md`. Benchmarks and what is still slow: `TO_IMPROVE.md`.
@@ -79,7 +79,7 @@ Maestro flow files run as they are:
 ./speedrun test -p ios bench/app/flows/        # the benchmark app's suite, on a simulator
 ```
 
-speedrun picks a connected Android device, else the one booted simulator; `--platform` and
+Speedrun picks a connected Android device, else the one booted simulator; `--platform` and
 `--device` (a serial or a simulator UDID) choose. On iOS it starts the agent's runner with
 `xcodebuild test-without-building`, which takes 3–6 s, so the runner outlives the run: the
 next run on that simulator reuses it and starts in ~0.2 s (a runner of an older build is
@@ -465,7 +465,7 @@ Known differences in how, not what:
   thread; with the Mac busy, reads and shell commands were seen to block for 2–9 s and one
   `assertVisible` right after `launchApp` timed out. Rerun on a quieter machine before
   trusting a failure or a number.
-- speedrun goes through the `adb` binary for `forward`/`push`/`install` (about 0.5 s of
+- Speedrun goes through the `adb` binary for `forward`/`push`/`install` (about 0.5 s of
   start-up per run). It could speak the adb wire protocol directly.
 - Animations are disabled by every run (normal practice for UI tests) and stay disabled;
   re-enable with `adb shell settings put global <name> 1` for `window_animation_scale`,

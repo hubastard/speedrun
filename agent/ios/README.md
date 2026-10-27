@@ -83,7 +83,7 @@ What it means:
   `UIKit/UIPreferences` on, which `FEATUREFLAGS_ENABLED=UIKit/UIPreferences` in the app's
   environment does (flags separated by colons). Launched with that and
   `-UIAnimationDragCoefficient 0.1`, Settings' General push went from ~1.5 to ~0.7 s per tap
-  command and back from ~1.0 to ~0.55 s; 0.01 was no faster. speedrun's `launchApp` does this
+  command and back from ~1.0 to ~0.55 s; 0.01 was no faster. Speedrun's `launchApp` does this
   (host/system.odin). The global defaults domain and `com.apple.UIKit` are not read without
   the flag.
 - Later (2026-10-25), swipes, traced with `spike/swipe.py` (a row's position polled during

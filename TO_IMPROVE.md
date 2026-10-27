@@ -1,17 +1,17 @@
 # Things to improve
 
-speedrun against Maestro on the same flow files: how it is measured, the latest numbers, and
+Speedrun against Maestro on the same flow files: how it is measured, the latest numbers, and
 the commands where speedrun is still closest to Maestro, with what is known about why.
 
 ## Open questions from the benchmark app (bench/app, 2026-10-26)
 
 - **A tap on an element under the keyboard hits the keyboard** (Maestro too): the target's
   center is inside the keyboard's frame, so the tap types a key or a suggestion, and the
-  next typing goes to the field that still has the focus. speedrun could fail such a tap at
+  next typing goes to the field that still has the focus. Speedrun could fail such a tap at
   once ("covered by the keyboard: hideKeyboard first") instead of typing junk; that would
   fail flows that pass by accident today, so it is not done.
 - **One field per digit, the focus jumping after each key**: both tools lose digits on iOS
-  (Maestro 2/2 runs failed, speedrun most). speedrun types key by key once it sees the focus
+  (Maestro 2/2 runs failed, speedrun most). Speedrun types key by key once it sees the focus
   move, which helps but does not make it reliable; the app now uses one field drawn as six
   boxes, as code-entry libraries do.
 - **iOS `setPermissions` takes effect at the next launch** (the TCC database is written; a
@@ -86,13 +86,13 @@ and scripting flows on iOS (2.2x).
 The Settings benchmark, TIMES=3, 2026-10-27 (`compare.sh`; flow time, then the wall clock
 with each tool's start-up and shutdown, speedrun's iOS agent started cold):
 
-| flow | device | speedrun | Maestro | ratio (wall) |
+| flow | device | Speedrun | Maestro | ratio (wall) |
 |---|---|---|---|---|
 | `bench_scenario.yaml` | Android 17 emulator, `-gpu host` | 10.9 s, 13.4 s | 104.7 s, 113.1 s | 8.4x |
 | `bench_scenario_ios.yaml` | iPhone 17 Pro simulator, iOS 26.2 | 29.8 s, 32.8 s | 80.5 s, 90.5 s | 2.8x |
 
 On 2026-10-26: Android 10.5 s vs 88.0 s, iOS 26.9 s vs 78.8 s. Maestro's Android run was
-slower this time (its taps took up to 4.9 s; the emulator's load was 2.5–3.5). speedrun's iOS
+slower this time (its taps took up to 4.9 s; the emulator's load was 2.5–3.5). Speedrun's iOS
 run was 33.2 s with v0.1.2: its `scrollUntilVisible` down to "Developer" took 2.5 s, as the
 row first came in as a sliver inside iOS 26's bottom toolbar and the drag meant to clear the
 toolbar went the wrong way (fixed: 1.4 s; on 10-26 the sliver still counted as fully

@@ -139,7 +139,7 @@ def cell(c, est=None):
     if c is None: return "–"
     t, failed = c
     return f"{t:.0f} s" + (" ✗" if failed else "") + (f" (~{est:.0f} s)" if est else "")
-lines = [f"| Flow ({platform}) | speedrun | Maestro | Speedup |", "|---|---:|---:|---:|"]
+lines = [f"| Flow ({platform}) | Speedrun | Maestro | Speedup |", "|---|---:|---:|---:|"]
 names = sorted(set(ours or {}) | set(theirs or {}))
 estimated = {}
 for n in names:

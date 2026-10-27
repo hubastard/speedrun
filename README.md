@@ -1,8 +1,8 @@
-# speedrun
+# Speedrun
 
 **Fast end-to-end UI tests for Android and iOS.**
 
-speedrun runs mobile UI flows written in the Maestro flow format. Point it at the YAML files,
+Speedrun runs mobile UI flows written in the Maestro flow format. Point it at the YAML files,
 folders and config you already use with `maestro test` and most flows run as they are,
 several times faster: on the flows of our benchmark app that both tools pass, **6.1x faster
 than Maestro on Android** and 2.6x on iOS, and it passes flows that Maestro fails.
@@ -21,7 +21,7 @@ maestro test flows/      →      speedrun test flows/
 
 ## Benchmark
 
-speedrun and Maestro on [Speedrun Bench](bench/app), a React Native app made to be tested:
+Speedrun and Maestro on [Speedrun Bench](bench/app), a React Native app made to be tested:
 19 flows that cover every command and selector, on the screens that make tests slow or
 flaky in real apps — animations that never stop, popups that show up late or one after
 another, a keyboard over the checkout button, lists that load more as you scroll, native
@@ -29,13 +29,13 @@ modals and alerts, permission prompts. Both tools run the same flow files.
 
 | Platform | Flows both pass | Whole suite, estimated | Flows passed |
 |---|---:|---:|---|
-| Android emulator | **6.1x faster** (16 flows: 7 min 12 s against 43 min 58 s) | ~5.8x | speedrun 19/19, Maestro 16/19 |
-| iOS simulator | **2.6x faster** (8 flows: 2 min 58 s against 7 min 42 s) | ~4.1x | speedrun 19/19, Maestro 8/19 |
+| Android emulator | **6.1x faster** (16 flows: 7 min 12 s against 43 min 58 s) | ~5.8x | Speedrun 19/19, Maestro 16/19 |
+| iOS simulator | **2.6x faster** (8 flows: 2 min 58 s against 7 min 42 s) | ~4.1x | Speedrun 19/19, Maestro 8/19 |
 
 The first column times the flows that both tools pass. The time of a flow Maestro fails says
 little (it fails some early, others after waiting out its timeouts), so the second estimates
 the whole suite as if Maestro had finished those flows: its time up to the failing step, then
-speedrun's time for the rest of the flow at Maestro's pace on that flow so far. speedrun ran
+speedrun's time for the rest of the flow at Maestro's pace on that flow so far. Speedrun ran
 the whole suite in 8 min 14 s on Android and 11 min 5 s on iOS, start-up included (Maestro:
 46 min 56 s and 40 min 19 s, counting its failed flows up to the failure).
 
@@ -59,12 +59,12 @@ On native screens, the system Settings app (`bench_scenario.yaml` and
 `bench_scenario_ios.yaml`: 14 commands, navigation, scrolling and text input, run three
 times), with `./compare.sh <flow> -e TIMES=3`:
 
-| Platform | speedrun | Maestro 2.11 | speedrun is |
+| Platform | Speedrun | Maestro 2.11 | Speedrun is |
 |---|---:|---:|---:|
 | Android emulator | **13.4 s** | 113.1 s | 8.4x faster |
 | iOS simulator | **32.8 s** | 90.5 s | 2.8x faster |
 
-speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds
+Speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds
 and tells exactly when the app has settled, instead of comparing screenshots or sleeping.
 
 ## Requirements
@@ -149,7 +149,7 @@ speedrun test flows/ --format junit --output report.xml
 speedrun test [options] <flow file or folder>...
 ```
 
-speedrun takes `maestro test`'s options. `-p` and `--device` may also come before `test`.
+Speedrun takes `maestro test`'s options. `-p` and `--device` may also come before `test`.
 
 | Option | |
 |---|---|
@@ -168,7 +168,7 @@ speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 | `--shard-all <n>` | Run every flow on each of n devices. |
 | `-c`, `--continuous` | Rerun the flow when its files change, or when you press Enter. |
 
-speedrun's own options:
+Speedrun's own options:
 
 | Option | |
 |---|---|
@@ -195,12 +195,12 @@ Environment variables:
 | `SPEEDRUN_CONDITION_TIMEOUT_MS` | How long a `when: visible` (or `notVisible`) waits for its element (default 7000, as Maestro). See [Conditions](#conditions-take-up-to-7-s). |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |
 
-speedrun exits with status 1 when a flow fails. A suite prints one line per flow, then
+Speedrun exits with status 1 when a flow fails. A suite prints one line per flow, then
 `N/M Flows Passed` or `N/M Flows Failed`.
 
 ## Maestro compatibility
 
-speedrun reads Maestro 2.11 flow syntax and follows its behavior: how selectors match, which
+Speedrun reads Maestro 2.11 flow syntax and follows its behavior: how selectors match, which
 element wins, timeouts, conditions, variables and scripts. Like Maestro, it is strict. An
 unknown command or field is an error, and so is a Maestro feature speedrun does not support
 yet. So a flow that loads runs as written; nothing is skipped silently.
@@ -257,7 +257,7 @@ yet. So a flow that loads runs as written; nothing is skipped silently.
   plus 0.7 s). For an app that waits longer, set `SPEEDRUN_LONG_PRESS_MS`.
 - **iOS `doubleTapOn` lands as a double tap in React Native apps**: its two taps are one
   gesture, 200 ms apart (Maestro's arrive too far apart for a 300 ms double-tap window).
-- **Several devices connected and no `--device`:** Maestro asks which one to use. speedrun
+- **Several devices connected and no `--device`:** Maestro asks which one to use. Speedrun
   takes the first Android device, else the booted simulator.
 - **Regular expressions:** Java-only syntax (lookarounds, inline flags, `\p{...}`) is
   rejected. A pattern that is invalid in both tools matches as plain text, as in Maestro.
@@ -292,7 +292,7 @@ timeouts.
   (3–6 s) and keeps it running, so later runs start in about 0.2 s. It stops after 10 idle
   minutes, or with `speedrun --stop-agent`.
 - **"Another UiAutomation client is running on the device".** Android allows only one UI
-  automation tool at a time. speedrun stops Maestro's leftover driver itself; stop any other
+  automation tool at a time. Speedrun stops Maestro's leftover driver itself; stop any other
   tool (Appium, `uiautomator`, an instrumentation test) before running.
 - **Slow or flaky runs on a busy machine.** An emulator stalls when the host is short of
   memory or CPU. Shut iOS simulators down while testing on Android (run
@@ -302,7 +302,7 @@ timeouts.
 
 ## Third-party software
 
-speedrun includes [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (MIT),
+Speedrun includes [QuickJS-ng](https://github.com/quickjs-ng/quickjs) (MIT),
 [Datafaker](https://github.com/datafaker-net/datafaker)'s English word lists (Apache-2.0)
 and [stb_image](https://github.com/nothings/stb) (public domain).
 

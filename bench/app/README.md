@@ -59,7 +59,7 @@ times). The drag and onboarding flows changed after these runs (sideways
 `scrollUntilVisible`): their rows were measured again on their own, the same day, and the
 totals take them in.
 
-| Flow (android) | speedrun | Maestro | Speedup |
+| Flow (android) | Speedrun | Maestro | Speedup |
 |---|---:|---:|---:|
 | A remembered account survives clearState on iOS, but not clearKeychain | 9 s | 34 s | 3.7x |
 | Buy twice, with search, options, a promo code that fails once and the popups after | 60 s | 232 s | 3.9x |
@@ -87,7 +87,7 @@ totals take them in.
 
 Passed: speedrun 19/19, Maestro 16/19. ✗: failed; ~: estimated.
 
-| Flow (ios) | speedrun | Maestro | Speedup |
+| Flow (ios) | Speedrun | Maestro | Speedup |
 |---|---:|---:|---:|
 | A remembered account survives clearState on iOS, but not clearKeychain | 24 s | 78 s | 3.3x |
 | Buy twice, with search, options, a promo code that fails once and the popups after | 81 s | 73 s ✗ (~270 s) | ~3.3x |
@@ -125,7 +125,7 @@ Why Maestro failed:
   changed).
 - **A list away from the screen's center** (both): `scrollUntilVisible` swipes across the
   screen's center, below the drag screen's card list, so card 25 never comes (drag).
-  speedrun drags across the list.
+  Speedrun drags across the list.
 - **A paging list** (both): on Android, Maestro's sideways swipes from the center did not
   bring the onboarding's first page back in 8 tries; on iOS each swipe then waited 11–15 s
   for the floating illustration to settle, and the scroll ran out of its 20 s after two.
@@ -135,7 +135,7 @@ Why Maestro failed:
 - **Double tap** (iOS): its two taps arrive too far apart for a 300 ms double-tap window, so
   a post or a message is never liked (feed, chat).
 - **A row half under a list's edge** (iOS): Maestro taps the center of the row's whole frame,
-  which lies outside the list: the tap focused the search field above it (cart). speedrun
+  which lies outside the list: the tap focused the search field above it (cart). Speedrun
   cuts frames to the list that shows them and taps the visible part.
 - **A layout shift** (iOS): a banner arriving a moment after the screen pushed the button
   down between the lookup and the tap (timing).
