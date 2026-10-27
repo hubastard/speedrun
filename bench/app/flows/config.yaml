@@ -1,0 +1,3 @@
+# The suite: every flow in this folder (shared subflows live in _shared/).
+flows:
+  - "*"

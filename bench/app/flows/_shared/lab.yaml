@@ -1,0 +1,8 @@
+# Opens a lab screen from the Lab tab. Env: SCREEN (gestures, drag, selectors, inputs, device,
+# animations).
+appId: dev.speedrun.bench
+---
+- tapOn:
+    id: tab-lab
+- tapOn:
+    id: lab-${SCREEN}

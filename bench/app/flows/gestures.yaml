@@ -1,0 +1,46 @@
+appId: dev.speedrun.bench
+name: Swipes in four directions, taps at a point, single, double and long press
+tags: [lab, gestures]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: gestures
+- swipe:
+    from:
+      id: swipe-pad
+    direction: LEFT
+- assertVisible: "Last swipe: LEFT \\(1\\)"
+- swipe:
+    from:
+      id: swipe-pad
+    direction: RIGHT
+- assertVisible: "Last swipe: RIGHT \\(2\\)"
+- swipe:
+    from:
+      id: swipe-pad
+    direction: UP
+- assertVisible: "Last swipe: UP \\(3\\)"
+- swipe:
+    from:
+      id: swipe-pad
+    direction: DOWN
+- assertVisible: "Last swipe: DOWN \\(4\\)"
+- tapOn:
+    id: tap-pad
+    point: "15%,20%"
+- assertVisible: "Tapped top left"
+- tapOn:
+    id: tap-pad
+    point: "85%,80%"
+- assertVisible: "Tapped bottom right"
+- doubleTapOn:
+    id: double-tap-target
+- assertVisible: "Single: 0 · Double: 1"
+- tapOn:
+    id: double-tap-target
+- assertVisible: "Single: 1 · Double: 1"
+- longPressOn:
+    id: long-press-target
+- assertVisible: "Long presses: 1"

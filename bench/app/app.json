@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "Speedrun Bench",
+    "slug": "speedrun-bench",
+    "scheme": "speedrunbench",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "bundleIdentifier": "dev.speedrun.bench",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Shows where you are in the device lab.",
+        "NSPhotoLibraryUsageDescription": "Shows your latest photos in the device lab.",
+        "NSCameraUsageDescription": "Shows the camera permission in the device lab."
+      }
+    },
+    "android": {
+      "package": "dev.speedrun.bench",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Shows where you are in the device lab."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Shows your latest photos in the device lab.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Shows the camera permission in the device lab."
+        }
+      ],
+      "expo-notifications",
+      "./plugins/with-pod-deployment-target"
+    ]
+  }
+}

@@ -1,0 +1,61 @@
+appId: dev.speedrun.bench
+name: Feed with a ticker, stories, likes, a double tap, more posts and pull to refresh
+tags: [feed]
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: _shared/sign-in.yaml
+    env:
+      PHONE: "5550101234"
+      CODE: "123456"
+      REMEMBER: "false"
+- extendedWaitUntil:
+    visible: "Post 1: .*"
+    timeout: 10000
+- assertVisible:
+    id: announcement
+# A banner arrives late and pushes the feed down.
+- extendedWaitUntil:
+    visible:
+      id: promo-banner
+    timeout: 5000
+- tapOn:
+    id: like-1
+- assertVisible: "Liked · .*"
+- doubleTapOn:
+    id: photo-2
+# The like button sits under the tab bar: bring it up.
+- scrollUntilVisible:
+    element:
+      id: like-2
+      selected: true
+# The first page has 20 posts: the next ones load at the end of the list.
+- scrollUntilVisible:
+    element: "Post 30: .*"
+    timeout: 40000
+- scrollUntilVisible:
+    element:
+      id: like-30
+- tapOn:
+    id: like-30
+- assertVisible:
+    id: like-30
+    selected: true
+# Back up near the top, but not to it: a drag that reaches the top pulls the list past it,
+# which refreshes it.
+- scrollUntilVisible:
+    element:
+      id: like-1
+    direction: UP
+    timeout: 40000
+# Pull to refresh.
+- swipe:
+    from:
+      id: like-1
+    direction: DOWN
+- extendedWaitUntil:
+    visible: "Refreshed 1×"
+    timeout: 5000
+- scroll
+- waitForAnimationToEnd

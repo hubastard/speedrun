@@ -1,0 +1,45 @@
+# Signs in from wherever the app opened, the way real suites do: each screen the app may or
+# may not show is checked for. Env: PHONE, CODE, REMEMBER (true/false).
+appId: dev.speedrun.bench
+---
+# The first launch after an install (or clearState) shows the onboarding.
+- runFlow:
+    when:
+      visible:
+        id: onboarding-skip
+    commands:
+      - tapOn:
+          id: onboarding-skip
+# iOS keeps a remembered account across clearState (keychain): use another one.
+- runFlow:
+    when:
+      visible: "Welcome back, .*!"
+    commands:
+      - tapOn:
+          id: use-another
+- tapOn:
+    id: phone-input
+- inputText: ${PHONE}
+- runFlow:
+    when:
+      true: ${REMEMBER == 'true'}
+    commands:
+      - tapOn:
+          id: remember-me
+- tapOn:
+    id: next
+- extendedWaitUntil:
+    visible:
+      id: code-input
+    timeout: 10000
+- inputText: ${CODE}
+# Home, or the notification prompt over it (iOS leaves what a popup covers out of the
+# accessibility tree): either means the sign in is done.
+- extendedWaitUntil:
+    visible:
+      id: "tab-home|notify-title"
+    timeout: 15000
+- runFlow: dismiss-notify.yaml
+- extendedWaitUntil:
+    visible: "Hi, .*"
+    timeout: 10000

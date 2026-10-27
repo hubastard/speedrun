@@ -1,0 +1,42 @@
+appId: dev.speedrun.bench
+name: A remembered account survives clearState on iOS, but not clearKeychain
+tags: [auth]
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow:
+    file: _shared/sign-in.yaml
+    env:
+      PHONE: "5550109999"
+      CODE: "123456"
+      REMEMBER: "true"
+- launchApp:
+    clearState: true
+- tapOn:
+    id: onboarding-skip
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible: "Welcome back, Alex!"
+      - tapOn:
+          id: continue-remembered
+      - extendedWaitUntil:
+          visible:
+            id: "tab-home|notify-title"
+          timeout: 10000
+      - runFlow: _shared/dismiss-notify.yaml
+      - assertVisible: "Hi, Alex"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible: "Let's start with your phone number"
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- tapOn:
+    id: onboarding-skip
+- assertVisible: "Let's start with your phone number"
+- clearKeychain

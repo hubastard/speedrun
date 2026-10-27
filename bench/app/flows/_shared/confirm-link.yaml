@@ -1,0 +1,8 @@
+# iOS simulators may ask "Open in “Speedrun Bench”?" for a link opened from outside the app.
+appId: dev.speedrun.bench
+---
+- runFlow:
+    when:
+      visible: "Open in .*"
+    commands:
+      - tapOn: "Open"

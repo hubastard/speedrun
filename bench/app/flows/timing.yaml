@@ -1,0 +1,49 @@
+appId: dev.speedrun.bench
+name: Confetti, a button that turns on late, a layout shift, a busy JavaScript thread
+tags: [lab, animations]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: animations
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: confetti
+# The button turns on 1.5 s after the screen opens: wait for it, as a flow must.
+- scrollUntilVisible:
+    element:
+      id: scene-delayed
+- tapOn:
+    id: scene-delayed
+- assertVisible:
+    id: lab-tap
+    enabled: false
+- extendedWaitUntil:
+    visible:
+      id: lab-tap
+      enabled: true
+    timeout: 5000
+- tapOn:
+    id: lab-tap
+- assertVisible: "Taps: 1"
+- tapOn:
+    id: header-back
+# A banner pushes the button down 1 s after the screen opens.
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: shift
+# Each tap blocks the JavaScript thread for 1 s before it counts.
+- scrollUntilVisible:
+    element:
+      id: scene-busy
+- tapOn:
+    id: scene-busy
+- tapOn:
+    id: lab-tap
+- assertVisible: "Taps: 1"
+- tapOn:
+    id: lab-tap
+- assertVisible: "Taps: 2"

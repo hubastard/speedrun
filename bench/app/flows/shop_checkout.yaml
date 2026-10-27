@@ -1,0 +1,131 @@
+appId: dev.speedrun.bench
+name: Buy twice, with search, options, a promo code that fails once and the popups after
+tags: [shop]
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: _shared/sign-in.yaml
+    env:
+      PHONE: "5550101234"
+      CODE: "123456"
+      REMEMBER: "false"
+- tapOn:
+    id: tab-shop
+- tapOn:
+    id: search-input
+- inputText: "sneaker"
+- pressKey: Enter
+- assertVisible: "Searched for \"sneaker\""
+- extendedWaitUntil:
+    visible: "6 products"
+    timeout: 5000
+- tapOn: "City Sneaker"
+- assertVisible:
+    id: product-name
+    text: "City Sneaker"
+- assertVisible:
+    id: add-to-cart
+    enabled: false
+- tapOn:
+    id: size-M
+- assertVisible:
+    id: size-M
+    selected: true
+- tapOn:
+    id: color-Blue
+- assertVisible:
+    id: color-Blue
+    checked: true
+- tapOn:
+    id: qty-plus
+    repeat: 2
+    delay: 300
+- assertVisible: "Qty 3"
+- scrollUntilVisible:
+    element:
+      id: gift-wrap
+    centerElement: true
+- tapOn:
+    id: gift-wrap
+- assertVisible:
+    id: gift-wrap
+    checked: true
+- tapOn:
+    id: add-to-cart
+- assertVisible: "Added to cart"
+- assertVisible: "Cart \\(3\\)"
+- tapOn:
+    id: go-to-cart
+- assertVisible: "Size M · Blue · Gift wrap"
+- tapOn:
+    id: promo-input
+- inputText: "SAVE10"
+# The first try fails ("the server" times out): tap again.
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: apply-promo
+      - extendedWaitUntil:
+          visible:
+            id: promo-applied
+          timeout: 2000
+# The keyboard covers the sticky Checkout button.
+- hideKeyboard
+- tapOn:
+    id: checkout
+- tapOn:
+    id: name-input
+- inputRandomPersonName
+- tapOn:
+    id: email-input
+- inputText: "alex@"
+- tapOn:
+    id: street-input
+- assertVisible: "Enter a valid email"
+- inputText: "1 Main Street"
+- tapOn:
+    id: email-input
+- inputText: "example.com"
+- tapOn:
+    id: city-input
+- inputRandomCityName
+- tapOn:
+    id: postal-input
+- inputText: "H2X 1Y4"
+- hideKeyboard
+- tapOn:
+    id: ship-express
+- tapOn:
+    id: place-order
+- extendedWaitUntil:
+    visible:
+      id: order-confirmed
+    timeout: 10000
+- copyTextFrom:
+    id: order-number
+- assertTrue: ${maestro.copiedText == 'Order #10001'}
+- tapOn:
+    id: done
+- runFlow: _shared/dismiss-order-popups.yaml
+# The second order: the survey comes this time.
+- runFlow:
+    file: _shared/add-to-cart.yaml
+    env:
+      PRODUCT: "31"
+      SIZE: "L"
+- tapOn:
+    id: cart-button
+- runFlow:
+    file: _shared/checkout.yaml
+    env:
+      ORDER: "10002"
+- tapOn:
+    id: done
+- runFlow: _shared/dismiss-order-popups.yaml
+- tapOn:
+    id: tab-profile
+- assertVisible:
+    id: profile-orders
+    text: "2"

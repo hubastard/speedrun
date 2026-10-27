@@ -1,0 +1,18 @@
+appId: dev.speedrun.bench
+name: Deep links to a product, a lab screen and the cart
+tags: [device]
+---
+- runFlow: _shared/guest.yaml
+- openLink: speedrunbench://product/7
+# Simulators may ask "Open in “Speedrun Bench”?" for a link opened from outside the app.
+- runFlow: _shared/confirm-link.yaml
+- assertVisible:
+    id: product-name
+    text: "Trail Bottle"
+- openLink: speedrunbench://lab/gestures
+- runFlow: _shared/confirm-link.yaml
+- assertVisible: "Last swipe: none \\(0\\)"
+- openLink:
+    link: speedrunbench://cart
+- runFlow: _shared/confirm-link.yaml
+- assertVisible: "Your cart is empty"

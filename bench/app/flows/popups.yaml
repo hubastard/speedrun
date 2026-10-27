@@ -1,0 +1,19 @@
+appId: dev.speedrun.bench
+name: Popups that come one after another (native modals, a sheet)
+tags: [lab, popups]
+---
+- runFlow: _shared/guest.yaml
+- tapOn:
+    id: tab-lab
+- tapOn:
+    id: lab-popups-first
+- runFlow: _shared/dismiss-order-popups.yaml
+- assertNotVisible:
+    id: badge-title
+- tapOn:
+    id: lab-popups-second
+- runFlow: _shared/dismiss-order-popups.yaml
+- assertNotVisible:
+    id: survey-title
+- assertVisible:
+    id: lab-device

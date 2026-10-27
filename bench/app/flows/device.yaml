@@ -1,0 +1,121 @@
+appId: dev.speedrun.bench
+name: Launch arguments, location, permissions, photos, orientation, app lifecycle, airplane mode
+tags: [lab, device]
+---
+- launchApp:
+    clearState: true
+    arguments:
+      greeting: hello
+      mode: bench
+- tapOn:
+    id: onboarding-skip
+- runFlow:
+    when:
+      visible:
+        id: use-another
+    commands:
+      - tapOn:
+          id: use-another
+- tapOn:
+    id: guest
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: device
+- assertVisible: "Arguments: greeting=hello, mode=bench"
+- assertVisible: "Launches: 1"
+- setLocation:
+    latitude: 45.5017
+    longitude: -73.5673
+- extendedWaitUntil:
+    visible: "Location: 45.5017, -73.5673"
+    timeout: 10000
+- travel:
+    points:
+      - 45.5017,-73.5673
+      - 45.5088,-73.5540
+    speed: 1000
+- extendedWaitUntil:
+    visible: "Location: 45.5088, -73.5540"
+    timeout: 20000
+# launchApp grants everything unless told otherwise; setPermissions changes them while the
+# app runs (Refresh reads them again).
+- launchApp:
+    permissions:
+      camera: deny
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: device
+- assertVisible: "Camera: denied"
+# setPermissions: iOS applies it at the next launch (launchApp then leaves the camera be:
+# it is given permissions of its own).
+- setPermissions:
+    permissions:
+      camera: allow
+- launchApp:
+    permissions:
+      notifications: allow
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: device
+- assertVisible: "Camera: granted"
+# iOS asks for the photos (the system's prompt: full access).
+- runFlow:
+    when:
+      visible:
+        id: allow-photos
+    commands:
+      - tapOn:
+          id: allow-photos
+      - tapOn: "Allow Full Access|Allow Access to All Photos"
+- assertVisible: "Photos: \\d+"
+- copyTextFrom:
+    id: photo-count
+- evalScript: "${output.photos = parseInt(maestro.copiedText.replace('Photos: ', ''))}"
+- addMedia:
+    - media/photo.png
+- tapOn:
+    id: refresh-device
+- copyTextFrom:
+    id: photo-count
+- assertTrue: "${parseInt(maestro.copiedText.replace('Photos: ', '')) == output.photos + 1}"
+# Home, then back to the app as it was.
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- assertVisible: "Back in the foreground: 1"
+# A restart counts one more launch.
+- copyTextFrom:
+    id: launches
+- evalScript: "${output.launches = parseInt(maestro.copiedText.replace('Launches: ', ''))}"
+- stopApp
+- launchApp
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: device
+- copyTextFrom:
+    id: launches
+- assertTrue: "${parseInt(maestro.copiedText.replace('Launches: ', '')) == output.launches + 1}"
+- setOrientation: LANDSCAPE_LEFT
+- extendedWaitUntil:
+    visible: "Orientation: landscape"
+    timeout: 5000
+- setOrientation: PORTRAIT
+- extendedWaitUntil:
+    visible: "Orientation: portrait"
+    timeout: 5000
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - setAirplaneMode: enabled
+      - extendedWaitUntil:
+          visible: "Network: offline"
+          timeout: 10000
+      - toggleAirplaneMode
+      - extendedWaitUntil:
+          visible: "Network: online"
+          timeout: 15000

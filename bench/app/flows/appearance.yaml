@@ -1,0 +1,41 @@
+appId: dev.speedrun.bench
+name: Dark mode, screenshots and a recording
+tags: [lab, device]
+---
+- runFlow: _shared/guest.yaml
+- setDarkMode: disabled
+- assertLightMode
+- startRecording: appearance
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: device
+- assertVisible: "Appearance: light"
+- setDarkMode: enabled
+- assertDarkMode
+- extendedWaitUntil:
+    visible: "Appearance: dark"
+    timeout: 5000
+- toggleDarkMode
+- assertLightMode
+- extendedWaitUntil:
+    visible: "Appearance: light"
+    timeout: 5000
+- stopRecording
+- tapOn:
+    id: header-back
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: settings
+- takeScreenshot: settings
+- assertScreenshot:
+    path: settings
+    thresholdPercentage: 95
+- scrollUntilVisible:
+    element:
+      id: version
+- takeScreenshot:
+    path: version
+    cropOn:
+      id: version

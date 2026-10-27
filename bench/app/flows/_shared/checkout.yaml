@@ -1,0 +1,27 @@
+# From the cart: checkout with a valid address, then the confirmation. Env: ORDER.
+appId: dev.speedrun.bench
+---
+- tapOn:
+    id: checkout
+- tapOn:
+    id: name-input
+- inputText: "Alex Rivera"
+- tapOn:
+    id: email-input
+- inputText: "alex@example.com"
+- tapOn:
+    id: street-input
+- inputText: "1 Main Street"
+- tapOn:
+    id: city-input
+- inputText: "Montreal"
+- tapOn:
+    id: postal-input
+- inputText: "H2X 1Y4"
+# The keyboard covers the sticky footer.
+- hideKeyboard
+- tapOn:
+    id: place-order
+- extendedWaitUntil:
+    visible: "Order #${ORDER}"
+    timeout: 10000

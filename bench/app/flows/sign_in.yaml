@@ -1,0 +1,48 @@
+appId: dev.speedrun.bench
+name: Sign in with a phone number and a code, a wrong one first
+tags: [auth]
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: onboarding-skip
+- runFlow:
+    when:
+      visible:
+        id: use-another
+    commands:
+      - tapOn:
+          id: use-another
+- assertVisible:
+    id: next
+    enabled: false
+- tapOn:
+    id: phone-input
+- inputText: "5550101234"
+- assertVisible: "\\(555\\) 010-1234"
+- assertVisible:
+    id: next
+    enabled: true
+- eraseText: 4
+- assertVisible: "\\(555\\) 010"
+- inputText: "1234"
+- tapOn:
+    id: next
+- extendedWaitUntil:
+    visible: "Sent to \\(555\\) 010-1234"
+    timeout: 10000
+- tapOn:
+    id: code-input
+- inputText: "111111"
+- extendedWaitUntil:
+    visible: "Wrong code, try again"
+    timeout: 5000
+- tapOn:
+    id: code-input
+- inputText: "123456"
+- extendedWaitUntil:
+    visible:
+      id: "tab-home|notify-title"
+    timeout: 15000
+- runFlow: _shared/dismiss-notify.yaml
+- assertVisible: "Hi, Alex"

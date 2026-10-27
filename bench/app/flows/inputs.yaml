@@ -1,0 +1,134 @@
+appId: dev.speedrun.bench
+name: Typing, keys, erasing, copy and paste, random text, a draft kept across restarts
+tags: [lab, inputs]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: inputs
+- assertVisible: "Keyboard: hidden"
+- tapOn:
+    id: note-input
+- inputText: "Buy milk"
+- hideKeyboard
+- assertVisible: "Keyboard: hidden"
+# The draft is saved: stopApp and killApp keep it.
+- stopApp
+- launchApp
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: inputs
+- assertVisible: "Buy milk"
+- killApp
+- launchApp
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: inputs
+- assertVisible: "Buy milk"
+- tapOn:
+    id: key-input
+- inputText: "hello"
+- pressKey: Enter
+- assertVisible: "Submitted: hello"
+- tapOn:
+    id: key-input
+- pressKey: Backspace
+- pressKey: Backspace
+- assertVisible: "Backspaces: 2"
+- eraseText:
+    charactersToErase: 1
+- pressKey: Enter
+- assertVisible: "Submitted: he"
+- copyTextFrom:
+    id: copy-source
+- tapOn:
+    id: paste-input
+- pasteText
+- assertVisible: "Pasted the code"
+- hideKeyboard
+# Each field centered first, and the keyboard put away after: a field under the keyboard
+# takes no tap (the keyboard does).
+- scrollUntilVisible:
+    element:
+      id: rand-text
+    centerElement: true
+- tapOn:
+    id: rand-text
+- inputRandomText
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-number
+    centerElement: true
+- tapOn:
+    id: rand-number
+- inputRandomNumber
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-email
+    centerElement: true
+- tapOn:
+    id: rand-email
+- inputRandomEmail
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-name
+    centerElement: true
+- tapOn:
+    id: rand-name
+- inputRandomPersonName
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-city
+    centerElement: true
+- tapOn:
+    id: rand-city
+- inputRandomCityName
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-country
+    centerElement: true
+- tapOn:
+    id: rand-country
+- inputRandomCountryName
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-color
+    centerElement: true
+- tapOn:
+    id: rand-color
+- inputRandomColorName
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: rand-check
+- assertVisible: "text \\d+ chars · number digits · email valid · name \\d+ words · city set · country set · color set"
+# Android's back button, caught by the screen, then not.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: catch-back
+      - tapOn:
+          id: catch-back
+      - back
+      - assertVisible: "Back presses: 1"
+      - tapOn:
+          id: catch-back
+      - back
+      - assertNotVisible:
+          id: back-presses
+# clearState wipes the draft.
+- clearState
+- launchApp
+- assertVisible: "Discover"

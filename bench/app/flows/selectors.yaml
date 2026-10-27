@@ -1,0 +1,113 @@
+appId: dev.speedrun.bench
+name: Elements told apart by place (index, relative, parent, child) and by state
+tags: [lab, selectors]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: selectors
+- tapOn:
+    text: Choose
+    index: 1
+- assertVisible: "Chose Plus"
+# Matches keep the text filter's order: the first "Choose" below "Plus" is Pro's (Plus's own
+# starts above its name).
+- tapOn:
+    text: Choose
+    below:
+      text: Plus
+- assertVisible: "Chose Pro"
+- tapOn:
+    text: Choose
+    childOf:
+      id: plan-basic
+- assertVisible: "Chose Basic"
+- assertVisible:
+    text: Basic
+    leftOf:
+      text: Choose
+      index: 0
+# containsChild needs the text right under the element: on Android a button's label is (on
+# iOS a React Native button has no children).
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible:
+          containsChild:
+            text: Choose
+          index: 2
+- assertVisible:
+    id: plan-plus
+    containsDescendants:
+      - text: Plus
+      - text: "\\$10"
+- tapOn:
+    text: Item
+    index: 3
+- assertVisible: "Picked item 4"
+- tapOn:
+    text: Item
+    above:
+      id: index-result
+- assertVisible: "Picked item 1"
+- tapOn:
+    text: Open
+    below:
+      text: States
+- assertVisible: "Open was tapped"
+- assertVisible:
+    id: locked
+    enabled: false
+- tapOn:
+    id: locked
+    retryTapIfNoChange: false
+- assertNotVisible: "Locked was tapped"
+- assertVisible:
+    id: period-Week
+    selected: true
+- assertVisible:
+    id: period-Day
+    selected: false
+- tapOn:
+    id: "period-.*"
+    rightOf:
+      id: period-Week
+- assertVisible:
+    id: period-Month
+    selected: true
+- assertVisible: "Showing: Month"
+- assertVisible:
+    id: notify-me
+    checked: true
+- assertVisible:
+    id: hide-me
+    checked: false
+- tapOn:
+    id: hide-me
+- assertVisible:
+    id: hide-me
+    checked: true
+- tapOn:
+    id: focus-field
+- assertVisible:
+    id: focus-field
+    focused: true
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: slow-button
+    centerElement: true
+- tapOn:
+    id: slow-button
+    waitToSettleTimeoutMs: 300
+- extendedWaitUntil:
+    visible: "Slow button: done"
+    timeout: 5000
+- tapOn:
+    text: "Not on this screen"
+    optional: true
+- assertVisible:
+    id: box-square
+    label: The square box shows

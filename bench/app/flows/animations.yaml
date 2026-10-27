@@ -1,0 +1,57 @@
+appId: dev.speedrun.bench
+name: Taps on screens that never stop moving
+tags: [lab, animations]
+---
+- runFlow: _shared/guest.yaml
+- tapOn:
+    id: tab-lab
+- tapOn:
+    id: lab-animations
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: still
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: reanimated
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: native-driver
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: js-driver
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: lottie
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: spinner
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: ticker
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: counter
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: marquee
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: shimmer
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: carousel
+- runFlow:
+    file: _shared/scene.yaml
+    env:
+      SCENE: progress

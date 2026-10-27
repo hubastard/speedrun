@@ -1,0 +1,16 @@
+# The app asks to send notifications a moment after sign in; iOS then shows its own alert
+# (Android: launchApp granted the permission, so no dialog comes).
+appId: dev.speedrun.bench
+---
+- runFlow:
+    when:
+      visible:
+        id: notify-title
+    commands:
+      - tapOn:
+          id: notify-on
+      - runFlow:
+          when:
+            visible: "Allow"
+          commands:
+            - tapOn: "Allow"

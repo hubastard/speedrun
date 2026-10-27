@@ -1,0 +1,59 @@
+appId: dev.speedrun.bench
+name: Chat with the bot, long press and double tap a message, paste, quick replies
+tags: [chat]
+---
+- runFlow: _shared/guest.yaml
+- tapOn:
+    id: tab-chats
+- tapOn:
+    id: chat-bot
+- assertVisible: "Hi! Ask me anything."
+- assertVisible:
+    id: send
+    enabled: false
+- tapOn:
+    id: message-input
+- inputText: "Hello there"
+- tapOn:
+    id: send
+# The bot types (three dots bouncing), then answers.
+- extendedWaitUntil:
+    visible: "You said: Hello there"
+    timeout: 10000
+- doubleTapOn:
+    id: message-1
+# iOS reads the heart as part of the message ("Hello there, ❤️ Loved").
+- assertVisible: ".*❤️ Loved"
+- longPressOn:
+    id: message-2
+- tapOn:
+    id: menu-copy
+- assertVisible: "Copied"
+# The menu closes on a tap outside it.
+- longPressOn:
+    id: message-2
+- assertVisible:
+    id: menu-delete
+- tapOn:
+    point: "50%,10%"
+- assertNotVisible:
+    id: menu-delete
+- longPressOn:
+    id: message-2
+- tapOn:
+    id: menu-delete
+- assertNotVisible: "You said: Hello there"
+- setClipboard: "Pasted hello"
+- tapOn:
+    id: message-input
+- pasteText
+- tapOn:
+    id: send
+- extendedWaitUntil:
+    visible: "You said: Pasted hello"
+    timeout: 10000
+- tapOn:
+    id: "quick-Track my order"
+- extendedWaitUntil:
+    visible: "You said: Track my order"
+    timeout: 10000

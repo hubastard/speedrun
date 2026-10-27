@@ -1,0 +1,133 @@
+appId: dev.speedrun.bench
+name: Edit the profile, change settings, set a PIN, sign out
+tags: [profile]
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: _shared/sign-in.yaml
+    env:
+      PHONE: "5550101234"
+      CODE: "123456"
+      REMEMBER: "false"
+- tapOn:
+    id: tab-profile
+- assertVisible:
+    id: profile-name
+    text: "Alex"
+- tapOn:
+    id: edit-profile
+- tapOn:
+    id: profile-name-input
+- eraseText
+- inputText: "Jordan"
+- tapOn:
+    id: profile-email-input
+- inputText: "jordan"
+- tapOn:
+    id: bio-input
+- assertVisible: "Enter a valid email"
+- inputText: "Runner and coffee lover."
+- tapOn:
+    id: profile-email-input
+- inputText: "@example.com"
+- hideKeyboard
+- tapOn:
+    id: units-imperial
+- assertVisible:
+    id: units-imperial
+    checked: true
+- assertVisible:
+    id: units-metric
+    checked: false
+- tapOn:
+    id: public-profile
+- assertVisible:
+    id: public-profile
+    checked: true
+- tapOn:
+    id: save-profile
+- assertVisible: "Profile saved"
+- assertVisible:
+    id: profile-name
+    text: "Jordan"
+- tapOn:
+    id: edit-profile
+- assertVisible: "Saved: Imperial, public, jordan@example.com"
+- tapOn:
+    id: header-back
+- tapOn:
+    id: settings
+- assertVisible:
+    id: switch-push
+    checked: true
+- tapOn:
+    id: switch-push
+- assertVisible:
+    id: switch-push
+    checked: false
+- tapOn:
+    id: switch-emails
+- assertVisible:
+    id: switch-emails
+    checked: true
+# A native alert.
+- tapOn:
+    id: clear-cache
+- tapOn: "Clear|CLEAR"
+- assertVisible: "Cache cleared"
+- scrollUntilVisible:
+    element:
+      id: version
+- assertVisible: "Version 1.0.0"
+- tapOn:
+    id: header-back
+# A PIN on a custom keypad: a mismatch first.
+- tapOn:
+    id: security
+- tapOn:
+    id: key-1
+- tapOn:
+    id: key-2
+- tapOn:
+    id: key-3
+- tapOn:
+    id: key-4
+- assertVisible: "Confirm your PIN"
+- tapOn:
+    id: key-1
+- tapOn:
+    id: key-2
+- tapOn:
+    id: key-3
+- tapOn:
+    id: key-5
+- assertVisible: "PINs don't match"
+- runFlow:
+    commands:
+      - tapOn:
+          id: key-4
+      - tapOn:
+          id: key-del
+      - tapOn:
+          id: key-1
+      - tapOn:
+          id: key-2
+      - tapOn:
+          id: key-3
+      - tapOn:
+          id: key-4
+- assertVisible: "Confirm your PIN"
+- tapOn:
+    id: key-1
+- tapOn:
+    id: key-2
+- tapOn:
+    id: key-3
+- tapOn:
+    id: key-4
+- assertVisible: "PIN set"
+- tapOn:
+    id: sign-out
+- tapOn: "Yes, sign out|YES, SIGN OUT"
+- assertVisible: "Let's start with your phone number"

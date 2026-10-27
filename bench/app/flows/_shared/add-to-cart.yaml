@@ -1,0 +1,18 @@
+# From the Shop tab: opens a product, picks a size, adds it, comes back. Env: PRODUCT, SIZE.
+appId: dev.speedrun.bench
+---
+- tapOn:
+    id: tab-shop
+- scrollUntilVisible:
+    element:
+      id: product-${PRODUCT}
+    centerElement: true
+- tapOn:
+    id: product-${PRODUCT}
+- tapOn:
+    id: size-${SIZE}
+- tapOn:
+    id: add-to-cart
+- assertVisible: "Added to cart"
+- tapOn:
+    id: header-back

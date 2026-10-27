@@ -1,0 +1,23 @@
+appId: dev.speedrun.bench
+name: Onboarding pages, and no onboarding on the next launch
+tags: [auth]
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Discover"
+- assertVisible: "Page 1 of 3"
+- swipe:
+    direction: LEFT
+- assertVisible: "Page 2 of 3"
+- swipe:
+    start: 90%,50%
+    end: 10%,50%
+- assertVisible: "Page 3 of 3"
+- assertVisible: "Share"
+- tapOn: "Get started"
+- assertVisible: "Let's start with your phone number"
+# Only the first launch after an install shows the onboarding.
+- stopApp
+- launchApp
+- assertVisible: "Let's start with your phone number"
+- assertNotVisible: "Discover"

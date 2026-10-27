@@ -1,0 +1,41 @@
+appId: dev.speedrun.bench
+name: Drag a slider and a card, scroll sideways, a long list with sticky headers
+tags: [lab, gestures]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: drag
+- swipe:
+    from:
+      id: slider-handle
+    direction: RIGHT
+- assertVisible: "Volume: (7\\d|8\\d|9\\d|100)"
+- swipe:
+    from:
+      id: drag-card
+    direction: DOWN
+- assertVisible: "Dropped in the zone"
+- repeat:
+    while:
+      notVisible: "Card 25"
+    commands:
+      - swipe:
+          from:
+            id: h-list
+          direction: LEFT
+- assertVisible: "Card 25"
+- tapOn:
+    id: open-long-list
+- scrollUntilVisible:
+    element: "Row 120"
+    timeout: 60000
+- tapOn: "Row 120"
+- assertVisible: "Picked row 120"
+- scrollUntilVisible:
+    element: "Row 3"
+    direction: UP
+    timeout: 60000
+- tapOn: "Row 3"
+- assertVisible: "Picked row 3"

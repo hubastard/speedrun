@@ -1,0 +1,18 @@
+# One animation scene: open it, tap its button three times, check the count, go back.
+# Env: SCENE (the scene's id).
+appId: dev.speedrun.bench
+---
+- scrollUntilVisible:
+    element:
+      id: scene-${SCENE}
+- tapOn:
+    id: scene-${SCENE}
+- tapOn:
+    id: lab-tap
+- tapOn:
+    id: lab-tap
+- tapOn:
+    id: lab-tap
+- assertVisible: "Taps: 3"
+- tapOn:
+    id: header-back

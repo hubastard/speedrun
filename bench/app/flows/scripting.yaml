@@ -1,0 +1,71 @@
+appId: dev.speedrun.bench
+name: Scripts, env, conditions, repeat and retry
+tags: [scripting]
+env:
+  GREETING: Hello
+onFlowStart:
+  - evalScript: ${output.started = true}
+onFlowComplete:
+  - evalScript: ${output.finished = true}
+---
+- runFlow: _shared/guest.yaml
+- assertTrue: ${output.started}
+- runScript:
+    file: scripts/plan.js
+    env:
+      PLAN: Pro
+- assertTrue: ${output.plan == 'Pro'}
+- assertTrue: ${output.greeting == 'Hello, pro'}
+- assertTrue: ${maestro.platform == 'ios' || maestro.platform == 'android'}
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: selectors
+- evalScript: ${output.taps = 0}
+- repeat:
+    times: 3
+    commands:
+      - tapOn:
+          text: Item
+          index: ${output.taps}
+      - evalScript: ${output.taps = output.taps + 1}
+- assertVisible: "Picked item 3"
+- assertTrue: ${output.taps == 3}
+- repeat:
+    while:
+      notVisible: "Chose ${output.plan}"
+    commands:
+      - tapOn:
+          text: Choose
+          childOf:
+            id: plan-${output.plan.toLowerCase()}
+- runFlow:
+    when:
+      true: ${GREETING == 'Hello'}
+    commands:
+      - tapOn:
+          id: open-button
+- assertVisible: "Open was tapped"
+- runFlow:
+    when:
+      true: ${GREETING == 'Bye'}
+    commands:
+      - tapOn:
+          id: hide-me
+- assertVisible:
+    id: hide-me
+    checked: false
+- runFlow:
+    env:
+      COUNT: "7"
+    commands:
+      - assertTrue: ${COUNT == '7'}
+- retry:
+    maxRetries: 2
+    commands:
+      - evalScript: ${output.tries = (output.tries || 0) + 1}
+      - assertTrue: ${output.tries >= 2}
+- assertTrue: ${output.tries == 2}
+- extendedWaitUntil:
+    notVisible: "Nothing like this"
+    timeout: 1000

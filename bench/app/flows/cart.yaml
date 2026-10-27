@@ -1,0 +1,47 @@
+appId: dev.speedrun.bench
+name: Cart lines, steppers and swipe to remove
+tags: [shop]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/add-to-cart.yaml
+    env:
+      PRODUCT: "5"
+      SIZE: "S"
+- runFlow:
+    file: _shared/add-to-cart.yaml
+    env:
+      PRODUCT: "9"
+      SIZE: "XL"
+- runFlow:
+    file: _shared/add-to-cart.yaml
+    env:
+      PRODUCT: "21"
+      SIZE: "M"
+- assertVisible: "Cart \\(3\\)"
+- tapOn:
+    id: cart-button
+- assertVisible: "Trail Cap"
+- assertVisible: "Classic Sneaker"
+- tapOn:
+    id: line-plus-0
+- tapOn:
+    id: line-plus-0
+- assertVisible:
+    id: line-qty-0
+    text: "× 3"
+- tapOn:
+    id: line-minus-0
+- assertVisible:
+    id: line-qty-0
+    text: "× 2"
+- swipe:
+    from:
+      id: cart-line-1
+    direction: LEFT
+- tapOn:
+    id: remove-1
+- assertNotVisible: "Trail Notebook"
+- assertNotVisible:
+    id: cart-line-2
+- assertVisible: "Total \\$.*"

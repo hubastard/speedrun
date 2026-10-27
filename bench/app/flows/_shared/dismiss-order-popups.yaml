@@ -1,0 +1,28 @@
+# After an order the app may ask for a rating, then show a badge (first order), or ask for
+# a survey (second order). Each shows a while after the last one closed.
+appId: dev.speedrun.bench
+---
+- runFlow:
+    when:
+      visible:
+        id: rate-title
+    commands:
+      - tapOn:
+          id: rate-later
+- runFlow:
+    when:
+      visible:
+        id: badge-title
+    commands:
+      - tapOn:
+          id: badge-close
+- runFlow:
+    when:
+      visible:
+        id: survey-title
+    commands:
+      - tapOn:
+          id: nps-9
+      - assertVisible: "Your score: 9"
+      - tapOn:
+          id: nps-submit

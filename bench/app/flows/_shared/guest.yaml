@@ -1,0 +1,21 @@
+# A fresh start as a guest: onboarding skipped, no sign in.
+appId: dev.speedrun.bench
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: onboarding-skip
+# iOS keeps a remembered account across clearState (keychain).
+- runFlow:
+    when:
+      visible:
+        id: use-another
+    commands:
+      - tapOn:
+          id: use-another
+- tapOn:
+    id: guest
+- extendedWaitUntil:
+    visible:
+      id: tab-home
+    timeout: 10000
