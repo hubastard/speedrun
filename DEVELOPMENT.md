@@ -1,7 +1,8 @@
 # Speedrun: development notes
 
 How speedrun is built and how it behaves in detail, for working on it. Using it:
-`README.md`. Benchmarks and what is still slow: `TO_IMPROVE.md`.
+`README.md` and `docs/` (command line, Maestro compatibility, troubleshooting). Benchmarks and
+what is still slow: `TO_IMPROVE.md`.
 
 ## Pieces
 
@@ -74,6 +75,20 @@ How speedrun is built and how it behaves in detail, for working on it. Using it:
 `./speedrun` then needs only `adb` (Android) or Xcode's command-line tools (iOS), and `curl`
 for flows whose scripts make HTTP requests.
 
+## CI (GitHub Actions)
+
+- `.github/workflows/release-linux.yml`: on a `v*` tag, builds speedrun on Ubuntu (Android
+  only: the iOS agent needs a Mac) with `package.sh` and attaches
+  `speedrun-<tag>-linux-x86_64.tar.gz` to the tag's release, creating the release if it has
+  none yet. The macOS package is still built and attached by hand. Run it by hand
+  (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
+- `.github/workflows/journey.yml`: after every push to `main`, builds speedrun and Speedrun
+  Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
+  speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
+  newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
+
+Both pin Odin (`ODIN_VERSION`) to the version speedrun is developed with.
+
 ## Run
 
 Maestro flow files run as they are:
@@ -109,8 +124,8 @@ replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
 - `--format junit|html|html-detailed` with `--output` and `--test-suite-name` (default
   `report.xml` / `report.html`), with flow `tags` and `properties` (`junitId`,
   `junitClassname`).
-- The debug output: `~/.maestro/tests/<yyyy-MM-dd_HHmmss>/<flow>/` with `commands.json`,
-  `logs/maestro.log`, on a failure `screenshots/final.png`, and what `takeScreenshot` and
+- The debug output: `~/.speedrun/tests/<yyyy-MM-dd_HHmmss>/<flow>/` with `commands.json`,
+  `logs/speedrun.log`, on a failure `screenshots/final.png`, and what `takeScreenshot` and
   `startRecording` write (`takeScreenshot/<path>.png`, `startRecording/<path>.mp4`, as in
   Maestro 2.11; a path leaving that folder is an error); `--debug-output`,
   `--flatten-debug-output`, `--test-output-dir` as in Maestro.
@@ -358,6 +373,14 @@ Known differences in how, not what:
 - iOS `doubleTapOn` (and tapOn's `repeat`) is one event record with a finger per tap, at
   least 200 ms apart (agent op 23 TAPS): one record per tap waits ~230 ms for testmanagerd;
   a second press on one path, and XCTest's own doubleTap, land as one tap in React Native.
+  Each of those touches is held 100 ms: 10 ms ones missed double taps and repeats.
+- An iOS tap is a touch held 20 ms (100 ms before). React Native gives a touch to the scroll
+  view around it when a scroll event comes while it is down, even from a nested scroll view:
+  a carousel paging itself every 2.5 s cancelled a press on a button beside it (3 taps in 40
+  at 100 ms; Speedrun Bench's product page, every run of a flow tapping + and − there), as
+  it does for a person. The shorter the touch, the rarer: 20 ms, 2 in 80; 10 ms, none. But
+  UIKit's controls need it to span a display frame: a UISwitch never toggled at 12 ms, once
+  in 6 at 15 ms, always from 17 ms. 20 ms also makes a tap ~100 ms faster.
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
@@ -422,7 +445,8 @@ Known differences in how, not what:
   same as with no animation.
 - `SPEEDRUN_CONDITION_TIMEOUT_MS` replaces the 7 s of a `when:` check (not of an
   assertion or a lookup): flows that dismiss popups "if they show" after every action
-  otherwise wait 7 s after each.
+  otherwise wait 7 s after each. A condition's own `timeout` (a field Maestro does not
+  have, so such a flow no longer runs there) overrides it for one check.
 - `scrollUntilVisible` drags without a fling on both platforms, so the content stops as
   the touch lifts (Android: 50 ms, then still for 60 ms; iOS: see above). It reads the
   screen right after each drag and drags again as soon as the element is not on screen,

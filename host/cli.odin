@@ -376,12 +376,15 @@ display_duration :: proc(ms: f64) -> string {
 	return fmt.tprintf("%ds", sec)
 }
 
-// TestDebugReporter: flattened, the debug output (or the home folder) itself; otherwise a
-// timestamped folder under --test-output-dir / the config's testOutputDir, under
-// <debug-output>/.maestro/tests, or under ~/.maestro/tests ($XDG_STATE_HOME/maestro/tests).
+// Where a run's logs, screenshots and recordings go: flattened, the debug output itself
+// (default ~/.speedrun/tests); otherwise a timestamped folder under --test-output-dir / the
+// config's testOutputDir, under the debug output, or under ~/.speedrun/tests
+// ($XDG_STATE_HOME/speedrun/tests).
 debug_output_path :: proc(o: ^Test_Options, plan: ^Plan) -> string {
 	home := os.get_env("HOME", context.allocator)
-	if o.flatten do return absolute(o.debug_output if o.debug_output != "" else home)
+	tests := fmt.aprintf("%s/.speedrun/tests", home)
+	if xdg := os.get_env("XDG_STATE_HOME", context.allocator); xdg != "" do tests = fmt.aprintf("%s/speedrun/tests", xdg)
+	if o.flatten do return absolute(o.debug_output if o.debug_output != "" else tests)
 	y, mon, d, hh, mm, ss := local_time(time.to_unix_nanoseconds(time.now()) / 1_000_000)
 	folder := fmt.tprintf("%04d-%02d-%02d_%02d%02d%02d", y, mon, d, hh, mm, ss)
 	out_dir := o.test_output_dir if o.test_output_dir != "" else plan.config.test_output_dir
@@ -389,10 +392,9 @@ debug_output_path :: proc(o: ^Test_Options, plan: ^Plan) -> string {
 	case out_dir != "":
 		return fmt.aprintf("%s/%s", absolute(out_dir), folder)
 	case o.debug_output != "":
-		return fmt.aprintf("%s/.maestro/tests/%s", absolute(o.debug_output), folder)
+		return fmt.aprintf("%s/%s", absolute(o.debug_output), folder)
 	}
-	if xdg := os.get_env("XDG_STATE_HOME", context.allocator); xdg != "" do return fmt.aprintf("%s/maestro/tests/%s", xdg, folder)
-	return fmt.aprintf("%s/.maestro/tests/%s", home, folder)
+	return fmt.aprintf("%s/%s", tests, folder)
 }
 
 // The local date and time of a Unix time in milliseconds.

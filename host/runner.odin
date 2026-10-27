@@ -285,7 +285,7 @@ COMMANDS_JSON_NAMES :: [][2]string {
 }
 
 // The flow's debug output, in the artifacts layout tools expect: commands.json (each
-// command under its name there, with its status, start and duration), logs/maestro.log, and
+// command under its name there, with its status, start and duration), logs/speedrun.log, and
 // on failure screenshots/final.png.
 @(private = "file")
 write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
@@ -321,7 +321,7 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 	if data, err := json.marshal(entries, {pretty = true}, context.temp_allocator); err == nil {
 		write_file(fmt.tprintf("%s/commands.json", dir), data)
 	}
-	write_file(fmt.tprintf("%s/logs/maestro.log", dir), transmute([]byte)strings.to_string(log))
+	write_file(fmt.tprintf("%s/logs/speedrun.log", dir), transmute([]byte)strings.to_string(log))
 	if !passed {
 		if png, ok := op_screenshot(r.c, context.temp_allocator); ok {
 			make_dirs(fmt.tprintf("%s/screenshots", dir))
@@ -589,7 +589,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		return true, nil
 	case Run_Flow:
 		if cond, has := d.cond.?; has {
-			met := condition_met(r, cond, c.optional, -1) or_return
+			met := condition_met(r, cond, c.optional, condition_limit(r, cond) or_return) or_return
 			if !met do return false, SKIPPED
 		}
 		return run_sub(r, d.sub)
@@ -607,7 +607,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			if cond, has := d.cond.?; has {
 				// RepeatCommand.checkCondition evaluates its scripts again each time.
 				clear(&r.evals[len(r.evals) - 1])
-				met := condition_met(r, cond, c.optional, -1) or_return
+				met := condition_met(r, cond, c.optional, condition_limit(r, cond) or_return) or_return
 				if !met do break
 			}
 			if runs > 0 do view_reset(node.children[:])
@@ -662,7 +662,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		return true, nil
 	case Run_Script:
 		if cond, has := d.cond.?; has {
-			met := condition_met(r, cond, c.optional, -1) or_return
+			met := condition_met(r, cond, c.optional, condition_limit(r, cond) or_return) or_return
 			if !met do return false, SKIPPED
 		}
 		// Its env on top of the current one, for this script only (runInSubScope).
@@ -1528,6 +1528,14 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 }
 
 // ---- conditions and lookups -----------------------------------------------------------
+
+// A condition's own `timeout` (speedrun's field), else -1: the default for conditions.
+@(private = "file")
+condition_limit :: proc(r: ^Runner, cond: Condition) -> (i64, Err) {
+	t, has := cond.timeout.?
+	if !has do return -1, nil
+	return parse_timeout(r, t)
+}
 
 // A condition (`when:`, runFlow/repeat). `timeout` < 0: the default for conditions (7 s, or
 // SPEEDRUN_CONDITION_TIMEOUT_MS), always shortened by the time since the last interaction.

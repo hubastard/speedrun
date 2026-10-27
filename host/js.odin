@@ -106,7 +106,7 @@ js_call :: proc(r: ^Runner, method: cstring, arg: string) -> (out: string, err: 
 	return out, nil
 }
 
-// console.log: the line goes with the command running (shown under it, and in maestro.log).
+// console.log: the line goes with the command running (shown under it, and in logs/speedrun.log).
 @(private = "file")
 js_log :: proc "c" (user: rawptr, msg: [^]u8, n: c.size_t) {
 	context = runtime.default_context()

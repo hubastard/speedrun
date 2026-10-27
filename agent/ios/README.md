@@ -23,7 +23,7 @@ How it does each part:
   testmanagerd, the last one checked first), then SpringBoard's status bars, re-read every 5 s
   (they cost as much as the app and change with the clock). A read right after SETTLE is
   served from settle's last snapshot (no action since, under 1 s old). ~70–90 ms otherwise.
-- **Input**: events synthesized through testmanagerd (a 100 ms tap; for `swipe` and `scroll`
+- **Input**: events synthesized through testmanagerd (a 20 ms tap, see Input.tapHoldMs; for `swipe` and `scroll`
   a swipe that glides over its whole duration, see below; for `scrollUntilVisible` a drag that
   does not fling, `Input.drag`). Text: the first character alone, then, once the focused field
   shows it (at most 0.5 s), the rest at 100 characters per second. Deleting from an empty

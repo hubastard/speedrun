@@ -39,6 +39,7 @@ Condition :: struct {
 	platform:             Maybe(string),
 	visible, not_visible: ^Selector,
 	script:               Maybe(string), // `true:`, after ${} substitution
+	timeout:              Maybe(string), // ms a `visible`/`notVisible` waits (speedrun's own field)
 }
 
 Swipe_Dir :: enum u8 {
@@ -1101,11 +1102,13 @@ sub_flow_file :: proc(l: ^Loader, y: ^Yaml, rel: string) -> (s: Sub_Flow, ok: bo
 
 @(private = "file")
 condition :: proc(l: ^Loader, y: ^Yaml) -> (c: Condition, ok: bool) {
-	fields(l, y, "condition", {"platform", "visible", "notVisible", "true", "label", "optional"}) or_return
+	// `timeout` is speedrun's: Maestro has none (its conditions wait a fixed 7 s).
+	fields(l, y, "condition", {"platform", "visible", "notVisible", "true", "timeout", "label", "optional"}) or_return
 	if v := yaml_get(y, "platform"); v != nil do c.platform = str(l, v) or_return
 	if v := yaml_get(y, "visible"); v != nil do c.visible = selector(l, v, false) or_return
 	if v := yaml_get(y, "notVisible"); v != nil do c.not_visible = selector(l, v, false) or_return
 	if v := yaml_get(y, "true"); v != nil do c.script = strings.trim_space(str(l, v) or_return)
+	if v := yaml_get(y, "timeout"); v != nil do c.timeout = str(l, v) or_return
 	return c, true
 }
 
