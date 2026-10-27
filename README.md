@@ -4,8 +4,8 @@
 
 speedrun runs mobile UI flows written in the Maestro flow format. Point it at the YAML files,
 folders and config you already use with `maestro test` and most flows run as they are,
-several times faster: **5.7x faster than Maestro on our benchmark app on Android**, 3.6x on
-iOS, and it passes flows that Maestro fails.
+several times faster: on the flows of our benchmark app that both tools pass, **6.1x faster
+than Maestro on Android** and 2.6x on iOS, and it passes flows that Maestro fails.
 
 ```
 maestro test flows/      →      speedrun test flows/
@@ -25,16 +25,21 @@ speedrun and Maestro on [Speedrun Bench](bench/app), a React Native app made to 
 19 flows that cover every command and selector, on the screens that make tests slow or
 flaky in real apps — animations that never stop, popups that show up late or one after
 another, a keyboard over the checkout button, lists that load more as you scroll, native
-modals and alerts, permission prompts. Both tools run the same flow files. Times are the
-wall clock of the whole suite, each tool's start-up included.
+modals and alerts, permission prompts. Both tools run the same flow files.
 
-| Platform | speedrun | Maestro 2.11 | speedrun is | Flows passed |
-|---|---:|---:|---:|---|
-| Android emulator | **8 min 14 s** | 46 min 56 s | 5.7x faster | speedrun 19/19, Maestro 16/19 |
-| iOS simulator | **11 min 5 s** | 40 min 19 s | 3.6x faster | speedrun 19/19, Maestro 8/19 |
+| Platform | Flows both pass | Whole suite, estimated | Flows passed |
+|---|---:|---:|---|
+| Android emulator | **6.1x faster** (16 flows: 7 min 12 s against 43 min 58 s) | ~5.8x | speedrun 19/19, Maestro 16/19 |
+| iOS simulator | **2.6x faster** (8 flows: 2 min 58 s against 7 min 42 s) | ~4.1x | speedrun 19/19, Maestro 8/19 |
 
-Maestro's time counts its failed flows only up to the failure. The widest gap is on screens
-that never stop moving (a looping animation, a ticker, a number changing every frame): each
+The first column times the flows that both tools pass. The time of a flow Maestro fails says
+little (it fails some early, others after waiting out its timeouts), so the second estimates
+the whole suite as if Maestro had finished those flows: its time up to the failing step, then
+speedrun's time for the rest of the flow at Maestro's pace on that flow so far. speedrun ran
+the whole suite in 8 min 14 s on Android and 11 min 5 s on iOS, start-up included (Maestro:
+46 min 56 s and 40 min 19 s, counting its failed flows up to the failure).
+
+The widest gap is on screens that never stop moving (a looping animation, a ticker, a number changing every frame): each
 of Maestro's steps waits for a still screen until its timeout, 20–24 minutes for that flow
 against 1.4–2.2 minutes. Maestro's `scrollUntilVisible` swipes across the screen's center:
 it never moved a card list above the center, and it did not turn the pages of an onboarding

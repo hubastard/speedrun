@@ -68,10 +68,16 @@ for iOS numbers (a stalled one made Maestro hang in adb before starting).
 
 The benchmark app's suite, 2026-10-27, Apple M1 Pro 16 GB:
 
-| device | speedrun | Maestro | ratio | passed (speedrun / Maestro) |
+| device | wall clock, speedrun / Maestro | flows both passed | all, Maestro's failures estimated | passed (speedrun / Maestro) |
 |---|---|---|---|---|
-| Android 17 emulator (API 37), `-gpu host` | 494 s | 2816 s | 5.7x | 19/19 / 16/19 |
-| iPhone 17 Pro simulator, iOS 26.2 | 665 s | 2419 s | 3.6x | 19/19 / 8/19 |
+| Android 17 emulator (API 37), `-gpu host` | 494 s / 2816 s (5.7x) | 6.1x (16) | ~5.8x | 19/19 / 16/19 |
+| iPhone 17 Pro simulator, iOS 26.2 | 665 s / 2419 s (3.6x) | 2.6x (8) | ~4.1x | 19/19 / 8/19 |
+
+The wall clock counts Maestro's failed flows up to the failure: early for most (iOS "Buy
+twice" stopped at step 15 of 58), late for one (the never-still flow, 1231 s of timeouts).
+The estimate (`bench.sh`'s table) takes Maestro's pace on each failed flow up to the failure
+over the rest of it. The flows Maestro passes on iOS are its easier ones: there it is 2.6x
+slower, on the ones it fails 3.1–4.8x up to the failure.
 
 Per flow: `bench/app/README.md`. Closest to Maestro: the deep-link flow (1.4–1.5x: three
 "Open in …?" checks wait 7 s each when the dialog does not show, in both tools), the popups
