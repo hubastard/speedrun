@@ -36,6 +36,7 @@ H_Node :: struct {
 	children:   [dynamic]int, // kept children only (after the bounds filter)
 	kept:       bool,
 	full_area:  f64, // iOS: the frame's area before clip_to_scroll_views cut it (0: not cut)
+	full:       [4]i32, // iOS: left, top, right, bottom before the cut (when full_area > 0)
 }
 
 // The screen as flows see it: every window, nodes the system reports visible, minus those
@@ -949,7 +950,13 @@ typing :: proc(r: ^Runner) -> bool {
 @(private = "file")
 covered_by :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
-	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+	return cover_at(r, el, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+}
+
+// What would cover the element at a point of the screen (covered_by's rules).
+@(private = "file")
+cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
+	n := r.h.nodes[el]
 	k := el + 1
 	for k < len(r.h.nodes) && r.h.nodes[k].depth > n.depth do k += 1 // its own subtree
 	nodes: for ; k < len(r.h.nodes); k += 1 {
@@ -996,21 +1003,76 @@ scroll_container :: proc(n: H_Node) -> bool {
 
 // The end of a drag from (cx, cy) that moves the element just clear of its cover, along the
 // stride to (ex, ey) or back, with a margin of a twelfth of the screen width (past touch slop,
-// short of pulling a list's end much past its bounce).
+// short of pulling a list's end much past its bounce). The cover's half of the screen tells
+// which way: a bar along the bottom takes content up, one along the top down (an element
+// inside a bar's span, the bar's middle is no guide: iOS 26 Settings' toolbar).
 @(private = "file")
 clear_of :: proc(r: ^Runner, el, cover: int, cx, cy, ex, ey: i32) -> (i32, i32) {
 	n, c := r.h.nodes[el], r.h.nodes[cover]
 	margin := r.w / 12
 	if ey != cy {
 		shift := c.bottom - n.top + margin // the cover is above: content down
-		if c.top > n.top + (n.bottom - n.top) / 2 do shift = -(n.bottom - c.top + margin)
+		if c.top + (c.bottom - c.top) / 2 > r.h_px / 2 do shift = -(n.bottom - c.top + margin)
 		stride := i32(abs(int(ey - cy)))
 		return cx, cy + clamp(shift, -stride, stride)
 	}
 	shift := c.right - n.left + margin
-	if c.left > n.left + (n.right - n.left) / 2 do shift = -(n.right - c.left + margin)
+	if c.left + (c.right - c.left) / 2 > r.w / 2 do shift = -(n.right - c.left + margin)
 	stride := i32(abs(int(ex - cx)))
 	return cx + clamp(shift, -stride, stride), cy
+}
+
+// The end of a drag from (cx, cy) along the stride to (ex, ey) that brings an element its
+// list cuts on the side it comes in from (iOS) all in: a margin past the list's edge, or past
+// a bar drawn over that edge (a toolbar). A full stride pulls a list that ends just after the
+// element past its end, and the settle waits out the bounce back (0.1-0.4 s). ok = false: no
+// such drag (not cut on that side, or as large as half the screen).
+@(private = "file")
+bring_in :: proc(r: ^Runner, el: int, cx, cy, ex, ey: i32) -> (tx, ty: i32, ok: bool) {
+	n := r.h.nodes[el]
+	if n.full_area <= 0 do return
+	f := n.full
+	margin := r.w / 12
+	if ey != cy {
+		h := f[3] - f[1]
+		if 2 * h > r.h_px do return
+		x := n.left + (n.right - n.left) / 2
+		shift: i32 // content down
+		if ey < cy { // content up: in from the bottom
+			if f[3] <= n.bottom do return
+			shift = -(f[3] - n.bottom + margin)
+			if c := cover_at(r, el, x, n.bottom - margin - h / 2); c >= 0 && r.h.nodes[c].top > r.h_px / 2 {
+				shift = -(f[3] - r.h.nodes[c].top + margin)
+			}
+		} else {
+			if f[1] >= n.top do return
+			shift = n.top - f[1] + margin
+			if c := cover_at(r, el, x, n.top + margin + h / 2); c >= 0 && r.h.nodes[c].bottom < r.h_px / 2 {
+				shift = r.h.nodes[c].bottom - f[1] + margin
+			}
+		}
+		stride := i32(abs(int(ey - cy)))
+		return cx, cy + clamp(shift, -stride, stride), true
+	}
+	w := f[2] - f[0]
+	if 2 * w > r.w do return
+	y := n.top + (n.bottom - n.top) / 2
+	shift: i32 // content right
+	if ex < cx { // content left: in from the right
+		if f[2] <= n.right do return
+		shift = -(f[2] - n.right + margin)
+		if c := cover_at(r, el, n.right - margin - w / 2, y); c >= 0 && r.h.nodes[c].left > r.w / 2 {
+			shift = -(f[2] - r.h.nodes[c].left + margin)
+		}
+	} else {
+		if f[0] >= n.left do return
+		shift = n.left - f[0] + margin
+		if c := cover_at(r, el, n.left + margin + w / 2, y); c >= 0 && r.h.nodes[c].right < r.w / 2 {
+			shift = r.h.nodes[c].right - f[0] + margin
+		}
+	}
+	stride := i32(abs(int(ex - cx)))
+	return cx + clamp(shift, -stride, stride), cy, true
 }
 
 // The last element containing the point, its own children first.
@@ -1087,9 +1149,16 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		if moving {
 			if !read_screen(r) do return "agent connection lost"
 			el := select(r, d.sel) or_return
+			// Shown as much as asked: a sliver at the screen's edge (an iOS row coming into a
+			// list) is dragged on, not settled on and looked at again.
+			shown := false
+			if el >= 0 {
+				vis := visible_share(r.h.nodes[el], r.w, r.h_px)
+				shown = vis > 0 && vis >= visibility
+			}
 			cover := -1
-			if el >= 0 && clears < MAX_COVER_CLEARS && visible_pct(r.h.nodes[el], r.w, r.h_px) > 0 do cover = covered_by(r, el)
-			if el < 0 || visible_pct(r.h.nodes[el], r.w, r.h_px) <= 0 || cover >= 0 {
+			if shown && clears < MAX_COVER_CLEARS do cover = covered_by(r, el)
+			if !shown || cover >= 0 {
 				if time.tick_now()._nsec >= end do break
 				// The next drag waits for this one to show, up to 500 ms (an app can take a few
 				// frames to move its content, and drags piling up could carry the element past
@@ -1105,8 +1174,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				if cover >= 0 {
 					tx, ty = clear_of(r, el, cover, cx, cy, ex, ey)
 					clears += 1
+				} else if el >= 0 {
+					if bx, by, ok := bring_in(r, el, cx, cy, ex, ey); ok do tx, ty = bx, by
 				}
 				swiped, swiped_from = time.tick_now(), r.h.hash
+				if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
 				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 				continue
 			}
@@ -1138,9 +1210,12 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				if cover < 0 do return nil
 				tx, ty = clear_of(r, el, cover, cx, cy, ex, ey)
 				clears += 1
+			} else if bx, by, ok := bring_in(r, el, cx, cy, ex, ey); ok {
+				tx, ty = bx, by
 			}
 		}
 		swiped, swiped_from = time.tick_now(), r.h.hash
+		if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
 		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 		moving = true
 		if time.tick_now()._nsec >= end do break
@@ -1335,9 +1410,10 @@ clip_to_scroll_views :: proc(r: ^Runner) {
 		c := Clip{min(i32), min(i32), max(i32), max(i32)}
 		if n.parent >= 0 do c = clips[n.parent]
 		area := f64(n.right - n.left) * f64(n.bottom - n.top)
+		frame := [4]i32{n.left, n.top, n.right, n.bottom}
 		n.left, n.top = clamp(n.left, c.left, c.right), clamp(n.top, c.top, c.bottom)
 		n.right, n.bottom = clamp(n.right, n.left, c.right), clamp(n.bottom, n.top, c.bottom)
-		if f64(n.right - n.left) * f64(n.bottom - n.top) != area do n.full_area = area
+		if f64(n.right - n.left) * f64(n.bottom - n.top) != area do n.full_area, n.full = area, frame
 		switch n.class {
 		case "ScrollView", "Table", "CollectionView":
 			c = {n.left, n.top, n.right, n.bottom}

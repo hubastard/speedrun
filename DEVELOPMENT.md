@@ -294,9 +294,18 @@ Known differences in how, not what:
   Native favorite toggle went from 3.3 s to ~1.4 s.
 - `scrollUntilVisible` checks that nothing is drawn over the element's center (a node later
   in the tree, outside its subtree and outside any other scroll view, smaller than half the
-  screen: a sticky footer, iOS 26's floating search bar) and drags it just clear; after two
-  such drags it stops checking (a closed side drawer that Android still places on screen
-  covered every row of an Ignite list).
+  screen: a sticky footer, iOS 26's floating search bar) and drags it just clear: up past a
+  bar in the screen's bottom half, down past one in its top half; after two such drags it
+  stops checking (a closed side drawer that Android still places on screen covered every row
+  of an Ignite list).
+- While its drags move the content, `scrollUntilVisible` stops on an element only once it
+  shows as much as asked (`visibility`), and drags an element its list cuts on the side it
+  comes in from (iOS) just far enough to bring it all in, a margin past the list's edge or
+  past a bar over that edge. iOS 26 Settings' "Developer" row came in as a 7-point sliver
+  inside the bottom toolbar: settled on, it was taken as covered, and the clearing drag,
+  which compared the toolbar with the sliver's middle, went the wrong way, back off screen
+  (a third drag; 2.5 s for the scroll, 1.4–1.8 s now). A full stride also pulls a list that
+  ends just after the element past its end, and its bounce costs the settle ~0.1–0.4 s.
 - A lookup that had to wait for its element settles once it shows, then finds it again: an
   element enters the hierarchy at its final place while it may still slide in (Stripe's
   payment sheet, presented once its SDK has loaded), and a tap then hits what is behind.
