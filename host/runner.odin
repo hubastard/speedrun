@@ -979,30 +979,26 @@ busy_indicator :: proc(n: H_Node) -> bool {
 	return strings.has_suffix(n.class, "ProgressBar")
 }
 
-// A loading overlay over the element, in a tree in drawing order (Android; iOS asks its hit
-// test, see under_loading): a spinner over its center (one that fills the overlay), or a node
-// drawn over its center (later in the tree, outside its subtree) with a spinner within it, in
-// its subtree or right after it under the same parent. Apps draw one over a screen while it
-// loads, often see-through and fading in: the element shows through and stays in the
-// hierarchy, but the overlay takes the touches. A spinner inside the element is its own (a
-// button showing it is busy). -1: none.
+// A loading overlay over the element, in Android's tree (iOS asks its hit test, see
+// under_loading): a node over the element's center, outside it and not one of its containers,
+// that is a spinner or holds one: a branch laid over the element. Apps draw one over a screen
+// while it loads, often see-through and fading in: the element shows through and stays in the
+// hierarchy, but the overlay takes the touches. The tree's order says nothing (Android orders
+// siblings by their place on screen, not as drawn: an overlay from a screen's top edge comes
+// before content below a padding), but its parents are the views' own. A spinner shows at its
+// own size, whatever its container's. -1: none.
 @(private = "file")
 loading_cover :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
 	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 	end := el + 1
 	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
-	for s, k in r.h.nodes {
-		if (k > el && k < end) || !s.kept || !busy_indicator(s) do continue
-		if x >= s.left && x < s.right && y >= s.top && y < s.bottom do return k
-	}
-	for k := end; k < len(r.h.nodes); k += 1 {
-		c := r.h.nodes[k]
-		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
-		parent_depth := int(r.h.nodes[c.parent].depth) if c.parent >= 0 else -1
-		for j := k; j < len(r.h.nodes) && (j == k || int(r.h.nodes[j].depth) > parent_depth); j += 1 {
-			s := r.h.nodes[j]
-			if s.kept && busy_indicator(s) && s.left >= c.left && s.right <= c.right && s.top >= c.top && s.bottom <= c.bottom do return k
+	outer: for c, k in r.h.nodes {
+		if (k >= el && k < end) || !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		if busy_indicator(c) do return k
+		for p := n.parent; p >= 0; p = r.h.nodes[p].parent do if p == k do continue outer
+		for j := k + 1; j < len(r.h.nodes) && r.h.nodes[j].depth > c.depth; j += 1 {
+			if r.h.nodes[j].kept && busy_indicator(r.h.nodes[j]) do return k
 		}
 	}
 	return -1
@@ -1013,7 +1009,7 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 // view's: there, while a spinner shows outside the element, the agent asks what a touch at the
 // element's center reaches (the accessibility hit test, as XCTest's isHittable), and the
 // overlay takes the tap when it is neither the element nor one of its containers. Android's
-// tree is in drawing order.
+// tree keeps the views' parents (loading_cover).
 @(private = "file")
 under_loading :: proc(r: ^Runner, el: int) -> (bool, Err) {
 	if r.dev.platform != .IOS do return loading_cover(r, el) >= 0, nil
