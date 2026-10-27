@@ -15,6 +15,7 @@ export function Gestures() {
   const insets = useSafeAreaInsets();
   const [swipe, setSwipe] = useState('none');
   const [swipes, setSwipes] = useState(0);
+  const [moved, setMoved] = useState('');
   const [tapped, setTapped] = useState('nowhere');
   const [single, setSingle] = useState(0);
   const [double, setDouble] = useState(0);
@@ -22,9 +23,13 @@ export function Gestures() {
 
   const pan = Gesture.Pan()
     .minDistance(20)
-    .onEnd((e) => {
-      const dir = Math.abs(e.translationX) > Math.abs(e.translationY) ? (e.translationX < 0 ? 'LEFT' : 'RIGHT') : e.translationY < 0 ? 'UP' : 'DOWN';
+    .onEnd((e, success) => {
+      // A pan that never activated ends too, with no translation: "not recognized".
+      const dir = !success
+        ? 'not recognized'
+        : Math.abs(e.translationX) > Math.abs(e.translationY) ? (e.translationX < 0 ? 'LEFT' : 'RIGHT') : e.translationY < 0 ? 'UP' : 'DOWN';
       runOnJS(setSwipe)(dir);
+      runOnJS(setMoved)(`moved ${Math.round(e.translationX)}, ${Math.round(e.translationY)}`);
       runOnJS(setSwipes)(swipes + 1);
     });
   const doubleTap = Gesture.Tap().numberOfTaps(2).maxDelay(300).onEnd((_e, ok) => {
@@ -47,6 +52,7 @@ export function Gestures() {
           </View>
         </GestureDetector>
         <Text testID="swipe-result" style={{ color: c.text }}>{`Last swipe: ${swipe} (${swipes})`}</Text>
+        <Text testID="swipe-moved" style={{ color: c.muted }}>{moved}</Text>
         <Pressable
           testID="tap-pad"
           accessibilityLabel="Tap pad"

@@ -5,6 +5,8 @@
 #   ./bench.sh test ios|android       the suite with speedrun (pass/fail, per-flow times)
 #   ./bench.sh compare ios|android    the suite with speedrun, then with Maestro: a table per
 #                                     flow in results/<platform>.md
+#   ./bench.sh maestro ios|android    the suite with Maestro only (the table takes speedrun's
+#                                     last results)
 # Extra arguments go to `speedrun test` / `maestro test` (flow files instead of the folder,
 # --include-tags ...). The device: DEVICE=<serial or simulator UDID>, else the first adb device
 # (Android) or the booted simulator (iOS). Needs ../../speedrun (./build.sh); compare needs
@@ -12,8 +14,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CMD="${1:?usage: ./bench.sh build|test|compare ios|android [args...]}"
-PLATFORM="${2:?usage: ./bench.sh build|test|compare ios|android [args...]}"
+CMD="${1:?usage: ./bench.sh build|test|maestro|compare ios|android [args...]}"
+PLATFORM="${2:?usage: ./bench.sh build|test|maestro|compare ios|android [args...]}"
 shift 2
 SPEEDRUN="$(cd ../.. && pwd)/speedrun"
 APP_ID=dev.speedrun.bench
@@ -112,6 +114,7 @@ PY
 case "$CMD" in
   build) build ;;
   test) run speedrun "$@"; table ;;
+  maestro) run maestro "$@"; table ;;
   compare)
     run speedrun "$@"
     # Maestro draws its live view over the screen: start it on a clear one.
@@ -119,5 +122,5 @@ case "$CMD" in
     run maestro "$@"
     table
     ;;
-  *) echo "usage: ./bench.sh build|test|compare ios|android [args...]"; exit 1 ;;
+  *) echo "usage: ./bench.sh build|test|maestro|compare ios|android [args...]"; exit 1 ;;
 esac

@@ -1,22 +1,10 @@
-# Signs in from wherever the app opened, the way real suites do: each screen the app may or
-# may not show is checked for. Env: PHONE, CODE, REMEMBER (true/false).
+# Signs in after a launch with clearState and clearKeychain (so no "Welcome back": see
+# remember_me.yaml). Env: PHONE, CODE, REMEMBER (true/false).
 appId: dev.speedrun.bench
 ---
-# The first launch after an install (or clearState) shows the onboarding.
-- runFlow:
-    when:
-      visible:
-        id: onboarding-skip
-    commands:
-      - tapOn:
-          id: onboarding-skip
-# iOS keeps a remembered account across clearState (keychain): use another one.
-- runFlow:
-    when:
-      visible: "Welcome back, .*!"
-    commands:
-      - tapOn:
-          id: use-another
+# The first launch after clearState shows the onboarding.
+- tapOn:
+    id: onboarding-skip
 - tapOn:
     id: phone-input
 - inputText: ${PHONE}

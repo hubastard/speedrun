@@ -4,18 +4,12 @@ tags: [lab, device]
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
     arguments:
       greeting: hello
       mode: bench
 - tapOn:
     id: onboarding-skip
-- runFlow:
-    when:
-      visible:
-        id: use-another
-    commands:
-      - tapOn:
-          id: use-another
 - tapOn:
     id: guest
 - runFlow:
@@ -47,7 +41,8 @@ tags: [lab, device]
     file: _shared/lab.yaml
     env:
       SCREEN: device
-- assertVisible: "Camera: denied"
+# Not granted: Android reports a revoked permission as "undetermined" until the app asks.
+- assertVisible: "Camera: (denied|undetermined)"
 # setPermissions: iOS applies it at the next launch (launchApp then leaves the camera be:
 # it is given permissions of its own).
 - setPermissions:
@@ -76,11 +71,26 @@ tags: [lab, device]
 - evalScript: "${output.photos = parseInt(maestro.copiedText.replace('Photos: ', ''))}"
 - addMedia:
     - media/photo.png
-- tapOn:
-    id: refresh-device
-- copyTextFrom:
-    id: photo-count
-- assertTrue: "${parseInt(maestro.copiedText.replace('Photos: ', '')) == output.photos + 1}"
+# iOS adds a photo each time; Android copies the file under the same name, so from the second
+# run on it replaces it, and lists it a moment later.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: refresh-device
+      - copyTextFrom:
+          id: photo-count
+      - assertTrue: "${parseInt(maestro.copiedText.replace('Photos: ', '')) == output.photos + 1}"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          id: refresh-device
+      - extendedWaitUntil:
+          visible: "Photos: [1-9]\\d*"
+          timeout: 5000
 # Home, then back to the app as it was.
 - pressKey: Home
 - launchApp:

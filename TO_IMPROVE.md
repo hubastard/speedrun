@@ -17,6 +17,11 @@ the commands where speedrun is still closest to Maestro, with what is known abou
 - **iOS `setPermissions` takes effect at the next launch** (the TCC database is written; a
   running app keeps what it read), and `launchApp` without `permissions:` grants everything
   again, as in Maestro.
+- **A tap on Android took 16 minutes once** (the benchmark app's inputs flow, the tap on a
+  field after `scrollUntilVisible`), then the flow passed; three reruns took 24–34 s. No ANR or
+  crash in logcat. The agent's touch injection goes through UiAutomation, which waits on
+  SurfaceFlinger around DOWN and UP: an emulator stall there blocks the whole command. A time
+  limit on agent operations would turn such a hang into a failure (Maestro has none either).
 - **The iOS simulator's hardware keyboard setting** decides whether the software keyboard
   shows; this one has it on, yet the keyboard showed in some fields: flows should not depend
   on it either way.
@@ -24,104 +29,49 @@ the commands where speedrun is still closest to Maestro, with what is known abou
 ## Measuring
 
 ```
-./compare.sh bench_scenario.yaml -e TIMES=5                       # Android: speedrun, then Maestro
-DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
-./compare.sh flows/features.yaml                                  # both must agree on every command
+cd bench/app
+./bench.sh compare ios             # the suite with speedrun, then Maestro: results/ios.md
+./bench.sh compare android
+cd ../.. && ./compare.sh bench/app/flows/gestures.yaml    # one flow, per command
 ```
 
-`compare.sh` starts the flow's app fresh before each tool, lines the two runs up command by
-command (warning if their command sequences or statuses differ) and prints medians per
-command, repeat iterations grouped. Then three totals per tool: the flow, the time outside it
-(start-up and shutdown, the whole run's wall clock minus the flow: a slow tool costs that on
-every run) and the wall clock, all included. On iOS it stops speedrun's kept-alive agent
-first, so both tools start cold. It needs `maestro` and `python3` on PATH. With several
-devices connected it uses `DEVICE`, else `ANDROID_SERIAL`, else the first one.
+`bench.sh compare` runs the benchmark app's suite (`bench/app/flows`, 19 flows) with each
+tool on the same device and writes a table per flow plus the wall clock of each whole run
+(each tool's start-up included). On iOS it stops speedrun's kept-alive agent before each
+run, so both start cold. `compare.sh` takes one flow file: it starts the flow's app fresh
+before each tool, lines the two runs up command by command (warning if their command
+sequences or statuses differ) and prints medians per command, then the flow, the time outside
+it and the wall clock per tool. Both need `maestro` and `python3` on PATH.
 
-The benchmark flows: `bench_scenario.yaml` (Android Settings, 14 commands per iteration:
-navigation two levels deep, scrolling both ways, text input in a dialog), its iOS version
-`bench_scenario_ios.yaml` (Settings on a simulator in English), and `flows/ignite/bench_rn.yaml`
-(a React Native app: login, an API list, favorites, scrolling, text input, tabs). Shut the iOS
-simulator down for Android numbers: memory pressure on a 16 GB Mac stalls the emulator. Stop
-speedrun's iOS agent first (`./speedrun --stop-agent`): shut down under it, xcodebuild boots
-the simulator again and runs `simctl diagnose`, which stalled an Android run.
+Before a run: shut the iOS simulator down for Android numbers (memory pressure on a 16 GB Mac
+stalls the emulator; stop speedrun's iOS agent first with `./speedrun --stop-agent`, or
+xcodebuild boots the simulator again and runs `simctl diagnose`), and stop stray emulators
+for iOS numbers (a stalled one made Maestro hang in adb before starting).
 
 ## Latest results
 
-| flow | device | speedrun | Maestro | ratio |
+The benchmark app's suite, 2026-10-27, Apple M1 Pro 16 GB:
+
+| device | speedrun | Maestro | ratio | passed (speedrun / Maestro) |
 |---|---|---|---|---|
-| `bench_scenario.yaml`, TIMES=3 (2026-10-26) | Android emulator (API 37), `-gpu host` | 10.5 s | 88.0 s | 8.4x |
-| `bench_scenario_ios.yaml`, TIMES=3 (2026-10-26) | iPhone 17 Pro simulator, iOS 26.2 | 26.9 s | 78.8 s | 2.9x |
-| `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-26) | Android emulator, `-gpu host` | 31.2 s | 188.1 s | 6.0x |
-| `flows/ignite/bench_rn.yaml`, TIMES=3 (2026-10-26) | iPhone 17 Pro simulator | 57.4 s | 169.4 s | 3.0x |
-| `flows/ignite/device.yaml` | iOS simulator | 40.0 s | 49.4 s | 1.2x |
-| Ignite's own flows (`apps/ignite/.maestro/flows`) | iOS simulator | 27.3 s | 37.9 s | 1.4x |
+| Android 17 emulator (API 37), `-gpu host` | 510 s | 2892 s | 5.7x | 19/19 / 17/19 |
+| iPhone 17 Pro simulator, iOS 26.2 | 696 s | 2517 s | 3.6x | 19/19 / 10/19 |
 
-Flow times; outside the flow, start-up and shutdown cost speedrun 0.6–2.7 s on Android (the
-most when it pushes a new agent build) and 4–5 s on iOS cold (~0.2 s once the runner is up),
-Maestro 9–13 s. The `device.yaml` and Ignite rows predate the iOS speedups of 2026-10-24/25.
+Per flow: `bench/app/README.md`. Closest to Maestro: the deep-link flow (1.4–1.5x: three
+"Open in …?" checks wait 7 s each when the dialog does not show, in both tools), the popups
+and scripting flows on iOS (2.2x).
 
-`bench_scenario.yaml` per command (median ms):
+## Earlier benchmarks (flows removed 2026-10-26)
 
-| command | speedrun | Maestro |
-|---|---|---|
-| tap (Display & touch / Display size & text / About / Device name / Cancel) | 161–328 | 2073–3817 |
-| back | 118–193 | 733–842 |
-| `scrollUntilVisible` down / up | 334 / 324 (828 / 801 with flinging swipes) | 2305 / 2383 |
-| `eraseText: 25` | 446 | 2060 |
-| `inputText` (14 characters) | 255 | 2932 |
-| `assertVisible` | 4–47 | 87–120 |
-| `launchApp` | 121 (then the next command waits for the app's window) | 744 |
-
-`bench_scenario_ios.yaml` per command (median ms):
-
-| command | speedrun | Maestro |
-|---|---|---|
-| tap (General / About / back / search / close) | 539–1203 | 1554–2640 |
-| `scrollUntilVisible` down / up | 812 / 100 (up: "General" already shows) | 3777 / 2901 |
-| `eraseText: 25` | 666 | 1972 |
-| `inputText` (14 characters) | 1261 | 1562 |
-| `launchApp` | 596 | 1768 |
-
-## Other tools on `bench_scenario.yaml` (2026-10-26)
-
-Quick ports, not kept in the repo: the same 14 steps written the way each tool is normally
-used, TIMES=3, on the same emulator, alternating the tools. The README's table is the wall
-clock, measured with VS Code closed (load ~2): speedrun's whole command; Maestro's; Appium
-from starting its server to stopping it; UI Automator's `./gradlew connectedDebugAndroidTest`
-(build up to date, daemon warm: it installs the test, runs it and uninstalls it).
-
-| tool | wall clock (median) | runs | flow alone |
-|---|---|---|---|
-| speedrun | 11.2 s | 10.8, 11.1, 11.2, 11.3, 11.3 | 10.4–10.9 s |
-| UI Automator 2.3 (Kotlin, `UiObject2` + `Until`) | 48.9 s | 44.4, 53.4 | 35.1, 36.6 s |
-| Appium 3.8, UiAutomator2 driver 8.7, WebdriverIO | 52.7 s | 51.8, 53.5 | 48.3, 48.9 s |
-| Maestro 2.11.0 | 90.7 s | 87.5, 90.7, 96.5 | 88.0 s (the third) |
-| tester-army e2e 0.17.0 (agent-device 0.21.20), `bench/tester-army` | 32.0 s | 32.0, 32.5 (47.8 cold) | 29.4, 29.9 s |
-
-On iOS (`bench_scenario_ios.yaml`, iPhone 17 Pro simulator, the emulator running): speedrun
-32.9 s cold, 26.8–27.4 s warm (compare.sh: 31.0 s); e2e 63.0, 64.3, 65.4, 71.4 s with its
-runner kept from the previous run (48.0 s for one lap cold, 23.7 s of it starting the
-runner); Maestro 92.9 s. e2e per step on iOS: taps 0.8–1.3 s, back 1.0–1.2 s, scrolls 1.6–1.8 s,
-`clear` 2.2 s and `fill` 3.7–3.9 s (speedrun: 0.5–1.2, 0.58, 0.8, 0.67 and 1.26 s). On
-Android: scrolls 1.0–1.5 s, `clear` and `fill` ~1.1 s each, back 0.5–0.7 s, taps 0.2–0.8 s.
-
-Earlier the same day, with VS Code and macOS's ANECompilerService busy (load 3–5), the
-flows alone took: speedrun 12.6–20.3 s, UI Automator 35.9–47.5 s, Appium 57.4–60.1 s,
-Maestro 96.8–103.3 s. speedrun's row is after `scrollUntilVisible` stopped flinging on
-Android (13.9 s before: 13.5–15.6): per lap, its two scrolls took 1.6 s of 4.2 s, now 0.66
-s of 3.3 s.
-
-- Both ports needed an explicit wait for the dialog to close after Cancel: their tap returns
-  at once and the next `back` went to the closing dialog, leaving the flow on the wrong
-  screen. Without it Appium failed 2 runs of 4 (46.4 and 47.0 s when it passed) and UI
-  Automator all 4.
-- Where they beat speedrun: UI Automator's `clear()` and `setText` take 7 and 37 ms
-  (speedrun's `eraseText`/`inputText`: 295 and 256 ms). They set the field's text through
-  accessibility, skipping the keyboard; flows type through it, so that would change what
-  apps see.
-- UI Automator's taps return without waiting (50–100 ms); its next lookup waits instead
-  (~0.8 s after a tap that opens a screen). Its `scrollUntil` takes 2.4 s down and 1.1–1.8 s
-  up (speedrun: 0.8 s).
+Before the benchmark app, speedrun was measured on Android's and iOS's Settings app (a
+14-step scenario, 3 laps) and on the Ignite React Native demo app; those flows, and the
+other tools' ports of the Settings scenario, are in git history up to commit 5fdcb19.
+Wall clock on 2026-10-26: Settings on Android, speedrun 11.2 s, tester-army e2e 0.17 32.0 s,
+UI Automator 2.3 48.9 s, Appium 3.8 52.7 s, Maestro 2.11 90.7 s; Settings on iOS, speedrun
+31 s, e2e 65 s, Maestro 93 s; Ignite, speedrun 31.2 s vs Maestro 188.1 s on Android and
+57.4 s vs 169.4 s on iOS. Per command on Android Settings, speedrun's taps took 161–328 ms
+against Maestro's 2.1–3.8 s, `scrollUntilVisible` 0.33 s against 2.3 s, `inputText` (14
+characters) 255 ms against 2.9 s.
 
 ## Closest to Maestro
 
@@ -153,12 +103,3 @@ s of 3.3 s.
   2026-10-26; in a React Native list each drag moves ~1.5 rows, ~0.8 s for 4 drags.
 - **iOS `launchApp`: 0.6–1.5 s vs 1.7–2.3 s.** The app's own start-up; SpringBoard's launch
   animation is not sped up (that would be a global, persistent simulator setting).
-
-## Maestro on iOS, 2026-10-23 (before the iOS agent)
-
-`bench_scenario_ios.yaml -e TIMES=5`, Maestro 2.11.0, all commands passed: taps 2.4–3.0 s,
-`scrollUntilVisible` 3.7 / 3.0 s, `eraseText: 25` 2.0 s, `inputText` (14 characters) 1.6 s,
-`assertVisible` 0.2–0.3 s, 26.0 s per iteration, ~10 s outside the flow. Its static-screen
-check (two equal screenshots) took 1.46 s after a push and 1.15 s after a pop; its typing adds
-0.7 s of fixed sleeps to 14 characters at 30 per second. Taps are not where it loses time
-(it synthesizes events directly too): settling and hierarchy reads are.

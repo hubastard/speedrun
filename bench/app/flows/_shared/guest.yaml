@@ -1,18 +1,12 @@
-# A fresh start as a guest: onboarding skipped, no sign in.
+# A fresh start as a guest: onboarding skipped, no sign in. The keychain is cleared too: iOS
+# keeps a remembered account across clearState ("Welcome back"; remember_me.yaml tests it).
 appId: dev.speedrun.bench
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - tapOn:
     id: onboarding-skip
-# iOS keeps a remembered account across clearState (keychain).
-- runFlow:
-    when:
-      visible:
-        id: use-another
-    commands:
-      - tapOn:
-          id: use-another
 - tapOn:
     id: guest
 - extendedWaitUntil:

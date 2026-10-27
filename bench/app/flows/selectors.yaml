@@ -11,12 +11,12 @@ tags: [lab, selectors]
     text: Choose
     index: 1
 - assertVisible: "Chose Plus"
-# Matches keep the text filter's order: the first "Choose" below "Plus" is Pro's (Plus's own
-# starts above its name).
+# Matches keep the text filter's order: the first "Choose" below Plus's price is Pro's (Plus's
+# own starts above it).
 - tapOn:
     text: Choose
     below:
-      text: Plus
+      text: "\\$10"
 - assertVisible: "Chose Pro"
 - tapOn:
     text: Choose
@@ -89,6 +89,10 @@ tags: [lab, selectors]
 - assertVisible:
     id: hide-me
     checked: true
+- scrollUntilVisible:
+    element:
+      id: focus-field
+    direction: UP
 - tapOn:
     id: focus-field
 - assertVisible:

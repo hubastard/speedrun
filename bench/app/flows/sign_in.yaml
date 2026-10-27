@@ -4,15 +4,9 @@ tags: [auth]
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - tapOn:
     id: onboarding-skip
-- runFlow:
-    when:
-      visible:
-        id: use-another
-    commands:
-      - tapOn:
-          id: use-another
 - assertVisible:
     id: next
     enabled: false
@@ -44,5 +38,22 @@ tags: [auth]
     visible:
       id: "tab-home|notify-title"
     timeout: 15000
-- runFlow: _shared/dismiss-notify.yaml
+# The app's prompt, then iOS's own alert (Android: launchApp granted the permission, so no
+# dialog comes).
+- runFlow:
+    when:
+      visible:
+        id: notify-title
+    commands:
+      - tapOn:
+          id: notify-on
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - runFlow:
+                when:
+                  visible: "Allow"
+                commands:
+                  - tapOn: "Allow"
 - assertVisible: "Hi, Alex"

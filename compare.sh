@@ -7,8 +7,8 @@
 # every run too), and the wall clock. Needs ./speedrun (./build.sh), maestro and python3.
 # The device: DEVICE (an Android serial or a booted iOS simulator's UDID), else ANDROID_SERIAL,
 # else the first Android device, else the booted simulator.
-#   ./compare.sh bench_scenario.yaml -e TIMES=5
-#   DEVICE=<simulator udid> ./compare.sh bench_scenario_ios.yaml -e TIMES=5
+#   ./compare.sh bench/app/flows/gestures.yaml
+#   DEVICE=<simulator udid> ./compare.sh bench/app/flows/chat.yaml
 set -euo pipefail
 cd "$(dirname "$0")"
 

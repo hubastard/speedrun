@@ -3,7 +3,7 @@
 // clearState and the app greets it with "Welcome back".
 import { useNavigation, useRoute } from '@react-navigation/native';
 import React, { useEffect, useRef, useState } from 'react';
-import { FlatList, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { FlatList, Keyboard, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -166,7 +166,7 @@ function signedIn(name: string) {
 const CODE = '123456';
 
 // One field for the six digits, drawn as six boxes (what code-entry libraries do): the field
-// covers the boxes with its text transparent, so a tap anywhere focuses it.
+// covers the boxes, its text hidden, so a tap anywhere focuses it.
 export function Code() {
   const route = useRoute<any>();
   const c = useColors();
@@ -190,6 +190,8 @@ export function Code() {
   }
 
   function verify(entered: string) {
+    // The keyboard goes away with the code (on Android it would stay up over the home screen).
+    Keyboard.dismiss();
     setVerifying(true);
     setTimeout(() => {
       setVerifying(false);
@@ -232,7 +234,8 @@ export function Code() {
           caretHidden
           value={code}
           onChangeText={type}
-          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, color: 'transparent', backgroundColor: 'transparent' }}
+          // Android draws the text in spite of the transparent color: a 1-point font hides it.
+          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, color: 'transparent', backgroundColor: 'transparent', fontSize: 1 }}
         />
       </Animated.View>
       <Gap />

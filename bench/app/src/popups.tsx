@@ -3,28 +3,36 @@
 // badge after the first order (native modals), a survey sheet after the second.
 import LottieView from 'lottie-react-native';
 import * as Notifications from 'expo-notifications';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, Text, View } from 'react-native';
-import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { closePopup, useStore } from './store';
 import { Body, Button, Chip, s, Sheet, Title, useColors } from './ui';
 
 export function ToastHost() {
-  const c = useColors();
-  const insets = useSafeAreaInsets();
   const t = useStore((st) => st.toast);
   if (!t) return null;
+  return <Toast key={t.id} text={t.text} />;
+}
+
+// Slides and fades in. (A Reanimated entering animation did not show on Android when the
+// toast came in the same update as a menu closing or a screen going back.)
+function Toast({ text }: { text: string }) {
+  const c = useColors();
+  const insets = useSafeAreaInsets();
+  const shown = useSharedValue(0);
+  useEffect(() => {
+    shown.value = withTiming(1, { duration: 250 });
+  }, [shown]);
+  const style = useAnimatedStyle(() => ({ opacity: shown.value, transform: [{ translateY: (shown.value - 1) * 20 }] }));
   return (
     <Animated.View
-      key={t.id}
-      entering={FadeInUp}
-      exiting={FadeOutUp}
       pointerEvents="none"
-      style={{ position: 'absolute', top: insets.top + 8, left: 24, right: 24, backgroundColor: c.text, borderRadius: 12, padding: 14 }}
+      style={[{ position: 'absolute', top: insets.top + 8, left: 24, right: 24, backgroundColor: c.text, borderRadius: 12, padding: 14, zIndex: 1000, elevation: 10 }, style]}
     >
-      <Text testID="toast" style={{ color: c.bg, fontWeight: '700', textAlign: 'center' }}>{t.text}</Text>
+      <Text testID="toast" style={{ color: c.bg, fontWeight: '700', textAlign: 'center' }}>{text}</Text>
     </Animated.View>
   );
 }

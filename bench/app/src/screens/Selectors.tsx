@@ -23,6 +23,8 @@ export function Selectors() {
   return (
     <Screen title="Selectors">
       <Text testID="selector-result" style={{ color: c.text, fontSize: 18, fontWeight: '700' }}>{result}</Text>
+      {/* At the top: lower down, the keyboard it brings up would cover it. */}
+      <TextInput testID="focus-field" placeholder="Focus me" placeholderTextColor={c.muted} style={[s.field, { color: c.text, borderColor: c.border, marginTop: 8 }]} />
       <Gap />
       {/* Each plan in a scroll view: iOS's accessibility tree puts a plain view's content
           beside it, not under it, so childOf and containsChild need a real container. */}
@@ -56,7 +58,6 @@ export function Selectors() {
       <Body testID="period-result">{`Showing: ${period}`}</Body>
       <Checkbox testID="notify-me" label="Notify me" checked={notify} onChange={setNotify} />
       <Checkbox testID="hide-me" label="Hide me" checked={hide} onChange={setHide} />
-      <TextInput testID="focus-field" placeholder="Focus me" placeholderTextColor={c.muted} style={[s.field, { color: c.text, borderColor: c.border, marginTop: 8 }]} />
       <Gap />
       <Text style={[s.label, { color: c.muted }]}>Sizes</Text>
       <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>

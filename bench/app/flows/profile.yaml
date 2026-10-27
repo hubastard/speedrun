@@ -4,6 +4,7 @@ tags: [profile]
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - runFlow:
     file: _shared/sign-in.yaml
     env:

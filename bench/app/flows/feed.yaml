@@ -4,6 +4,7 @@ tags: [feed]
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - runFlow:
     file: _shared/sign-in.yaml
     env:
@@ -49,13 +50,19 @@ tags: [feed]
       id: like-1
     direction: UP
     timeout: 40000
-# Pull to refresh.
-- swipe:
-    from:
-      id: like-1
-    direction: DOWN
+# Pull to refresh. Android refreshes only when the pull starts at the top of the list (iOS
+# scrolls up and refreshes in one drag): pull until it does.
+- repeat:
+    times: 3
+    while:
+      notVisible: "Refreshed \\d+×"
+    commands:
+      - swipe:
+          from:
+            id: like-1
+          direction: DOWN
 - extendedWaitUntil:
-    visible: "Refreshed 1×"
+    visible: "Refreshed \\d+×"
     timeout: 5000
 - scroll
 - waitForAnimationToEnd

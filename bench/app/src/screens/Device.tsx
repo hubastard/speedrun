@@ -62,7 +62,11 @@ export function Device() {
       setPhotos(page.totalCount);
     } else setPhotos(null);
     if (loc.status === 'granted' && !watch.current) {
-      watch.current = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Highest, distanceInterval: 0, timeInterval: 500 }, (p) =>
+      // Android: no "turn on Location Accuracy" dialog from Google Play services (it shows on
+      // devices where that setting is off, whatever the accuracy asked for).
+      watch.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, distanceInterval: 0, timeInterval: 500, mayShowUserSettingsDialog: false },
+        (p) =>
         setLocation(`Location: ${p.coords.latitude.toFixed(4)}, ${p.coords.longitude.toFixed(4)}`),
       );
     }

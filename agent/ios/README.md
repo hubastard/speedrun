@@ -16,8 +16,6 @@ seconds without a client (600). Only an XCTest runner may drive other apps on iO
   `Spike.swift` (measurement-only ops).
 - `spike/` — the Python client and the measurement scripts (`measure.py`, `measure_followup.py`
   for the building blocks, `typing.py` for typing rates, `swipe.py` for swipe shapes).
-- `../../bench_scenario_ios.yaml` — the iOS version of `bench_scenario.yaml` (Settings, simulator
-  in English), 12 commands per iteration.
 
 How it does each part:
 

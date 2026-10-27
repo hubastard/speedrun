@@ -78,7 +78,7 @@ export function Chat() {
 
   const shown = [...messages].reverse();
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
       <Header title={chat.name} />
       <FlatList
         testID="messages"
@@ -121,7 +121,10 @@ export function Chat() {
         </Pressable>
       </View>
       {menu !== null ? (
-        <Pressable testID="menu-backdrop" accessibilityLabel="Close menu" onPress={() => setMenu(null)} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 40 }}>
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'center', padding: 40 }}>
+          {/* The backdrop beside the menu, not around it: on Android a tap on a button inside
+              the backdrop's Pressable closed the menu without pressing the button. */}
+          <Pressable testID="menu-backdrop" accessibilityLabel="Close menu" onPress={() => setMenu(null)} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)' }} />
           <View style={[s.card, { backgroundColor: c.bg }]}>
             <Pressable testID="menu-copy" accessibilityRole="button" style={s.row} onPress={() => { setMenu(null); toast('Copied'); }}>
               <Text style={{ color: c.text, fontSize: 17 }}>Copy</Text>
@@ -130,7 +133,7 @@ export function Chat() {
               <Text style={{ color: c.danger, fontSize: 17 }}>Delete</Text>
             </Pressable>
           </View>
-        </Pressable>
+        </View>
       ) : null}
     </KeyboardAvoidingView>
   );
