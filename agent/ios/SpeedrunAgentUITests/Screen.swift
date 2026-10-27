@@ -266,6 +266,8 @@ final class Screen {
         case .alert: return "Alert"
         case .sheet: return "Sheet"
         case .webView: return "WebView"
+        case .activityIndicator: return "ActivityIndicator"
+        case .progressIndicator: return "ProgressIndicator"
         default: return "ElementType\(t.rawValue)"
         }
     }

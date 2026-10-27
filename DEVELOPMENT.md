@@ -330,6 +330,17 @@ Known differences in how, not what:
 - A lookup that had to wait for its element settles once it shows, then finds it again: an
   element enters the hierarchy at its final place while it may still slide in (Stripe's
   payment sheet, presented once its SDK has loaded), and a tap then hits what is behind.
+- A tap waits while a loading overlay covers its element: a node drawn over the element's
+  center (later in the tree, outside its subtree) with a spinner or a progress bar within it
+  (in its subtree or, iOS flattening plain views, after it under the same parent). Apps draw
+  one over a screen while it loads, see-through and fading in and out: the element shows
+  through and stays in the hierarchy, but the overlay takes the tap, the settle does not wait
+  for the spinner (an endless animation), and the fade shows nowhere (the hierarchy has no
+  opacity; iOS drops a view once it is fully transparent). Once the overlay is gone, the
+  screen settles and the element is found again; after the lookup's time (17 s) the tap goes
+  ahead anyway. A payment app's amount keypad lost its first digit this way; Speedrun
+  Bench's PIN screen loads under such an overlay for 1.5 s. Maestro waits out the spinner
+  (its screenshots change). Assertions still see the element, as Maestro's do.
 - iOS: a tap in a system sheet or alert (another process's view, "Save Password?") that
   changes nothing is tapped again, up to 3 times: such sheets ignore touches while they
   present, and their buttons always act.

@@ -785,6 +785,21 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		if !ok do return fmt.aprintf("invalid point `%s`", p, allocator = r.alloc)
 	} else {
 		el := find_element(r, d.sel, c.optional, -1) or_return
+		// Under a loading overlay (loading_cover), the tap would land on the overlay: wait for
+		// it to go (up to the lookup's time; then tap anyway), settle, and find the element
+		// again where it rests. speedrun's settle does not wait for a spinner (an endless
+		// animation), and an overlay's fade shows nowhere in the hierarchy.
+		if loading_cover(r, el) >= 0 {
+			t := time.tick_now()
+			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
+			for el >= 0 && loading_cover(r, el) >= 0 && time.tick_since(t) < limit {
+				if !read_screen(r) do return "agent connection lost"
+				el = select(r, d.sel) or_return
+			}
+			if r.debug do fmt.printf("      [under a loading overlay: waited %.0f ms]\n", us(t) / 1000)
+			settle(r, no_change_ms = 0) or_return
+			el = find_element(r, d.sel, c.optional, -1) or_return
+		}
 		n := r.h.nodes[el]
 		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
@@ -951,6 +966,38 @@ typing :: proc(r: ^Runner) -> bool {
 covered_by :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
 	return cover_at(r, el, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+}
+
+// A spinner or a progress bar: iOS's activity and progress indicators, Android's ProgressBar.
+@(private = "file")
+busy_indicator :: proc(n: H_Node) -> bool {
+	switch n.class {
+	case "ActivityIndicator", "ProgressIndicator": return true
+	}
+	return strings.has_suffix(n.class, "ProgressBar")
+}
+
+// A loading overlay over the element: a node drawn over its center (later in the tree, outside
+// its subtree) with a spinner within it, in its subtree or, iOS flattening plain views, after
+// it under the same parent. Apps draw one over a screen while it loads, often see-through and
+// fading in: the element shows through and stays in the hierarchy, but the overlay takes the
+// touches. -1: none.
+@(private = "file")
+loading_cover :: proc(r: ^Runner, el: int) -> int {
+	n := r.h.nodes[el]
+	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+	k := el + 1
+	for k < len(r.h.nodes) && r.h.nodes[k].depth > n.depth do k += 1
+	for ; k < len(r.h.nodes); k += 1 {
+		c := r.h.nodes[k]
+		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		parent_depth := int(r.h.nodes[c.parent].depth) if c.parent >= 0 else -1
+		for j := k; j < len(r.h.nodes) && (j == k || int(r.h.nodes[j].depth) > parent_depth); j += 1 {
+			s := r.h.nodes[j]
+			if s.kept && busy_indicator(s) && s.left >= c.left && s.right <= c.right && s.top >= c.top && s.bottom <= c.bottom do return k
+		}
+	}
+	return -1
 }
 
 // What would cover the element at a point of the screen (covered_by's rules).
