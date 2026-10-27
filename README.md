@@ -104,6 +104,23 @@ Everything runs as written except Maestro's AI commands (`assertWithAI` and the 
 details, and the few differences you may notice:
 [Maestro compatibility](docs/maestro-compatibility.md).
 
+## Explore an app with an AI agent
+
+A session keeps Speedrun connected to the device between commands, so an AI coding agent can
+drive the app a step at a time, read the screen in a few lines, and save the steps that worked
+as a flow for CI:
+
+```sh
+speedrun session start --app com.example.app
+speedrun look                          # @5 Field #email, @7 Button "Sign in" ...
+speedrun do 'tapOn: @5' 'inputText: "user@example.com"' 'tapOn: @7'
+speedrun session save flows/sign-in.yaml
+```
+
+Each answer says how each command went and what changed on screen, in a few lines: an agent
+pays a few hundred tokens per step, not a whole accessibility tree.
+See [Sessions](docs/sessions.md).
+
 ## Benchmark
 
 [Speedrun Bench](bench/app) is a React Native app built to be hard to test: animations that
@@ -171,6 +188,8 @@ app is ready instead of after a fixed wait.
 ## Documentation
 
 - [Command line](docs/cli.md): options, environment variables, exit status.
+- [Sessions](docs/sessions.md): drive an app a command at a time, from an AI agent or a
+  terminal, and save the steps as a flow.
 - [Maestro compatibility](docs/maestro-compatibility.md): what is supported, and the
   differences you may notice.
 - [Troubleshooting](docs/troubleshooting.md).

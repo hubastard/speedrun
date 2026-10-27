@@ -267,6 +267,7 @@ simctl_env :: proc(env: []string, args: ..string) -> (out: string, ok: bool) {
 // Starts the agent (and on Android forwards its port); the caller then connects. Prints why
 // when the Android shell agent cannot start and the instrumentation takes over.
 device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
+	if e := session_conflict(d); e != "" do return e
 	current = d
 	// Not blocked while its handler runs: a second Ctrl-C ends a cleanup that hangs.
 	act := posix.sigaction_t{sa_handler = on_signal, sa_flags = {.RESTART, .SA_NODEFER}}

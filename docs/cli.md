@@ -44,6 +44,19 @@ speedrun --version
 speedrun --help
 ```
 
+A session keeps a device connected between commands ([Sessions](sessions.md)):
+
+```
+speedrun session start --app <appId> [--platform android|ios] [--device <id>] [-e KEY=VALUE]...
+speedrun look [--shot]          # the screen, a line per element, each with a ref (@7)
+speedrun do '<command>'...      # flow commands; @7 stands for that element's selector
+speedrun session log            # the commands that passed
+speedrun session save <file>    # them as a flow file
+speedrun session clear          # start the recording over
+speedrun session status
+speedrun session stop
+```
+
 ## Environment variables
 
 
@@ -51,6 +64,7 @@ speedrun --help
 |---|---|
 | `SPEEDRUN_IDLE_S` | iOS: seconds of inactivity before the agent stops (default 600). |
 | `SPEEDRUN_DEBUG=1` | Print every screen read and shell command with its time. |
+| `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
 | `SPEEDRUN_CONDITION_TIMEOUT_MS` | How long a `when: visible` (or `notVisible`) waits for its element (default 7000, as Maestro); a condition's own `timeout` takes precedence. See [Conditions take up to 7 s](maestro-compatibility.md#conditions-take-up-to-7-s). |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |

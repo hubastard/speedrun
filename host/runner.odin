@@ -423,6 +423,25 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 
 // ---- commands -------------------------------------------------------------------------
 
+// The waits put off (exec): the launched app's UI, then a settle.
+pay_due :: proc(r: ^Runner) -> Err {
+	if !r.settle_due && r.launch_due == "" do return nil
+	no_change := i32(SETTLE_NO_CHANGE_MS)
+	if app := r.launch_due; app != "" {
+		r.launch_due = ""
+		t := time.tick_now()
+		ready, ok := op_launched(r.c, app, 20_000, r.alloc)
+		debug_step(r, "app ready", &t)
+		if !ok do return "agent connection lost"
+		if !ready do return fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
+		// Android: with the app's window up, a screen unchanged since the launch was the
+		// app's already (stopApp: false), with nothing to wait for.
+		if r.dev.platform != .IOS do no_change = 0
+	}
+	r.settle_due = false
+	return settle(r, no_change_ms = no_change)
+}
+
 // Executes one command. `mutating` = it may have changed the screen (the lookup timeout
 // clock restarts). `err` is empty on success, SKIPPED, or the failure.
 @(private = "file")
@@ -438,20 +457,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		case Launch_App, App_Cmd, Tap, Assert, Input_Text, Erase_Text, Key_Press, Navigate,
 		     Scroll_Until, Swipe, Wait_Animation, Open_Link, Screenshot, Copy_Text, Paste_Text,
 		     Input_Random, Set_Orientation, Assert_Screenshot:
-			no_change := i32(SETTLE_NO_CHANGE_MS)
-			if app := r.launch_due; app != "" {
-				r.launch_due = ""
-				t := time.tick_now()
-				ready, ok := op_launched(r.c, app, 20_000, r.alloc)
-				debug_step(r, "app ready", &t)
-				if !ok do return false, "agent connection lost"
-				if !ready do return false, fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
-				// Android: with the app's window up, a screen unchanged since the launch was
-				// the app's already (stopApp: false), with nothing to wait for.
-				if r.dev.platform != .IOS do no_change = 0
-			}
-			r.settle_due = false
-			settle(r, no_change_ms = no_change) or_return
+			pay_due(r) or_return
 		}
 	}
 	switch d in c.data {
@@ -1241,7 +1247,6 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 // iOS's scroll indicators are elements over the content they scroll ("Horizontal scroll
 // bar, 1 page", value "0%"), with a touch area ~30 points wide: no cover. Known by their
 // value, a percentage, under a scroll view.
-@(private = "file")
 scroll_indicator :: proc(r: ^Runner, n: H_Node) -> bool {
 	if r.dev.platform != .IOS || n.parent < 0 || !scroll_container(r.h.nodes[n.parent]) do return false
 	if len(n.text) < 2 || n.text[len(n.text) - 1] != '%' do return false
@@ -1883,7 +1888,6 @@ resolve_parent :: proc(r: ^Runner, s: ^Selector) -> (idx: int, err: Err) {
 }
 
 // The node and its kept descendants, pre-order.
-@(private = "file")
 subtree :: proc(r: ^Runner, root: int) -> []int {
 	out: [dynamic]int
 	out.allocator = context.temp_allocator
@@ -1900,7 +1904,6 @@ subtree :: proc(r: ^Runner, root: int) -> []int {
 }
 
 // The full filter of one selector over `nodes`, in the order flows rely on.
-@(private = "file")
 apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) {
 	text_rx, id_rx: ^Rx
 	if t, ok := s.text.?; ok do text_rx = compile(r, eval(r, t) or_return) or_return
@@ -2159,6 +2162,7 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	for j in JAVA_ONLY_REGEX do if strings.contains(pattern, j) {
 		return nil, fmt.aprintf("regex `%s` uses `%s`, which this runner's regex engine does not support", pattern, j, allocator = r.alloc)
 	}
+	pattern := strings.clone(pattern, r.alloc) // the key outlives a caller's temporary string
 	entry := Rx {
 		pattern = pattern,
 	}
@@ -2193,7 +2197,6 @@ visible_pct :: proc(n: H_Node, w, h: i32) -> f64 {
 // under a list's edge is half visible, as Maestro measures it on iOS (and a tap at its
 // visible part's center can land in the home indicator's strip, where iOS loses the next
 // tap).
-@(private = "file")
 visible_share :: proc(n: H_Node, w, h: i32) -> f64 {
 	if n.full_area <= 0 do return visible_pct(n, w, h)
 	vx := max(0, min(n.right, w) - max(n.left, 0))
@@ -2256,7 +2259,6 @@ parse_timeout :: proc(r: ^Runner, raw: string) -> (ms: i64, err: Err) {
 
 // ---- env ------------------------------------------------------------------------------
 
-@(private = "file")
 push_scope :: proc(r: ^Runner) {
 	m := make(map[string]string, 8, r.alloc)
 	append(&r.env, m)

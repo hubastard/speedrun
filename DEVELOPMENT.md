@@ -165,6 +165,56 @@ skipped when that build is already there, then `app_process`); if it cannot star
 prints why and falls back to the instrumentation. `--instrument` forces the instrumentation.
 Agent logs: `adb logcat -s SpeedrunAgent`.
 
+### Sessions (host/session.odin)
+
+`speedrun session start` spawns `speedrun session serve` in its own session (perl's setsid, as
+the iOS runner), which selects and starts the device as `speedrun test` does, keeps one
+`Runner` for its lifetime, listens on a free localhost port, and writes
+`~/.speedrun/session/session.json` (pid, port, a random token, app, device) once it serves;
+`start` waits for that file. `do`, `look` and the other verbs are one TCP request each: a
+length, then token, verb, the client's working directory and the payload, a line each; the
+answer is a status byte, a length and the text the client prints. Requests are served one at
+a time. `accept` times out every 30 s: the agent gets a ping (the iOS runner stops itself
+after 10 idle minutes), and the session ends after `SPEEDRUN_SESSION_IDLE_S` (3600) without
+requests. Before a `do` or `look`, a ping that fails starts the agent again and reconnects.
+`device_start` refuses a device a session holds (`session_conflict`): a test run there would
+stop Android's agent, or wait on iOS's (one client at a time).
+
+- `do`: each argument is a command (or a `- ` list), refs replaced first, wrapped as a flow
+  (`appId` from `--app`) and parsed with `load_flow_text` into the session's memory (commands
+  keep strings of their text: env keys, the regex cache's keys, which `compile` now clones).
+  The commands run through `run_list` with a silent view; `last_interaction` is reset first,
+  so the lookup's 17 s are not spent by the time between requests. A launch's wait for the
+  app's UI (`pay_due`, factored out of `exec`) is paid before the screen is read, and a screen
+  with nothing on it yet is read again for up to 5 s (React Native's first render after a
+  cold launch).
+- The listing (`screen_elements`): kept nodes in pre-order, on screen; left out: window roots,
+  iOS scroll indicators, status-bar windows (thin windows along an edge), the keyboard (one
+  line: Android's IME window, iOS's `Keyboard` element). A node earns a line with its own
+  text, as a field, as something to tap (Android's clickable flag; iOS's buttons, cells,
+  links, controls; labelled with its inner texts when it has none), or with an id that is
+  not one of Android's layout ids (`pkg:id/name`). Ids are shown when unique on screen. A
+  text its nearest listed container already says, or an icon glyph (no letter or digit)
+  inside one, is left out: React Native repeats a button's label in a text inside it. On the
+  Settings app's home screen (Android) this took 63 lines down to 11, on Speedrun Bench's
+  sign-in 8.
+- Refs: keyed by the element's id, else its class and label, and its rank among equal keys,
+  so a button keeps its ref while it goes from disabled to enabled, or a field while it is
+  typed into. Each ref stands for two selectors, computed against the read that listed it
+  with the real selector code (`apply`): to act (id, else text, alone when its first match
+  is the element or a node inside it, as a text selector takes the deepest match; else with
+  an index; else the element's center as a point) and to check (id and text together, when
+  the element has both and is not a field). A ref not on the last screen read is an error,
+  not a 17 s lookup.
+- What changed: by ref against the last screen, `+`, `~`, `-`; the whole screen when most of
+  it is new.
+- The recording: each command that passed, refs resolved. When a `look` showed new
+  elements since the last `do` ended (the app changed by itself) and the next command does not
+  wait for an element (`waits_for_element`: taps, assertions, scrolls, copyTextFrom), an
+  `assertVisible` on one of them is recorded first, a focused field preferred, then one with
+  an id. Without it, a recorded sign-in typed its code before the code screen came (the
+  session had waited while the agent looked).
+
 ## What the output means
 
 1. **Transport round trip** — the floor cost of any command. Expect well under 1 ms.

@@ -362,8 +362,19 @@ load_flow :: proc(path: string, alloc: mem.Allocator) -> (flow: Flow, err: strin
 	return flow, ""
 }
 
+// A flow given as text (speedrun do): `path` names it and anchors runFlow's relative paths.
+// On error, `err` and `line` (in `text`) name the problem.
+load_flow_text :: proc(path, text: string, alloc: mem.Allocator) -> (flow: Flow, err: string, line: int) {
+	l := Loader {
+		alloc = alloc,
+	}
+	flow, _ = load_flow_file(&l, path, true, text)
+	if l.err != "" do return flow, l.err, l.err_line
+	return flow, "", 0
+}
+
 @(private = "file")
-load_flow_file :: proc(l: ^Loader, path: string, top: bool) -> (flow: Flow, ok: bool) {
+load_flow_file :: proc(l: ^Loader, path: string, top: bool, text: Maybe(string) = nil) -> (flow: Flow, ok: bool) {
 	context.allocator = l.alloc
 	saved_file := l.file
 	defer if l.err == "" do l.file = saved_file
@@ -373,12 +384,16 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool) -> (flow: Flow, ok: 
 		return
 	}
 	append(&l.files, path)
-	data, rerr := os.read_entire_file(path, l.alloc)
-	if rerr != nil {
-		fail(l, nil, "cannot read flow file: %v", rerr)
-		return
+	data, given := text.?
+	if !given {
+		bytes, rerr := os.read_entire_file(path, l.alloc)
+		if rerr != nil {
+			fail(l, nil, "cannot read flow file: %v", rerr)
+			return
+		}
+		data = string(bytes)
 	}
-	docs, yerr, yline := yaml_parse(string(data), l.alloc)
+	docs, yerr, yline := yaml_parse(data, l.alloc)
 	if yerr != "" {
 		l.err, l.err_line = yerr, yline
 		return
