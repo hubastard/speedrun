@@ -62,9 +62,9 @@ run() {
   local t0 t1 status=0
   t0=$(now_ms)
   if [ "$tool" = speedrun ]; then
-    "$SPEEDRUN" test --device "$DEVICE" --format junit --output "$report" "$@" "${flows[@]}" || status=$?
+    "$SPEEDRUN" test --device "$DEVICE" --format junit --output "$report" "$@" ${flows[@]+"${flows[@]}"} || status=$?
   else
-    maestro --device "$DEVICE" test --format junit --output "$report" "$@" "${flows[@]}" || status=$?
+    maestro --device "$DEVICE" test --format junit --output "$report" "$@" ${flows[@]+"${flows[@]}"} || status=$?
   fi
   t1=$(now_ms)
   [ "$PLATFORM" = ios ] && "$SPEEDRUN" --stop-agent >/dev/null 2>&1 || true
