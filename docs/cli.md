@@ -55,6 +55,7 @@ speedrun session save <file>    # them as a flow file
 speedrun session clear          # start the recording over
 speedrun session status
 speedrun session stop
+speedrun mcp                    # the session's verbs as an MCP server, on stdin and stdout
 ```
 
 ## Environment variables

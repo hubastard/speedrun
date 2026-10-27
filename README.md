@@ -118,8 +118,8 @@ speedrun session save flows/sign-in.yaml
 ```
 
 Each answer says how each command went and what changed on screen, in a few lines: an agent
-pays a few hundred tokens per step, not a whole accessibility tree.
-See [Sessions](docs/sessions.md).
+pays a few hundred tokens per step, not a whole accessibility tree. The same is available as an
+MCP server (`claude mcp add speedrun -- speedrun mcp`). See [Sessions](docs/sessions.md).
 
 ## Benchmark
 

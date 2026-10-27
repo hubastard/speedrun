@@ -215,6 +215,17 @@ stop Android's agent, or wait on iOS's (one client at a time).
   an id. Without it, a recorded sign-in typed its code before the code screen came (the
   session had waited while the agent looked).
 
+### MCP (host/mcp.odin)
+
+`speedrun mcp` is a Model Context Protocol server on stdio: JSON-RPC 2.0, a message per line
+(`initialize`, `ping`, `tools/list`, `tools/call`; notifications get no answer). Its tools are
+thin calls to the session client (`start_session`, `session_request`), which return their
+text instead of printing it (stdout is the protocol's channel; the session process gets
+/dev/null as stdin, not the client's pipe). A look with a screenshot sends the PNG inline as
+an image. JSON is built by concatenation (`fmt` reads a `{` as an argument index); ids are
+parsed as integers so they are echoed as sent. The tool descriptions go to the model with
+every request: they stay short (~1.9 KB for the 7 tools).
+
 ## What the output means
 
 1. **Transport round trip** — the floor cost of any command. Expect well under 1 ms.

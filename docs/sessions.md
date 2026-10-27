@@ -119,7 +119,32 @@ before the new screen is there. `speedrun session clear` starts the recording ov
 
 ## For AI agents
 
-Add something like this to your agent's instructions (`CLAUDE.md`, `AGENTS.md`):
+### As an MCP server
+
+`speedrun mcp` serves the session as [Model Context Protocol](https://modelcontextprotocol.io)
+tools, over stdin and stdout. With Claude Code:
+
+```sh
+claude mcp add speedrun -- speedrun mcp
+```
+
+Other MCP clients take the command `speedrun` with the argument `mcp`. The tools:
+
+| Tool | |
+|---|---|
+| `session_start` | `app`, and optionally `platform` and `device`: connects to the device. |
+| `look` | The screen's listing; `screenshot: true` adds a small screenshot (an image). |
+| `run` | `commands`: flow commands, one or a list, with refs. |
+| `save_flow` | `path`: writes the commands that passed as a flow file. |
+| `session_log`, `session_clear`, `session_stop` | As the commands of the same name. |
+
+A failed command, or no session, comes back as an error result with the same text as on the
+command line.
+
+### From a shell
+
+An agent that runs shell commands can use the command line directly. Add something like this
+to its instructions (`CLAUDE.md`, `AGENTS.md`):
 
 ```markdown
 To test the mobile app, use Speedrun's session (docs/sessions.md):

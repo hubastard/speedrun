@@ -86,7 +86,6 @@ info_path :: proc() -> string {
 }
 
 // The running session, if its process is alive.
-@(private = "file")
 session_running :: proc() -> (info: Session_Info, ok: bool) {
 	data, err := os.read_entire_file(info_path(), context.temp_allocator)
 	if err != nil do return
@@ -183,28 +182,28 @@ session_start :: proc(args: []string) -> int {
 		}
 		i += 1
 	}
-	if app == "" {
-		fmt.eprintln("session start needs --app <appId>: the app its commands are for (launchApp's).")
-		return 2
-	}
+	code, text := start_session(app, platform, device, env[:])
+	if code == 0 do fmt.println(text)
+	else do fmt.eprintln(text)
+	return code
+}
+
+// Starts the session process and waits until it serves (or says why it did not start).
+start_session :: proc(app, platform, device: string, env: []string) -> (code: int, text: string) {
+	if app == "" do return 2, "A session needs the app's id (--app): the app its commands are for (launchApp's)."
 	if info, ok := session_running(); ok {
-		if info.app == app && (device == "" || device == info.device) {
-			fmt.printf("A session is running already: %s, app %s.\n", info.device, info.app)
-			return 0
+		if info.app == app && (device == "" || device == info.device_id) {
+			return 0, fmt.tprintf("A session is running already: %s, app %s.", info.device, info.app)
 		}
-		fmt.eprintf("A session is running (%s, app %s): speedrun session stop first.\n", info.device, info.app)
-		return 1
+		return 1, fmt.tprintf("A session is running (%s, app %s): stop it first.", info.device, info.app)
 	}
 	dir := session_dir()
-	if !make_dirs(dir) {
-		fmt.eprintln("could not create", dir)
-		return 1
-	}
+	if !make_dirs(dir) do return 1, fmt.tprintf("could not create %s", dir)
 	os.remove(info_path())
 	key: [16]byte
 	crypto.rand_bytes(key[:])
 	token := string(hex.encode(key[:], context.temp_allocator))
-	exe, _ := os.get_executable_path(context.allocator)
+	exe, _ := os.get_executable_path(context.temp_allocator)
 	cmd := make([dynamic]string, context.temp_allocator)
 	append(&cmd, "perl", "-MPOSIX=setsid", "-e", "setsid(); exec @ARGV", exe, "session", "serve", "--app", app, "--token", token)
 	if platform != "" do append(&cmd, "--platform", platform)
@@ -212,71 +211,62 @@ session_start :: proc(args: []string) -> int {
 	for e in env do append(&cmd, "-e", e)
 	log := fmt.tprintf("%s/session.log", dir)
 	f, ferr := os.open(log, {.Write, .Create, .Trunc})
-	if ferr != nil {
-		fmt.eprintf("could not create %s: %v\n", log, ferr)
-		return 1
-	}
+	if ferr != nil do return 1, fmt.tprintf("could not create %s: %v", log, ferr)
 	defer os.close(f)
-	p, perr := os.process_start({command = cmd[:], stdout = f, stderr = f})
-	if perr != nil {
-		fmt.eprintf("could not start the session: %v\n", perr)
-		return 1
-	}
+	// Not our stdin: under `speedrun mcp` it is the client's channel.
+	null, nerr := os.open("/dev/null", {.Read})
+	if nerr != nil do return 1, "could not open /dev/null"
+	defer os.close(null)
+	p, perr := os.process_start({command = cmd[:], stdin = null, stdout = f, stderr = f})
+	if perr != nil do return 1, fmt.tprintf("could not start the session: %v", perr)
 	start := time.tick_now()
 	for time.tick_since(start) < SESSION_START_TIMEOUT {
 		if info, ok := session_running(); ok && info.pid == p.pid {
-			fmt.printf("Session on %s (%s), app %s. Next: speedrun look, speedrun do '<command>'.\n", info.device, info.platform, info.app)
-			return 0
+			return 0, fmt.tprintf("Session on %s (%s), app %s. Next: look at the screen, then run commands.", info.device, info.platform, info.app)
 		}
 		if state, werr := os.process_wait(p, 0); werr == nil && state.exited {
 			data, _ := os.read_entire_file(log, context.temp_allocator)
-			fmt.eprintf("The session did not start:\n%s\n", strings.trim_space(string(data)))
-			return 1
+			return 1, fmt.tprintf("The session did not start:\n%s", strings.trim_space(string(data)))
 		}
 		time.sleep(50 * time.Millisecond)
 	}
-	fmt.eprintf("The session did not start within %v (its log: %s).\n", SESSION_START_TIMEOUT, log)
-	return 1
+	return 1, fmt.tprintf("The session did not start within %v (its log: %s).", SESSION_START_TIMEOUT, log)
 }
 
-// One request to the session: its answer goes to stdout, its status is the exit status.
+// One request to the session, printed: its answer to stdout, a failure to reach it to stderr.
 @(private = "file")
 session_call :: proc(verb, payload: string) -> int {
-	info, ok := session_running()
-	if !ok {
-		fmt.eprintln("No session running: speedrun session start --app <appId>")
-		return 1
+	code, text, answered := session_request(verb, payload)
+	if !answered {
+		fmt.eprintln(text)
+		return code
 	}
+	if len(text) > 0 {
+		os.write_string(os.stdout, text)
+		if text[len(text) - 1] != '\n' do fmt.println()
+	}
+	return code
+}
+
+// One request to the session: its status (0: done) and answer. answered = false: no session,
+// or it did not answer (text says so).
+session_request :: proc(verb, payload: string) -> (code: int, text: string, answered: bool) {
+	info, ok := session_running()
+	if !ok do return 1, "No session running: start one (speedrun session start --app <appId>).", false
 	ep, _ := net.parse_endpoint(fmt.tprintf("127.0.0.1:%d", info.port))
 	sock, err := net.dial_tcp(ep)
-	if err != nil {
-		fmt.eprintf("The session (pid %d) does not answer: speedrun session stop, then start one.\n", info.pid)
-		return 1
-	}
+	if err != nil do return 1, fmt.tprintf("The session (pid %d) does not answer: stop it, then start one.", info.pid), false
 	defer net.close(sock)
 	cwd, _ := os.get_working_directory(context.temp_allocator)
 	body := strings.concatenate({info.token, "\n", verb, "\n", cwd, "\n", payload}, context.temp_allocator)
 	size: [4]u8
 	put_u32(size[:], u32(len(body)))
-	if !send_all(sock, size[:]) || !send_all(sock, transmute([]byte)body) {
-		fmt.eprintln("The session closed the connection.")
-		return 1
-	}
+	if !send_all(sock, size[:]) || !send_all(sock, transmute([]byte)body) do return 1, "The session closed the connection.", false
 	head: [5]u8
-	if !recv_all(sock, head[:]) {
-		fmt.eprintln("The session closed the connection (see its log: ", session_dir(), "/session.log).", sep = "")
-		return 1
-	}
-	text := make([]u8, int(get_u32(head[1:5])), context.temp_allocator)
-	if !recv_all(sock, text) {
-		fmt.eprintln("The session closed the connection.")
-		return 1
-	}
-	if len(text) > 0 {
-		os.write(os.stdout, text)
-		if text[len(text) - 1] != '\n' do fmt.println()
-	}
-	return int(head[0])
+	if !recv_all(sock, head[:]) do return 1, fmt.tprintf("The session closed the connection (its log: %s/session.log).", session_dir()), false
+	answer := make([]u8, int(get_u32(head[1:5])), context.temp_allocator)
+	if !recv_all(sock, answer) do return 1, "The session closed the connection.", false
+	return int(head[0]), string(answer), true
 }
 
 @(private = "file")
@@ -981,36 +971,49 @@ ref_line :: proc(e: Element) -> string {
 	return e.line
 }
 
-// After "Element not found: Text matching regex: X": the elements sharing a word of 4 letters
-// or more with X, ignoring case (in their line: the label, inner texts included, and the id).
+// After "Element not found: Text matching regex: X" or "Assertion is false: "X" is visible":
+// the elements sharing a word of 4 letters or more with X, one containing the other, ignoring
+// case (in their line: the label, inner texts included, and the id): "Shop" for "Shopping".
 @(private = "file")
 similar :: proc(s: ^Session, els: []Element, failure: string, b: ^strings.Builder) {
-	_, found, pattern := strings.partition(failure, "regex: ")
-	if found == "" do return
-	words := make([dynamic]string, context.temp_allocator)
+	pattern := ""
+	if _, found, rest := strings.partition(failure, "regex: "); found != "" {
+		pattern = rest
+	} else if _, quote, rest2 := strings.partition(failure, "is false: \""); quote != "" {
+		pattern, _, _ = strings.partition(rest2, "\"")
+	}
+	wanted := words(pattern)
+	if len(wanted) == 0 do return
+	shown := 0
+	outer: for e in els {
+		if e.ref == 0 do continue
+		for w in words(e.line) do for x in wanted {
+			if !strings.contains(w, x) && !strings.contains(x, w) do continue
+			if shown == 0 do strings.write_string(b, "  similar:")
+			fmt.sbprintf(b, " @%d %s;", e.ref, e.line)
+			shown += 1
+			if shown == 5 do break outer
+			continue outer
+		}
+	}
+	if shown > 0 do strings.write_string(b, "\n")
+}
+
+// The words of 4 letters or digits or more in s, lowercase.
+@(private = "file")
+words :: proc(s: string) -> []string {
+	out := make([dynamic]string, context.temp_allocator)
 	word := strings.builder_make(context.temp_allocator)
-	for ch in strings.to_lower(strings.trim_space(pattern), context.temp_allocator) {
+	for ch in strings.to_lower(s, context.temp_allocator) {
 		if unicode.is_letter(ch) || unicode.is_digit(ch) {
 			strings.write_rune(&word, ch)
 			continue
 		}
-		if strings.builder_len(word) >= 4 do append(&words, strings.clone(strings.to_string(word), context.temp_allocator))
+		if strings.builder_len(word) >= 4 do append(&out, strings.clone(strings.to_string(word), context.temp_allocator))
 		strings.builder_reset(&word)
 	}
-	if strings.builder_len(word) >= 4 do append(&words, strings.to_string(word))
-	shown := 0
-	for e in els {
-		if e.ref == 0 do continue
-		hay := strings.to_lower(e.line, context.temp_allocator)
-		for w in words do if strings.contains(hay, w) {
-			if shown == 0 do strings.write_string(b, "  similar:")
-			fmt.sbprintf(b, " @%d %s;", e.ref, e.line)
-			shown += 1
-			break
-		}
-		if shown == 5 do break
-	}
-	if shown > 0 do strings.write_string(b, "\n")
+	if strings.builder_len(word) >= 4 do append(&out, strings.clone(strings.to_string(word), context.temp_allocator))
+	return out[:]
 }
 
 // `tapOn: @7` -> `tapOn: {id: "qty-plus"}`: refs outside quotes become their selectors.
