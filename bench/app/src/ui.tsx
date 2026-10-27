@@ -50,7 +50,7 @@ export function Header({ title, back = true, right }: { title: string; back?: bo
 }
 
 // overlay: drawn over the body, below the header (as a native navigation bar stays above a
-// screen's own views).
+// screen's own views), from above the body's top edge (the body sits below a padding).
 export function Screen({
   title, back, right, children, scroll = true, footer, testID, overlay,
 }: {
@@ -70,7 +70,7 @@ export function Screen({
     <View testID={testID} style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
       <Header title={title} back={back} right={right} />
       {overlay ? (
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, paddingTop: 8 }}>
           {body}
           {overlay}
         </View>
@@ -86,7 +86,7 @@ export function Screen({
 
 // A loading overlay over a screen's body (Screen's overlay): fades in with a spinner while
 // `loading`, out after. Always mounted, transparent when idle; see-through while loading, the
-// controls behind it showing, but taking the touches.
+// controls behind it showing, but taking the touches. The spinner fills it (flex: 1).
 export function Fade({ loading }: { loading: boolean }) {
   const c = useColors();
   const opacity = useSharedValue(0);
@@ -99,7 +99,7 @@ export function Fade({ loading }: { loading: boolean }) {
       pointerEvents={loading ? 'auto' : 'none'}
       style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0, 0, 0, 0.25)', justifyContent: 'center', alignItems: 'center' }, shown]}
     >
-      <ActivityIndicator size="large" color={c.accent} />
+      <ActivityIndicator size="large" color={c.accent} style={{ flex: 1, alignSelf: 'stretch' }} />
     </Animated.View>
   );
 }
