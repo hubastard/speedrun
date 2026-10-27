@@ -99,12 +99,6 @@ jobs:
           xcrun simctl boot "$udid"
           echo "SIMULATOR=$udid" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -117,7 +111,10 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP"
           dirname "$(find "$RUNNER_TEMP" -maxdepth 3 -name odin -type f | head -1)" >> "$GITHUB_PATH"
 
+      # iOS only: no Android agent, so no JDK or Gradle (5 minutes of the job).
       - name: Build speedrun and its iOS agent
+        env:
+          SPEEDRUN_NO_ANDROID: 1
         run: ./build.sh
 
       - name: Get Speedrun Bench (prebuilt, else built)
@@ -130,8 +127,8 @@ jobs:
           xcrun simctl bootstatus "$SIMULATOR" -b
           xcrun simctl install "$SIMULATOR" bench/app/prebuilt/SpeedrunBench.app
 
-      # SPEEDRUN_DEBUG: every read, settle and hit test in the log, while CI's simulator
-      # behaves unlike a local one (a 27 s tap on the search field, a toast missed).
+      # SPEEDRUN_DEBUG: every read, settle and hit test in the log (CI's simulator is slower
+      # than a local one, and has shown races a local one rarely does).
       - name: Run the journey on the simulator
         env:
           SPEEDRUN_DEBUG: 1

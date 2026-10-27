@@ -10,6 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 export SPEEDRUN_VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+[ "${SPEEDRUN_NO_ANDROID:-}" != 1 ] || { echo "package.sh: a release needs the Android agent; unset SPEEDRUN_NO_ANDROID"; exit 1; }
 ./build.sh
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')

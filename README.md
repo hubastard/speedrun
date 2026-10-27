@@ -188,6 +188,8 @@ cd speedrun
 ./package.sh    # optional: a release archive in dist/
 ```
 
+For iOS only, without a JDK: `SPEEDRUN_NO_ANDROID=1 ./build.sh`.
+
 How Speedrun works inside: [DEVELOPMENT.md](DEVELOPMENT.md). What is still slow:
 [TO_IMPROVE.md](TO_IMPROVE.md).
 

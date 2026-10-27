@@ -4,13 +4,13 @@
 import XCTest
 
 final class Input {
-    /// A tap: a touch held 20 ms, a display frame and a little more. React Native gives a touch
-    /// to the scroll view around it when a scroll event comes while it is down, even from a
-    /// nested scroll view (a carousel paging itself): the press is cancelled, and the shorter
-    /// the touch, the rarer. Held 100 ms, 3 taps in 40 were lost on a screen with such a
-    /// carousel, 20 ms 2 in 80, 10 ms none; but UIKit's controls (a UISwitch) need the touch to
-    /// span a frame: 12 ms never toggled one, 15 ms once in 6, 17 ms and more always.
-    static let tapHoldMs: Int32 = 20
+    /// A tap: a touch held 10 ms, within a display frame. React Native gives a touch to the
+    /// scroll view around it when a scroll event comes while it is down, even from a nested
+    /// scroll view (a carousel paging itself): the press is cancelled. Held 100 ms, 3 taps in
+    /// 40 were lost on a screen with such a carousel, 20 ms 1 in 30, 10 ms none in 576. UIKit's
+    /// controls (a UISwitch) need the touch to span a frame (12 ms never toggled one, 15 ms
+    /// once in 6, 17 ms and more always): the host taps those with PRESS, held 20 ms.
+    static let tapHoldMs: Int32 = 10
     /// Each touch of repeated taps (TAPS): their timing below was tuned with 100 ms holds, and
     /// with 10 ms React Native missed double taps and repeats.
     static let repeatedTapHoldMs: Int32 = 100

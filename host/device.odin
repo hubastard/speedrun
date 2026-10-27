@@ -18,9 +18,16 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 
-// build.sh builds the APK before this binary.
-AGENT_APK :: #load("../agent/android/app/build/outputs/apk/debug/app-debug.apk")
-AGENT_APK_CRC :: #load_hash("../agent/android/app/build/outputs/apk/debug/app-debug.apk", "crc32")
+// build.sh builds the APK before this binary, unless SPEEDRUN_NO_ANDROID=1 (an iOS-only
+// build, for CI: no JDK, no Gradle), which builds it without one (-define:ANDROID_AGENT=false).
+ANDROID_AGENT :: #config(ANDROID_AGENT, true)
+when ANDROID_AGENT {
+	AGENT_APK :: #load("../agent/android/app/build/outputs/apk/debug/app-debug.apk")
+	AGENT_APK_CRC :: #load_hash("../agent/android/app/build/outputs/apk/debug/app-debug.apk", "crc32")
+} else {
+	AGENT_APK :: []u8{}
+	AGENT_APK_CRC :: 0
+}
 AGENT_PACKAGE :: "com.speedrun.agent"
 AGENT_NAME :: "speedrun-agent" // the shell agent's process name (app_process --nice-name)
 AGENT_START_TIMEOUT :: 10 * time.Second
@@ -93,6 +100,9 @@ adb :: proc(args: ..string) -> (out: string, ok: bool) {
 // no agent of an earlier run left holding the UiAutomation slot. Copies of other agent builds
 // are deleted; present reports whether this build's is already there.
 device_prepare :: proc() -> (present: bool, err: string) {
+	if !ANDROID_AGENT {
+		return false, "This speedrun was built for iOS only (SPEEDRUN_NO_ANDROID=1), without its Android agent: build it with ./build.sh."
+	}
 	script := strings.concatenate({
 		"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; ",
 		"settings put global animator_duration_scale 0; ", STOP_AGENTS, "; ", STOP_MAESTRO_DRIVER, "; ",
@@ -134,6 +144,8 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 			sim := warm && udid == device
 			if !sim do _, sim = is_sim(booted_simulators(), device)
 			d.platform = .IOS if sim else .Android
+		} else if !ANDROID_AGENT {
+			d.platform = .IOS // an iOS-only build
 		} else if out, ok := adb("devices"); ok && strings.count(out, "\tdevice") > 0 {
 			d.platform = .Android
 		} else if answers_ping(ios_port) || len(booted_simulators()) > 0 {

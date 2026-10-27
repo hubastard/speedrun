@@ -725,7 +725,7 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 		y := n.top + (n.bottom - n.top) / 2
 		if y < r.h_px / 2 do break
 		for &b in r.h.nodes do if b.kept && has_bounds(b) && rx_full(cont, b.text) && b.top + (b.bottom - b.top) / 2 > y {
-			if _, ok := op_tap(r.c, b.left + (b.right - b.left) / 2, b.top + (b.bottom - b.top) / 2); !ok do return "agent connection lost"
+			if _, ok := op_press(r.c, b.left + (b.right - b.left) / 2, b.top + (b.bottom - b.top) / 2, IOS_FRAME_TAP_MS); !ok do return "agent connection lost"
 			settle(r) or_return
 			break
 		}
@@ -819,6 +819,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			if !ok do return fmt.aprintf("invalid element-relative point `%s`", p, allocator = r.alloc)
 		}
 	}
+	frame := frame_hold(r, d.sel == nil || in_sheet, tapped.class)
 	before := r.h.hash
 	typing_before := typing(r)
 	// The screen was read since the last tap: the checks below share that read (one costs
@@ -834,7 +835,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			if d.long_press {
 				_, ok = op_press(r.c, x, y, long_press_ms(r))
 			} else {
-				_, ok = op_tap(r.c, x, y)
+				ok = tap_at(r, x, y, frame)
 			}
 			if !ok do return "agent connection lost"
 			if d.repeat > 1 {
@@ -855,7 +856,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			n := r.h.nodes[el]
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 			if r.debug do fmt.printf("      [a tap in a sheet changed nothing: tapping again]\n")
-			if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
+			if !tap_at(r, x, y, frame) do return "agent connection lost"
 			status = settle_status(r, d.settle_ms) or_return
 		}
 		// The element moved between the lookup and the tap: an app that keeps laying out after
@@ -886,7 +887,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				// predate its focus flag): that is no miss.
 				if same && moved && (typing_before || !typing(r)) {
 					x, y = nx + x - center.x, ny + y - center.y
-					if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
+					if !tap_at(r, x, y, frame) do return "agent connection lost"
 					settle(r, d.settle_ms) or_return
 					read_since_tap = false
 				}
@@ -914,10 +915,41 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			time.sleep(time.Second)
 			if !read_screen(r) do return "agent connection lost"
 		}
-		if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
+		if !tap_at(r, x, y, frame) do return "agent connection lost"
 		settle(r, d.settle_ms) or_return
 	}
 	return nil
+}
+
+// iOS holds a tap 10 ms (the agent's TAP): within a display frame, so no scroll event comes
+// between its touch's start and end. React Native gives a touch to the scroll view around it
+// when one does, even from a nested one (a carousel paging itself), and cancels the press:
+// held 20 ms, 1 tap in 30 on Speedrun Bench's + and − beside such a carousel was lost, and on
+// CI's slower simulator the journey failed on one; held 10 ms, none in 576. UIKit's controls
+// need the touch to span a frame (a UISwitch toggles from 17 ms): a switch, toggle or
+// checkbox, the element types speedrun does not name (sliders, steppers, segmented controls),
+// a system sheet's or alert's button, and a tap at a point (its target unknown) are held
+// IOS_FRAME_TAP_MS.
+IOS_FRAME_TAP_MS :: 20
+
+@(private = "file")
+frame_hold :: proc(r: ^Runner, unknown: bool, class: string) -> bool {
+	if r.dev.platform != .IOS do return false
+	if unknown do return true
+	switch class {
+	case "Switch", "Toggle", "CheckBox": return true
+	}
+	return strings.has_prefix(class, "ElementType")
+}
+
+@(private = "file")
+tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> bool {
+	if frame {
+		_, ok := op_press(r.c, x, y, IOS_FRAME_TAP_MS)
+		return ok
+	}
+	_, ok := op_tap(r.c, x, y)
+	return ok
 }
 
 // The classes of node `el` and its ancestors, hashed.

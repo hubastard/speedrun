@@ -4,13 +4,21 @@
 # when Xcode is installed, the iOS agent (an XCUITest runner for simulators, in
 # agent/ios/build, which speedrun starts from there). Run it once, and again after changing
 # agent/ or host/. Running flows never rebuilds anything.
+# SPEEDRUN_NO_ANDROID=1: an iOS-only speedrun, without the Android agent (no JDK or Gradle
+# needed; CI's iOS job); it refuses Android devices, and package.sh refuses to pack it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 command -v odin >/dev/null || { echo "odin not found on PATH"; exit 1; }
 
-echo "== Building the Android agent (Gradle)"
-(cd agent/android && ./gradlew -q assembleDebug)
+ANDROID=true
+if [ "${SPEEDRUN_NO_ANDROID:-}" = 1 ]; then
+  ANDROID=false
+  echo "== No Android agent (SPEEDRUN_NO_ANDROID=1): an iOS-only build"
+else
+  echo "== Building the Android agent (Gradle)"
+  (cd agent/android && ./gradlew -q assembleDebug)
+fi
 
 # QuickJS-ng and its C glue, linked into speedrun; rebuilt only when they change (~10 s).
 JS=host/js
@@ -38,7 +46,7 @@ fi
 echo "== Building speedrun (Odin)"
 # The version --version prints: SPEEDRUN_VERSION, else the git tag or commit.
 VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
-odin build host -o:speed -out:speedrun -define:SPEEDRUN_VERSION="$VERSION"
+odin build host -o:speed -out:speedrun -define:SPEEDRUN_VERSION="$VERSION" -define:ANDROID_AGENT=$ANDROID
 
 if command -v xcodebuild >/dev/null; then
   echo "== Building the iOS agent (Xcode, for simulators)"

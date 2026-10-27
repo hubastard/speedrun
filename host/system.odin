@@ -345,7 +345,8 @@ answer_notification_alert :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	if pick < 0 do pick = buttons[1] if r.notifications == "allow" && len(buttons) > 1 else buttons[0]
 	n := r.h.nodes[pick]
 	if r.debug do fmt.printf("      [notification alert: tapping %q]\n", n.desc)
-	if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return false, false
+	// A system alert's button: held a display frame (IOS_FRAME_TAP_MS).
+	if _, tok := op_press(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2, IOS_FRAME_TAP_MS); !tok do return false, false
 	return true, true
 }
 

@@ -86,6 +86,11 @@ for flows whose scripts make HTTP requests.
   Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
   speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
   newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
+  The iOS job builds speedrun without the Android agent (`SPEEDRUN_NO_ANDROID=1`: the binary
+  embeds an empty agent, `-define:ANDROID_AGENT=false`, and refuses Android devices), so it
+  needs no JDK: setting up Java and the Gradle build took 5 of its minutes. The Android
+  emulator has a Pixel 7's screen (`profile: pixel_7`): the default, 320x640, put the
+  journey's product options under the page's sticky footer.
 - `.github/workflows/bench-app.yml`: when Speedrun Bench's sources change on `main`, builds
   it for an Android emulator and an iOS simulator and uploads both to the `bench-app`
   pre-release, named after the sources' hash (`bench/app/bench.sh hash`).
@@ -391,13 +396,17 @@ Known differences in how, not what:
   least 200 ms apart (agent op 23 TAPS): one record per tap waits ~230 ms for testmanagerd;
   a second press on one path, and XCTest's own doubleTap, land as one tap in React Native.
   Each of those touches is held 100 ms: 10 ms ones missed double taps and repeats.
-- An iOS tap is a touch held 20 ms (100 ms before). React Native gives a touch to the scroll
-  view around it when a scroll event comes while it is down, even from a nested scroll view:
-  a carousel paging itself every 2.5 s cancelled a press on a button beside it (3 taps in 40
-  at 100 ms; Speedrun Bench's product page, every run of a flow tapping + and − there), as
-  it does for a person. The shorter the touch, the rarer: 20 ms, 2 in 80; 10 ms, none. But
-  UIKit's controls need it to span a display frame: a UISwitch never toggled at 12 ms, once
-  in 6 at 15 ms, always from 17 ms. 20 ms also makes a tap ~100 ms faster.
+- An iOS tap is a touch held 10 ms (100 ms, then 20 ms before). React Native gives a touch to
+  the scroll view around it when a scroll event comes while it is down, even from a nested
+  scroll view: a carousel paging itself every 2.5 s cancelled a press on a button beside it
+  (3 taps in 40 at 100 ms; Speedrun Bench's product page, every run of a flow tapping + and −
+  there), as it does for a person. Within a display frame, no scroll event comes between the
+  touch's start and end: 20 ms lost 1 tap in 30 on + and − (and failed the journey on CI's
+  slower simulator), 10 ms none in 576. But UIKit's controls need the touch to span a frame:
+  a UISwitch never toggled at 12 ms, once in 6 at 15 ms, always from 17 ms. So a switch,
+  toggle or checkbox, an element type speedrun does not name (sliders, steppers, segmented
+  controls), a system sheet's or alert's button, and a tap at a point (its target unknown)
+  are held 20 ms (PRESS). Shorter than 100 ms also makes a tap ~100 ms faster.
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
