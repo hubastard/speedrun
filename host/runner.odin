@@ -1241,6 +1241,32 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 			return k
 		}
 	}
+	// Android orders a list's children by place, not as drawn: its sticky section header
+	// comes before the rows it is drawn over. A list holds a content view, which holds a cell
+	// per row or header: a cell before the element's own at the point, as wide as it, overlaps
+	// it, which rows do not: a header. (A view inside the element's cell, a card's
+	// background, is no cover.)
+	if r.dev.platform != .IOS {
+		cell := el
+		for cell >= 0 {
+			p := r.h.nodes[cell].parent
+			if p < 0 || r.h.nodes[p].parent < 0 do break
+			if scroll_container(r.h.nodes[r.h.nodes[p].parent]) do break
+			cell = p
+		}
+		content := r.h.nodes[cell].parent if cell >= 0 else -1
+		// (A list that scrolls sideways has no sticky headers: its cells may overlap a little.)
+		if content >= 0 && r.h.nodes[content].parent >= 0 && scroll_container(r.h.nodes[r.h.nodes[content].parent]) && !scrolls_sideways(r, r.h.nodes[content].parent) {
+			for j in r.h.nodes[content].children {
+				if j >= cell do break
+				c := r.h.nodes[j]
+				if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+				if c.left > n.left || c.right < n.right do continue
+				if r.debug do fmt.printf("      [%s covered by %s %d,%d-%d,%d, a cell before it]\n", n.class, c.class, c.left, c.top, c.right, c.bottom)
+				return j
+			}
+		}
+	}
 	return -1
 }
 
@@ -1493,6 +1519,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	sideways := dir == .Left || dir == .Right
 	lines: [8]Line
 	line, n_lines := 0, 0
+	placed := false // up and down: the drag's start placed in the list (below)
 	// Each swipe is a drag that does not fling (the agent's SWIPE without the flag): the
 	// content stops as the touch lifts. A flinging swipe moves it farther, but it drifts on
 	// for 0.5-2 s that a settle would wait out.
@@ -1506,7 +1533,17 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	gesture := time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond if r.dev.platform != .IOS else 0
 	moving := false
 	swiped: time.Tick
-	swiped_from: u64 // the screen's hash when the last drag began
+	swiped_from: u64 // what the last drag could move when it began (scroll_signature)
+	// The next drag waits for the content to come to rest: two reads in a row with the same
+	// signature (last_sig), a list with something in it, for up to 5 more reads or 3 s
+	// (unrest, unrest_reads: a slow device's read takes up to 2 s, and a long list re-rendering
+	// shows its rows blank, then stale, before they settle). A settle would also wait out
+	// iOS's scroll indicator fading (~1 s a drag). One that moved nothing (a list with nothing
+	// to scroll yet, its placeholders springing back; its end) waits for the screen to change
+	// (stalled: since when).
+	last_sig: u64
+	unrest, stalled: time.Tick
+	unrest_reads := 0
 	// Drags made to clear a cover. A real one (a sticky footer) clears in one; one that still
 	// covers after two is no cover: views a list shows through (a closed side drawer that
 	// accessibility still places on screen), and covers stop counting for this scroll.
@@ -1516,6 +1553,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	for {
 		if moving {
 			if !read_screen(r) do return "agent connection lost"
+			sig, empty := watched(r, cx, cy, !sideways)
+			if r.debug do debug_list(r, cx, cy)
+			// Android: no wait for rest (see watched).
+			still, resting := sig == swiped_from, sig == last_sig && !empty || r.dev.platform != .IOS
+			last_sig = sig
 			el := select(r, d.sel) or_return
 			// Shown as much as asked: a sliver at the screen's edge (an iOS row coming into a
 			// list) is dragged on, not settled on and looked at again.
@@ -1544,15 +1586,33 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				// frames to move its content, and drags piling up could carry the element past
 				// the screen), and on Android for it to have ended.
 				since := time.tick_since(swiped)
-				if since < gesture || (r.h.hash == swiped_from && since < 500 * time.Millisecond) {
+				if since < gesture || (still && since < 500 * time.Millisecond) {
 					time.sleep(20 * time.Millisecond)
 					continue
 				}
-				// Nothing moved: no list there scrolls that way (or it is at its end).
-				if r.h.hash == swiped_from && n_lines > 1 {
+				// Still moving (bouncing back from the list's end, a slow device catching up):
+				// read again, as a drag now would carry the content on past the element.
+				if !resting {
+					if unrest == {} do unrest = time.tick_now()
+					unrest_reads += 1
+					if unrest_reads <= 5 && time.tick_since(unrest) < 3 * time.Second do continue
+				}
+				unrest, unrest_reads = {}, 0
+				// Nothing moved: no list there scrolls that way (sideways: the next line), or it
+				// has nothing to scroll yet (a list still loading: its placeholders spring back)
+				// or is at its end. The next drag waits for the screen to change, up to 2 s.
+				if still && n_lines > 1 {
 					line = (line + 1) % n_lines
 					cx, cy, ex, ey = expand_values(lines[line])
+				} else if still && r.dev.platform == .IOS {
+					if stalled == {} do stalled = time.tick_now()
+					if time.tick_since(stalled) < 2 * time.Second {
+						time.sleep(100 * time.Millisecond)
+						continue
+					}
 				}
+				stalled = {}
+				if !sideways && !placed do cy, placed = drag_start(r, cx, cy, dir)
 				// Shown under something drawn over it (a sticky footer or header), which would
 				// take a tap: drag it just clear.
 				tx, ty := ex, ey
@@ -1562,7 +1622,8 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				} else if el >= 0 {
 					if bx, by, ok := bring_in(r, el, cx, cy, ex, ey); ok do tx, ty = bx, by
 				}
-				swiped, swiped_from = time.tick_now(), r.h.hash
+				swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
+				last_sig = swiped_from
 				if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
 				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 				continue
@@ -1571,7 +1632,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 			// the drag may not show yet, and a tap on a list that starts moving is taken to
 			// stop it (React Native). Wait for it as before the next drag.
 			since := time.tick_since(swiped)
-			if since < gesture || (r.h.hash == swiped_from && since < 500 * time.Millisecond) {
+			if since < gesture || (still && since < 500 * time.Millisecond) {
 				time.sleep(20 * time.Millisecond)
 				continue
 			}
@@ -1585,6 +1646,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 			lines, n_lines = side_lines(r, d.sel, dir)
 			cx, cy, ex, ey = expand_values(lines[0])
 		}
+		if !sideways && !placed do cy, placed = drag_start(r, cx, cy, dir)
 		tx, ty := ex, ey // the drag: from the screen center (sideways: the line) towards the edge
 		if found {
 			n := r.h.nodes[el]
@@ -1592,6 +1654,18 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 			if d.center && vis > 0.1 && retry_center <= 4 {
 				if near_center(n, dir, r.w, r.h_px) do return nil
 				retry_center += 1
+				// Just as far as brings it to the screen's center, at most a stride (a whole
+				// stride carried an element on the third row of a grid past the center and off
+				// screen).
+				// (iOS: Android keeps its drags from the center, which centered it before.)
+				if r.dev.platform != .IOS {
+				} else if sideways {
+					stride := i32(abs(int(ex - cx)))
+					tx = cx + clamp(r.w / 2 - (n.left + n.right) / 2, -stride, stride)
+				} else {
+					stride := i32(abs(int(ey - cy)))
+					ty = cy + clamp(r.h_px / 2 - (n.top + n.bottom) / 2, -stride, stride)
+				}
 			} else if vis >= visibility {
 				// Something drawn over it (a sticky footer or header) would take a tap: drag
 				// it just clear.
@@ -1603,13 +1677,94 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				tx, ty = bx, by
 			}
 		}
-		swiped, swiped_from = time.tick_now(), r.h.hash
+		swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
+		last_sig = swiped_from
 		if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
 		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
 		moving = true
 		if time.tick_now()._nsec >= end do break
 	}
 	return fmt.aprintf("No visible element found: %s\n%s", evaluated(r, selector_description(d.sel)), screen_summary(r), allocator = r.alloc)
+}
+
+// iOS, up and down: a drag starts 70% of the way into the list under (x, y) (its part on
+// screen) from the edge it heads to, rather than at the screen's center: each drag moves 1.4x
+// as far (one from the center moved 40% of the screen), still inside the list, clear of a bar
+// along its far edge. Only when that is farther from the edge than y (a short list's start
+// would make a shorter drag). placed = false: no list there yet (a screen still loading).
+// Not on Android: a drag there is injected at once, and the faster one flung the list now and
+// then (row 39 to 145 in one drag, past the row looked for), where reads cost ~15 ms a drag
+// anyway; iOS's play out in real time, and its reads cost ~200 ms.
+@(private = "file")
+drag_start :: proc(r: ^Runner, x, y: i32, dir: Swipe_Dir) -> (start: i32, placed: bool) {
+	if r.dev.platform != .IOS do return y, true
+	sv := -1
+	for k in r.h.order {
+		n := r.h.nodes[k]
+		if !scroll_container(n) || x < n.left || x >= n.right || y < n.top || y >= n.bottom do continue
+		if sv < 0 || n.depth > r.h.nodes[sv].depth do sv = k
+	}
+	if sv < 0 do return y, false
+	top, bottom := max(r.h.nodes[sv].top, 0), min(r.h.nodes[sv].bottom, r.h_px)
+	start = top + (bottom - top) * 7 / 10 if dir == .Up else top + (bottom - top) * 3 / 10
+	if (dir == .Up && start <= y) || (dir == .Down && start >= y) do start = y
+	return start, true
+}
+
+// What tells a drag's effect: on iOS the drag's scroll view (scroll_signature); on Android
+// the whole screen's hash, as before. With the iOS waits (for rest, for a list still
+// loading), Android's drags flung its lists now and then on a starved emulator (row 105 to
+// 239 in one drag), where speedrun as before found the row every time: Android keeps its
+// scroll as it was until that is understood. empty: a list with no text yet.
+@(private = "file")
+watched :: proc(r: ^Runner, x, y: i32, vertical: bool) -> (sig: u64, empty: bool) {
+	if r.dev.platform != .IOS do return r.h.hash, false
+	return scroll_signature(r, x, y, vertical)
+}
+
+// SPEEDRUN_DEBUG: the first and last texts of the list under (x, y): how far a drag went.
+@(private = "file")
+debug_list :: proc(r: ^Runner, x, y: i32) {
+	sv := -1
+	for k in r.h.order {
+		n := r.h.nodes[k]
+		if !scroll_container(n) || x < n.left || x >= n.right || y < n.top || y >= n.bottom do continue
+		if sv < 0 || n.depth > r.h.nodes[sv].depth do sv = k
+	}
+	if sv < 0 do return
+	first, last := "", ""
+	for k in subtree(r, sv) do if t := r.h.nodes[k].text; t != "" && r.h.nodes[k].kept {
+		if first == "" do first = t
+		last = t
+	}
+	fmt.printf("      [list: %q .. %q]\n", first, last)
+}
+
+// What a drag along the line through (x, y) moves, hashed: the texts and positions along that
+// axis (tops when vertical, lefts sideways) of the nodes in the innermost scroll view there,
+// else on the whole screen. An animation across the axis (a shimmer's sweep, a ticker) leaves
+// it as it was; content that scrolled or came changes it.
+@(private = "file")
+scroll_signature :: proc(r: ^Runner, x, y: i32, vertical: bool) -> (sig: u64, empty: bool) {
+	sv := -1
+	for k in r.h.order {
+		n := r.h.nodes[k]
+		if !scroll_container(n) || x < n.left || x >= n.right || y < n.top || y >= n.bottom do continue
+		if sv < 0 || n.depth > r.h.nodes[sv].depth do sv = k
+	}
+	nodes := subtree(r, sv) if sv >= 0 else r.h.order[:]
+	h: u64 = 14695981039346656037
+	empty = true // no text in it (a list re-rendering its rows)
+	for k in nodes {
+		n := r.h.nodes[k]
+		if !n.kept do continue
+		v := n.top if vertical else n.left
+		h = (h ~ u64(u32(v))) * 1099511628211
+		for c in transmute([]u8)n.text do h = (h ~ u64(c)) * 1099511628211
+		h = (h ~ u64('|')) * 1099511628211
+		if n.text != "" do empty = false
+	}
+	return h, empty
 }
 
 @(private = "file")

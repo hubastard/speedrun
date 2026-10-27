@@ -61,6 +61,7 @@ appId: com.example.app
    (`SPEEDRUN_VERSION=v0.1.7` picks a release). Or download the archive from the
    [releases](https://github.com/hubastard/speedrun/releases) and keep its `agent/` folder next
    to the binary. To build it yourself, see [Building from source](#building-from-source).
+   Later, `speedrun update` installs the newest release in its place.
 
 2. **Write a flow**, or use the ones you have:
 
@@ -118,8 +119,34 @@ speedrun session save flows/sign-in.yaml
 ```
 
 Each answer says how each command went and what changed on screen, in a few lines: an agent
-pays a few hundred tokens per step, not a whole accessibility tree. The same is available as an
-MCP server (`claude mcp add speedrun -- speedrun mcp`). See [Sessions](docs/sessions.md).
+pays a few hundred tokens per step, not a whole accessibility tree. See
+[Sessions](docs/sessions.md).
+
+### As an MCP server
+
+`speedrun mcp` serves the same as [Model Context Protocol](https://modelcontextprotocol.io)
+tools (`session_start`, `look`, `run`, `save_flow`...), for agents that take tools from MCP
+servers. With [Claude Code](https://claude.com/claude-code), after installing Speedrun:
+
+```sh
+claude mcp add speedrun -- ~/.speedrun/speedrun mcp              # this project
+claude mcp add --scope user speedrun -- ~/.speedrun/speedrun mcp # every project
+```
+
+Other MCP clients (Claude Desktop, Cursor, ...) take a server in their JSON configuration:
+
+```json
+{
+  "mcpServers": {
+    "speedrun": { "command": "/Users/you/.speedrun/speedrun", "args": ["mcp"] }
+  }
+}
+```
+
+Use the binary's full path: an MCP client may not start servers with your shell's PATH. Then start an emulator or simulator and ask the agent to test something like: 
+```
+Start a speedrun session for com.example.app, sign in as user@example.com, and save the flow to flows/sign-in.yaml
+````
 
 ## Benchmark
 

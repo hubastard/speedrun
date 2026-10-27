@@ -18,7 +18,7 @@ MCP_INSTRUCTIONS :: "Drives a mobile app on an Android emulator or iOS simulator
 // Descriptions are short: a client sends them to the model with every request.
 MCP_TOOLS :: `[
 {"name":"session_start","description":"Connect to the device for an app (once; the session stays connected). platform: android or ios when both are up; device: an adb serial or simulator UDID.","inputSchema":{"type":"object","properties":{"app":{"type":"string","description":"The app id (package or bundle id)"},"platform":{"type":"string","enum":["android","ios"]},"device":{"type":"string"}},"required":["app"]}},
-{"name":"look","description":"The screen: a line per element a user sees or acts on (kind, \"text\", #id, state), each with a ref (@7) for run. screenshot: also a small screenshot (only when the text is not enough).","inputSchema":{"type":"object","properties":{"screenshot":{"type":"boolean"}}}},
+{"name":"look","description":"The screen: a line per element a user sees or acts on (kind, \"text\", #id, state), each with a ref (@7) for run. screenshot: also a small screenshot (only when the text is not enough). all: also every node of the accessibility tree (long; when the listing misses something).","inputSchema":{"type":"object","properties":{"screenshot":{"type":"boolean"},"all":{"type":"boolean"}}}},
 {"name":"run","description":"Run flow commands, written as in a Maestro flow file: one command (tapOn: \"Sign in\") or a list (- tapOn: @7\n- inputText: \"hi\"). A ref @7 stands for that element's selector. Answers a line per command, then what changed on screen: + new, ~ changed, - gone.","inputSchema":{"type":"object","properties":{"commands":{"type":"string"}},"required":["commands"]}},
 {"name":"save_flow","description":"Write the commands that passed so far as a flow file (YAML), for CI.","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"e.g. flows/sign-in.yaml"}},"required":["path"]}},
 {"name":"session_log","description":"The commands that passed so far, numbered.","inputSchema":{"type":"object","properties":{}}},
@@ -101,7 +101,8 @@ mcp_call :: proc(params: json.Object) -> string {
 		code, text = start_session(arg(args, "app"), arg(args, "platform"), arg(args, "device"), nil)
 	case "look":
 		shot, _ := args["screenshot"].(json.Boolean)
-		code, text, _ = session_request("look", "--shot" if shot else "")
+		all, _ := args["all"].(json.Boolean)
+		code, text, _ = session_request("look", strings.concatenate({"--shot " if shot else "", "--all" if all else ""}, context.temp_allocator))
 		// The screenshot inline, its path line left out.
 		if before, found, path := strings.partition(text, "screenshot: "); shot && found != "" {
 			path = strings.trim_space(path)

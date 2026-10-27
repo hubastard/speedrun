@@ -424,6 +424,37 @@ Known differences in how, not what:
   iOS; the drag flow went from 74 s to 41 s on iOS, 40 s to 23 s on Android). Its
   onboarding pager sprang back after each drag of 40% on iOS; on Android two pages took
   5.6 s, now 1.2 s.
+- iOS: after each drag, `scrollUntilVisible` waits for the content to come to rest before the
+  next: two reads in a row with the same `scroll_signature` (the texts and positions along the
+  drag's axis of the nodes in the scroll view under the drag: a shimmer's sweep or a ticker,
+  across the axis, leave it alone), the list not empty, for up to 5 more reads or 3 s (a
+  slow device's read takes up to 2 s). No settle: it would also wait out the scroll
+  indicator fading, ~1 s a drag. A drag that moved nothing (the signature as before it) waits
+  for the screen to change, up to 2 s, before the next: a list still loading (shimmer
+  placeholders, which a drag pulls and which spring back) was dragged a dozen times on a
+  tester's iOS app, each springing back read as progress; now it is dragged once and the
+  scroll resumes when the content comes.
+- iOS, up and down: a drag starts 70% of the way into the list under the screen's center
+  from the edge it heads to (`drag_start`), not at the center: 1.4x as far a drag. The extra
+  read per drag cost the feed's scroll to post 25 5 s (14.5 s to 19.5 s); with the longer
+  drags it takes 14 drags instead of 19, ~16 s, and the journey's scroll to row 60 3.7 s
+  (6.3 s). `centerElement` drags just as far as brings the element to the screen's center (at
+  most a stride): a whole stride, once longer, carried a product on the grid's third row past
+  the center and off screen, and the scroll went on to the list's end.
+- Android keeps its scroll as before (`watched`: the whole screen's hash; no wait for rest,
+  none for a list loading, drags from the center). With the iOS waits, a settle after each
+  drag, and with longer drags too, the long list of Speedrun Bench flung now and then on an
+  emulator starved of memory (row 105 to 239 in one drag, past row 120), where the previous
+  code, alternated with it run for run, found the row every time; not understood yet. CI's
+  emulator (reads ~1 s right after a drag) once overshot the same way with the previous code
+  (row 60, ended on row 484): an open issue.
+- On Android a sticky section header counts as a cover: the tree orders a list's children by
+  place, not as drawn, so a header comes before the rows it is drawn over and the later-node
+  rule missed it. A cell of the element's vertical list (list, content view, cells) before
+  the element's own cell, at its center and as wide as it, overlaps it, which rows do not.
+  Longer drags (tried on Android, kept on iOS) stopped a scroll up with "Row 3" under
+  "Section A", and the tap picked the header. Views inside the element's own cell (a card's background) and lists that scroll
+  sideways (cells that overlap a little) do not count.
 - While its drags move the content, an element partly shown that moved since the previous
   read is read again (for up to a second after the drag), not dragged on: the list moves on
   its own, a page snapping into place, a bounce off the list's end, and a drag stops it

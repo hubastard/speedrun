@@ -38,6 +38,8 @@ when it is the only one on screen) and its state (`disabled`, `checked`, `focuse
 takes a few hundred tokens, where a raw accessibility tree takes tens of thousands.
 
 `speedrun look --shot` also saves a screenshot, scaled to 500 pixels wide, and prints its path.
+`speedrun look --all` also prints every node of the accessibility tree, for when the listing
+leaves out something you need (long: use it to investigate, not at every step).
 
 ## Running commands
 
@@ -125,15 +127,17 @@ before the new screen is there. `speedrun session clear` starts the recording ov
 tools, over stdin and stdout. With Claude Code:
 
 ```sh
-claude mcp add speedrun -- speedrun mcp
+claude mcp add speedrun -- ~/.speedrun/speedrun mcp
 ```
 
-Other MCP clients take the command `speedrun` with the argument `mcp`. The tools:
+Other MCP clients take the command (the binary's full path: a client may not start servers
+with your shell's PATH) and the argument `mcp`; see the [README](../README.md#as-an-mcp-server).
+The tools:
 
 | Tool | |
 |---|---|
 | `session_start` | `app`, and optionally `platform` and `device`: connects to the device. |
-| `look` | The screen's listing; `screenshot: true` adds a small screenshot (an image). |
+| `look` | The screen's listing; `screenshot: true` adds a small screenshot (an image), `all: true` every node of the tree. |
 | `run` | `commands`: flow commands, one or a list, with refs. |
 | `save_flow` | `path`: writes the commands that passed as a flow file. |
 | `session_log`, `session_clear`, `session_stop` | As the commands of the same name. |

@@ -64,6 +64,7 @@ Session :: struct {
 	r:        Runner,
 	app:      string,
 	token:    string,
+	device:   string, // its name, for messages
 	refs:     map[string]int, // an element (its id, else class and label; its rank among equal ones) -> its ref
 	next_ref: int,
 	ref_sel:  map[int]string, // ref -> the selector it stands for, as YAML
@@ -153,8 +154,8 @@ run_do_cli :: proc(args: []string) -> int {
 
 run_look_cli :: proc(args: []string) -> int {
 	flags := strings.join(args, " ")
-	for a in args do if a != "--shot" {
-		fmt.eprintln("usage: speedrun look [--shot]")
+	for a in args do if a != "--shot" && a != "--all" {
+		fmt.eprintln("usage: speedrun look [--shot] [--all]")
 		return 2
 	}
 	return session_call("look", flags)
@@ -364,6 +365,7 @@ session_serve :: proc(args: []string) -> int {
 		if name == "" do name = strings.trim_space(shell(r, "getprop ro.product.model"))
 		if adb_serial != "" do name = fmt.aprintf("%s (%s)", name, adb_serial)
 	}
+	s.device = name
 	info := Session_Info{os.get_pid(), bound.port, token, app, "ios" if dev.platform == .IOS else "android", name, device_id}
 	data, _ := json.marshal(info, {}, context.temp_allocator)
 	tmp := fmt.tprintf("%s.tmp", info_path())
@@ -423,7 +425,7 @@ session_handle :: proc(s: ^Session, sock: net.TCP_Socket) -> (stop: bool) {
 	case verb == "do":
 		code, out = session_do(s, cwd, payload)
 	case verb == "look":
-		code, out = session_look(s, strings.contains(payload, "--shot"))
+		code, out = session_look(s, strings.contains(payload, "--shot"), strings.contains(payload, "--all"))
 	case verb == "log":
 		b := strings.builder_make(context.temp_allocator)
 		if len(s.recorded) == 0 do strings.write_string(&b, "No commands passed yet.")
@@ -435,7 +437,7 @@ session_handle :: proc(s: ^Session, sock: net.TCP_Socket) -> (stop: bool) {
 		clear(&s.recorded)
 		out = "The recording starts over."
 	case verb == "status":
-		out = fmt.tprintf("Session on %s, app %s: %d commands recorded.", s.r.dev.name if s.r.dev.name != "" else "the device", s.app, len(s.recorded))
+		out = fmt.tprintf("Session on %s, app %s: %d commands recorded.", s.device, s.app, len(s.recorded))
 	case verb == "stop":
 		out, stop = "Session stopped.", true
 	case:
@@ -609,13 +611,27 @@ last_error :: proc(r: ^Runner, first: int) -> string {
 }
 
 @(private = "file")
-session_look :: proc(s: ^Session, shot: bool) -> (code: u8, out: string) {
+session_look :: proc(s: ^Session, shot, all: bool) -> (code: u8, out: string) {
 	r := &s.r
 	if e, bad := pay_due(r).?; bad do return 1, e
 	if !read_content(s) do return 1, "agent connection lost"
 	els := screen_elements(s)
 	b := strings.builder_make(context.temp_allocator)
 	write_screen(s, els, &b)
+	// Every node of the read, indented by depth: what the listing leaves out, for when it
+	// leaves out too much.
+	if all {
+		strings.write_string(&b, "all nodes:\n")
+		for k in r.h.order {
+			n := r.h.nodes[k]
+			fmt.sbprintf(&b, "%s%s %d,%d-%d,%d", strings.repeat("  ", int(n.depth), context.temp_allocator), n.class[strings.last_index_byte(n.class, '.') + 1:], n.left, n.top, n.right, n.bottom)
+			if n.text != "" do fmt.sbprintf(&b, " text=%s", quoted(n.text, 80))
+			if n.desc != "" && n.desc != n.text do fmt.sbprintf(&b, " desc=%s", quoted(n.desc, 80))
+			if n.id != "" do fmt.sbprintf(&b, " #%s", n.id)
+			if n.hint != "" do fmt.sbprintf(&b, " hint=%s", quoted(n.hint, 40))
+			strings.write_string(&b, "\n")
+		}
+	}
 	if shot {
 		path, err := session_shot(s)
 		if err != "" do return 1, err

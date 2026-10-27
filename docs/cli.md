@@ -40,15 +40,20 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 
 ```
 speedrun --stop-agent      # stop the iOS agent kept running between runs
+speedrun update [version]  # install the latest release (or the one named) where this one is
 speedrun --version
 speedrun --help
 ```
+
+`speedrun update` downloads the release with the installer (`install.sh`) into the folder the
+running `speedrun` is in, leaving your PATH and shell profile alone. A speedrun built from
+source refuses: update it with `git pull` and `./build.sh`.
 
 A session keeps a device connected between commands ([Sessions](sessions.md)):
 
 ```
 speedrun session start --app <appId> [--platform android|ios] [--device <id>] [-e KEY=VALUE]...
-speedrun look [--shot]          # the screen, a line per element, each with a ref (@7)
+speedrun look [--shot] [--all]  # the screen, a line per element, each with a ref (@7)
 speedrun do '<command>'...      # flow commands; @7 stands for that element's selector
 speedrun session log            # the commands that passed
 speedrun session save <file>    # them as a flow file

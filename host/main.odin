@@ -854,6 +854,7 @@ USAGE :: `usage:
   speedrun session start --app <appId>   a device kept connected, for speedrun do / look
                                          (speedrun session --help)
   speedrun mcp                           the same as a Model Context Protocol server (stdio)
+  speedrun update [version]              install the latest release (or the one named) in place
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
   speedrun --stop-agent        stop the iOS agent kept running between runs
@@ -881,6 +882,7 @@ run_cli :: proc(args: []string) -> int {
 		case "do":      return run_do_cli(args[1:])
 		case "look":    return run_look_cli(args[1:])
 		case "mcp":     return run_mcp_cli(args[1:])
+		case "update":  return run_update_cli(args[1:])
 		}
 	}
 	// The test form: [-p <platform>] [--device <id>] [--no-ansi] [--verbose] test [options] <flows>...
