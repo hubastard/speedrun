@@ -19,6 +19,9 @@
 //  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
 //  23 TAPS   i32 x, i32 y, i32 count, i32 interval_ms -> same
 //        count taps, interval_ms apart, as one gesture (doubleTapOn)
+//  24 HIT    i32 x, i32 y                   -> i32 index
+//        the node of the last SCREEN response that a touch at the point reaches (the
+//        accessibility hit test, as XCUIElement.isHittable), -1 for none
 //   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same
 //        flags & 1 (fling): a swipe gliding over duration_ms; otherwise a drag that stops when
 //        the touch lifts (Input.drag; duration_ms unused)
@@ -58,6 +61,8 @@
 //                                         -> u32 inject_us
 //        down at the first point, a move to each next one (Private.drag), up at lift_ms;
 //        wait 0: returns once sent (spike/swipe.py traces the content meanwhile)
+//  51 HITTABLE   str identifier             -> u8 exists, u8 hittable, u32 us
+//        XCUIElement.isHittable of the first element with that identifier
 import XCTest
 import Darwin
 

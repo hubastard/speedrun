@@ -24,11 +24,14 @@ final class Screen {
     /// The signature SETTLE ended on: a read that differs (the screen changed after the settle,
     /// such as a popup presenting) says so, and the host settles before acting on it.
     var settledSignature: Int?
-    /// The app's nodes from the last signature, for the next read (see above).
-    private var settled = (nodes: Writer(), count: UInt32(0), at: UInt64(0))
+    /// The app's nodes from the last signature, for the next read (see above), and their
+    /// accessibility elements (HIT).
+    private var settled = (nodes: Writer(), count: UInt32(0), at: UInt64(0), elements: [NSObject?]())
     private static let settledMaxAgeNs: UInt64 = 1_000_000_000
     private static let statusBarsMaxAgeNs: UInt64 = 5_000_000_000
-    private var statusBars = (nodes: Writer(), count: UInt32(0), at: UInt64(0))
+    private var statusBars = (nodes: Writer(), count: UInt32(0), at: UInt64(0), elements: [NSObject?]())
+    /// The accessibility element of each node of the last SCREEN response, in its order (HIT).
+    private var lastElements: [NSObject?] = []
     /// A hashed node of a walk: identity (what it is and says), frame, and where its flags byte is.
     struct Mark { var id: Int; var frame: SIMD4<Int32>; var flagsAt: Int }
     private static let restlessNs: UInt64 = 500_000_000
@@ -53,27 +56,30 @@ final class Screen {
     func read(lastActionNs: UInt64, out: inout Writer) throws {
         var nodes = Writer()
         var count: UInt32 = 0
+        var elements: [NSObject?] = []
         var changed = false
         let now = DispatchTime.now().uptimeNanoseconds
         if settled.at > lastActionNs && now - settled.at < Self.settledMaxAgeNs {
             nodes = settled.nodes
             count = settled.count
+            elements = settled.elements
             settled.at = 0 // once
         } else {
             let snapshot = try snapshotForeground()
             Private.uiLandscape = snapshot.frame.width > snapshot.frame.height
             var marks: [Mark] = []
-            walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks)
+            walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks, elements: &elements)
             lastSignature = digest(marks, nodes: &nodes)
             changed = settledSignature != nil && lastSignature != settledSignature
         }
         if statusBars.at == 0 || now - statusBars.at > Self.statusBarsMaxAgeNs {
-            var bars = Writer(), barCount: UInt32 = 0, ignored: [Mark] = []
+            var bars = Writer(), barCount: UInt32 = 0, ignored: [Mark] = [], barElements: [NSObject?] = []
             for bar in (try? springboard.statusBars.allElementsBoundByIndex.map { try $0.snapshot() }) ?? [] {
-                walk(bar, depth: 0, into: &bars, count: &barCount, marks: &ignored)
+                walk(bar, depth: 0, into: &bars, count: &barCount, marks: &ignored, elements: &barElements)
             }
-            statusBars = (bars, barCount, now)
+            statusBars = (bars, barCount, now, barElements)
         }
+        lastElements = elements + statusBars.elements
         out.u32(count + statusBars.count)
         out.data.append(nodes.data)
         out.data.append(statusBars.nodes.data)
@@ -86,12 +92,13 @@ final class Screen {
         var nodes = Writer()
         var count: UInt32 = 0
         var marks: [Mark] = []
+        var elements: [NSObject?] = []
         let snapshot = try snapshotForeground()
         Private.uiLandscape = snapshot.frame.width > snapshot.frame.height
-        walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks)
+        walk(snapshot, depth: 0, into: &nodes, count: &count, marks: &marks, elements: &elements)
         let sig = digest(marks, nodes: &nodes)
         lastSignature = sig
-        settled = (nodes, count, DispatchTime.now().uptimeNanoseconds)
+        settled = (nodes, count, DispatchTime.now().uptimeNanoseconds, elements)
         return sig
     }
 
@@ -202,8 +209,10 @@ final class Screen {
         return unsafeBitCast(o.method(for: keyboardFocusSel), to: Get.self)(o, keyboardFocusSel)
     }
 
+    private static let accessibilityElementSel = NSSelectorFromString("accessibilityElement")
+
     private func walk(_ s: XCUIElementSnapshot, depth: Int, into w: inout Writer, count: inout UInt32, marks: inout [Mark],
-                      hashed: Bool = true) {
+                      elements: inout [NSObject?], hashed: Bool = true) {
         let value = s.value as? String ?? ""
         let text = s.title.isEmpty ? value : s.title
         let checkable = s.elementType == .checkBox || s.elementType == .switch || s.elementType == .toggle
@@ -225,6 +234,8 @@ final class Screen {
         w.str(text); w.str(s.label); w.str(s.identifier); w.str(Self.typeName(s.elementType))
         w.str(s.placeholderValue ?? ""); w.str("")
         count += 1
+        let o = s as? NSObject
+        elements.append(o?.responds(to: Self.accessibilityElementSel) == true ? o?.perform(Self.accessibilityElementSel)?.takeUnretainedValue() as? NSObject : nil)
         let hashed = hashed && s.identifier != Self.unsettledID
         if hashed {
             var id = Hasher()
@@ -233,7 +244,17 @@ final class Screen {
             marks.append(Mark(id: id.finalize(), frame: SIMD4(l, t, rr, b), flagsAt: flagsAt))
         }
 
-        for c in s.children { walk(c, depth: depth + 1, into: &w, count: &count, marks: &marks, hashed: hashed) }
+        for c in s.children { walk(c, depth: depth + 1, into: &w, count: &count, marks: &marks, elements: &elements, hashed: hashed) }
+    }
+
+    /// HIT: the node of the last SCREEN response that a touch at the point reaches, as XCTest's
+    /// isHittable finds out (the accessibility hit test): -1 when none of them (or the hit test
+    /// failed). Main thread.
+    func hit(x: Int32, y: Int32) -> Int32 {
+        guard let app = lastElements.first ?? nil,
+              let element = Private.elementAt(CGPoint(x: Int(x), y: Int(y)), in: app) else { return -1 }
+        for (k, e) in lastElements.enumerated() where e?.isEqual(element) == true { return Int32(k) }
+        return -1
     }
 
     private static func typeName(_ t: XCUIElement.ElementType) -> String {

@@ -65,6 +65,17 @@ final class Spike {
             out.u32(micros(since: t))
         case 48: // FOREGROUND
             out.str(onMain { Private.foregroundReport() })
+        case 51: // HITTABLE
+            let id = try conn.readStr()
+            let t = DispatchTime.now().uptimeNanoseconds
+            let (exists, hittable) = onMain { () -> (Bool, Bool) in
+                let e = self.app.descendants(matching: .any).matching(identifier: id).firstMatch
+                let exists = e.exists
+                return (exists, exists && e.isHittable)
+            }
+            out.u8(exists ? 1 : 0)
+            out.u8(hittable ? 1 : 0)
+            out.u32(micros(since: t))
         default:
             throw AgentError(message: "unknown op \(op)")
         }

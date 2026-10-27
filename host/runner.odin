@@ -789,12 +789,14 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// it to go (up to the lookup's time; then tap anyway), settle, and find the element
 		// again where it rests. speedrun's settle does not wait for a spinner (an endless
 		// animation), and an overlay's fade shows nowhere in the hierarchy.
-		if loading_cover(r, el) >= 0 {
+		if r.debug do debug_at(r, el)
+		if under_loading(r, el) or_return {
 			t := time.tick_now()
 			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
-			for el >= 0 && loading_cover(r, el) >= 0 && time.tick_since(t) < limit {
+			for el >= 0 && time.tick_since(t) < limit {
 				if !read_screen(r) do return "agent connection lost"
 				el = select(r, d.sel) or_return
+				if el < 0 || !(under_loading(r, el) or_return) do break
 			}
 			if r.debug do fmt.printf("      [under a loading overlay: waited %.0f ms]\n", us(t) / 1000)
 			settle(r, no_change_ms = 0) or_return
@@ -977,18 +979,24 @@ busy_indicator :: proc(n: H_Node) -> bool {
 	return strings.has_suffix(n.class, "ProgressBar")
 }
 
-// A loading overlay over the element: a node drawn over its center (later in the tree, outside
-// its subtree) with a spinner within it, in its subtree or, iOS flattening plain views, after
-// it under the same parent. Apps draw one over a screen while it loads, often see-through and
-// fading in: the element shows through and stays in the hierarchy, but the overlay takes the
-// touches. -1: none.
+// A loading overlay over the element, in a tree in drawing order (Android; iOS asks its hit
+// test, see under_loading): a spinner over its center (one that fills the overlay), or a node
+// drawn over its center (later in the tree, outside its subtree) with a spinner within it, in
+// its subtree or right after it under the same parent. Apps draw one over a screen while it
+// loads, often see-through and fading in: the element shows through and stays in the
+// hierarchy, but the overlay takes the touches. A spinner inside the element is its own (a
+// button showing it is busy). -1: none.
 @(private = "file")
 loading_cover :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
 	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
-	k := el + 1
-	for k < len(r.h.nodes) && r.h.nodes[k].depth > n.depth do k += 1
-	for ; k < len(r.h.nodes); k += 1 {
+	end := el + 1
+	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
+	for s, k in r.h.nodes {
+		if (k > el && k < end) || !s.kept || !busy_indicator(s) do continue
+		if x >= s.left && x < s.right && y >= s.top && y < s.bottom do return k
+	}
+	for k := end; k < len(r.h.nodes); k += 1 {
 		c := r.h.nodes[k]
 		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
 		parent_depth := int(r.h.nodes[c.parent].depth) if c.parent >= 0 else -1
@@ -998,6 +1006,55 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 		}
 	}
 	return -1
+}
+
+// Whether a loading overlay would take a tap on the element (see loading_cover). iOS orders its
+// tree by place on screen, not as drawn, and reports a spinner at its own size whatever its
+// view's: there, while a spinner shows outside the element, the agent asks what a touch at the
+// element's center reaches (the accessibility hit test, as XCTest's isHittable), and the
+// overlay takes the tap when it is neither the element nor one of its containers. Android's
+// tree is in drawing order.
+@(private = "file")
+under_loading :: proc(r: ^Runner, el: int) -> (bool, Err) {
+	if r.dev.platform != .IOS do return loading_cover(r, el) >= 0, nil
+	n := r.h.nodes[el]
+	end := el + 1
+	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
+	spinner := false
+	for s, k in r.h.nodes do if s.kept && busy_indicator(s) && (k < el || k >= end) {
+		spinner = true
+		break
+	}
+	if !spinner do return false, nil
+	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+	if !ok do return false, "agent connection lost"
+	if r.debug {
+		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{}
+		fmt.printf("      [a spinner shows; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", hit, h.class, h.left, h.top, h.right, h.bottom, el)
+	}
+	if hit < 0 || hit >= len(r.h.nodes) || (hit >= el && hit < end) do return false, nil
+	for p := n.parent; p >= 0; p = r.h.nodes[p].parent do if p == hit do return false, nil
+	return true, nil
+}
+
+// SPEEDRUN_DEBUG: what the screen holds at the element's center, in tree order, the window-wide
+// containers left out: what a tap there may hit.
+@(private = "file")
+debug_at :: proc(r: ^Runner, el: int) {
+	n := r.h.nodes[el]
+	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+	fmt.printf("      [at %d,%d:", x, y)
+	shown := 0
+	for c, k in r.h.nodes {
+		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		if c.left <= 0 && c.top <= 0 && c.right >= r.w && c.bottom >= r.h_px do continue
+		label := c.text if c.text != "" else c.desc
+		fmt.printf(" %s#%d %s%s%s%s %d,%d-%d,%d;", "*" if k == el else "", k, c.class, " id=" if c.id != "" else "", c.id,
+			fmt.tprintf(" %q", label) if label != "" else "", c.left, c.top, c.right, c.bottom)
+		shown += 1
+		if shown == 12 do break
+	}
+	fmt.printf("]\n")
 }
 
 // What would cover the element at a point of the screen (covered_by's rules).

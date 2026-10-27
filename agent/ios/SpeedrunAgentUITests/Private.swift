@@ -32,6 +32,22 @@ enum Private {
         return proxy
     }
 
+    /// The accessibility element that a touch at a point of the screen (points) reaches in an
+    /// app (its root element), as XCTest's isHittable asks for it: XCUIDevice's
+    /// accessibilityInterface (XCAXClient_iOS), hitTestElement:withPoint:error:. Nil when the hit
+    /// test fails or this Xcode lacks it. Main thread.
+    static func elementAt(_ point: CGPoint, in app: NSObject) -> NSObject? {
+        let interface = NSSelectorFromString("accessibilityInterface")
+        let device = XCUIDevice.shared as NSObject
+        guard device.responds(to: interface),
+              let client = device.perform(interface)?.takeUnretainedValue() as? NSObject else { return nil }
+        let sel = NSSelectorFromString("hitTestElement:withPoint:error:")
+        guard client.responds(to: sel) else { return nil }
+        typealias Hit = @convention(c) (NSObject, Selector, NSObject, CGPoint, UnsafeMutablePointer<NSError?>?) -> Unmanaged<NSObject>?
+        var error: NSError?
+        return unsafeBitCast(client.method(for: sel), to: Hit.self)(client, sel, app, hardwarePoint(point), &error)?.takeUnretainedValue()
+    }
+
     /// The device's orientation (ORIENTATION sets it) and whether the foreground app's UI is
     /// laid out in landscape (its last snapshot is wider than tall: an app that supports
     /// portrait only stays upright when the device turns). Touches come in the UI's points

@@ -38,6 +38,7 @@ Op :: enum u8 {
 	Label       = 21, // Android agent: an app's name in the device's language
 	Perms       = 22, // Android agent: the permissions an app requests, and their state
 	Taps        = 23, // iOS agent: repeated taps as one gesture
+	Hit         = 24, // iOS agent: the node of the last screen read a touch at a point reaches
 }
 
 KEYCODE_BACK :: 4
@@ -379,6 +380,20 @@ op_tap :: proc(c: ^Conn, x, y: i32) -> (res: Action_Result, ok: bool) {
 	body, _, ok = call(c, req[:])
 	if !ok do return
 	return read_action(body)
+}
+
+// The index of the node (in the last screen read) that a touch at x, y reaches, -1 for none.
+op_hit :: proc(c: ^Conn, x, y: i32) -> (idx: int, ok: bool) {
+	req: [9]byte
+	req[0] = u8(Op.Hit)
+	put_i32(req[1:5], x)
+	put_i32(req[5:9], y)
+	body: []byte
+	body, _, ok = call(c, req[:])
+	if !ok do return -1, false
+	r := Reader{b = body, ok = true}
+	idx = int(rd_i32(&r))
+	return idx, r.ok
 }
 
 op_key :: proc(c: ^Conn, code: i32) -> (res: Action_Result, ok: bool) {
