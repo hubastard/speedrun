@@ -30,18 +30,20 @@ wall clock of the whole suite, each tool's start-up included.
 
 | Platform | speedrun | Maestro 2.11 | speedrun is | Flows passed |
 |---|---:|---:|---:|---|
-| Android emulator | **8 min 30 s** | 48 min 12 s | 5.7x faster | speedrun 19/19, Maestro 17/19 |
-| iOS simulator | **11 min 36 s** | 41 min 57 s | 3.6x faster | speedrun 19/19, Maestro 10/19 |
+| Android emulator | **8 min 14 s** | 46 min 56 s | 5.7x faster | speedrun 19/19, Maestro 16/19 |
+| iOS simulator | **11 min 5 s** | 40 min 19 s | 3.6x faster | speedrun 19/19, Maestro 8/19 |
 
 Maestro's time counts its failed flows only up to the failure. The widest gap is on screens
 that never stop moving (a looping animation, a ticker, a number changing every frame): each
 of Maestro's steps waits for a still screen until its timeout, 20–24 minutes for that flow
-against 1.4–2.2 minutes. On Android Maestro's `scrollUntilVisible` ran out of time on a
-500-row list and on a feed that loads more posts as it scrolls. On iOS it failed where React
-Native apps differ from UIKit ones: it does not read the checked state of React Native
-checkboxes and radio buttons, its double tap is too slow for a 300 ms double-tap window, it
-taps a list row half hidden under the list's edge outside the list, it misses a button that a
-late banner pushed down, and its `hideKeyboard` gave up on one screen.
+against 1.4–2.2 minutes. Maestro's `scrollUntilVisible` swipes across the screen's center:
+it never moved a card list above the center, and it did not turn the pages of an onboarding
+pager in time; on Android it also ran out of time on a feed that loads more posts as it
+scrolls. On iOS it failed where React Native apps differ from UIKit ones: it does not read
+the checked state of React Native checkboxes and radio buttons, its double tap is too slow
+for a 300 ms double-tap window, it taps a list row half hidden under the list's edge outside
+the list, it misses a button that a late banner pushed down, and its `hideKeyboard` gave up
+on one screen.
 
 How the numbers were taken: `bench/app/bench.sh compare android|ios` (speedrun's suite,
 then Maestro's, on the same device), on 2026-10-27, Apple M1 Pro with 16 GB, an Android 17

@@ -309,6 +309,24 @@ Known differences in how, not what:
   which compared the toolbar with the sliver's middle, went the wrong way, back off screen
   (a third drag; 2.5 s for the scroll, 1.4–1.8 s now). A full stride also pulls a list that
   ends just after the element past its end, and its bounce costs the settle ~0.1–0.4 s.
+- Sideways, `scrollUntilVisible` drags across the list the element is in (iOS keeps an
+  element its list has scrolled away in the hierarchy, with its frame), else across a list
+  that scrolls sideways (Android's `HorizontalScrollView` and `ViewPager`, or items side by
+  side; on iOS, content past a scroll view's left or right edge), the one under the screen's
+  center first, and only then across the center, where Maestro drags; a drag that moves
+  nothing moves on to the next. Its drags run from 90% of the screen's width, or a margin
+  inside the list, to 10%: a drag that does not fling moves a list by its length, and a
+  paging list turns the page only past half of it. Speedrun Bench's card list, above the
+  center, failed after 20 s of drags that moved nothing; its card 25 now takes 9 drags,
+  5.9 s on iOS, 1.7 s on Android (a `repeat` of flinging `swipe`s on the list: 37 s on
+  iOS; the drag flow went from 74 s to 41 s on iOS, 40 s to 23 s on Android). Its
+  onboarding pager sprang back after each drag of 40% on iOS; on Android two pages took
+  5.6 s, now 1.2 s.
+- While its drags move the content, an element partly shown that moved since the previous
+  read is read again (for up to a second after the drag), not dragged on: the list moves on
+  its own, a page snapping into place, a bounce off the list's end, and a drag stops it
+  there and carries it past the element. Two pages of the onboarding pager took 7 drags and
+  4.8 s (each of the last ones pulled the list past its end), now 2 and 1.6 s.
 - A lookup that had to wait for its element settles once it shows, then finds it again: an
   element enters the hierarchy at its final place while it may still slide in (Stripe's
   payment sheet, presented once its SDK has loaded), and a tap then hits what is behind.
@@ -389,9 +407,9 @@ Known differences in how, not what:
   the last drag shown; it settles only once the element shows, for the checks on visibility
   and centering on a still screen, as Maestro's. Maestro looks for the element for 500 ms
   before every swipe, then settles after it, a fling included. A drag moves the content by
-  about its length (40% of the screen, less the touch slop), less than a fling, so long
-  lists take more of them, and `speed` changes nothing. In Android Settings this took a
-  scroll from 0.8 s to 0.33 s.
+  about its length (40% of the screen, 80% sideways, less the touch slop), less than a
+  fling, so long lists take more of them, and `speed` changes nothing. In Android Settings
+  this took a scroll from 0.8 s to 0.33 s.
 - Android `setLocation`/`travel` set the providers from the agent (one binder call each);
   `cmd location` is the fallback when the agent runs as the instrumentation.
 - Regexes use Odin's engine: Java-only syntax (lookaround, inline flags, `\p{...}`,

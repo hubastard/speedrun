@@ -51,7 +51,9 @@ Android numbers, shut the iOS simulator down first (`../../speedrun --stop-agent
 
 `./bench.sh compare android` and `./bench.sh compare ios`, 2026-10-27, Apple M1 Pro 16 GB, an
 Android 17 emulator and an iPhone 17 Pro simulator (iOS 26.2), Maestro 2.11. A failed flow's
-time stops at its failure.
+time stops at its failure. The drag and onboarding flows changed after these runs (sideways
+`scrollUntilVisible`): their rows were measured again on their own, the same day, and the
+totals take them in.
 
 | Flow (android) | speedrun | Maestro | Speedup |
 |---|---:|---:|---:|
@@ -62,22 +64,22 @@ time stops at its failure.
 | Confetti, a button that turns on late, a layout shift, a busy JavaScript thread | 18 s | 66 s | 3.6x |
 | Dark mode, screenshots and a recording | 7 s | 48 s | 7.0x |
 | Deep links to a product, a lab screen and the cart | 26 s | 36 s | 1.4x |
-| Drag a slider and a card, scroll sideways, a long list with sticky headers | 40 s | 143 s ✗ |  |
+| Drag a slider and a card, scroll sideways, a long list with sticky headers | 23 s | 50 s ✗ |  |
 | Edit the profile, change settings, set a PIN, sign out | 21 s | 150 s | 7.0x |
 | Elements told apart by place (index, relative, parent, child) and by state | 17 s | 62 s | 3.7x |
 | Feed with a ticker, stories, likes, a double tap, more posts and pull to refresh | 29 s | 82 s ✗ |  |
 | Launch arguments, location, permissions, photos, orientation, app lifecycle, airplane mode | 22 s | 73 s | 3.4x |
-| Onboarding pages, and no onboarding on the next launch | 4 s | 11 s | 2.9x |
+| Onboarding pages, and no onboarding on the next launch | 5 s | 28 s ✗ |  |
 | Popups that come one after another (native modals, a sheet) | 21 s | 56 s | 2.6x |
 | Scripts, env, conditions, repeat and retry | 12 s | 37 s | 3.2x |
 | Sign in with a phone number and a code, a wrong one first | 8 s | 40 s | 4.7x |
 | Swipes in four directions, taps at a point, single, double and long press | 15 s | 44 s | 2.9x |
 | Taps on screens that never stop moving | 130 s | 1450 s | 11.2x |
 | Typing, keys, erasing, copy and paste, random text, a draft kept across restarts | 29 s | 159 s | 5.5x |
-| **All flows** | **506 s** | **2874 s** | **5.7x** |
-| **Wall clock** | **510 s** | **2892 s** | **5.7x** |
+| **All flows** | **490 s** | **2798 s** | **5.7x** |
+| **Wall clock** | **494 s** | **2816 s** | **5.7x** |
 
-Passed: speedrun 19/19, Maestro 17/19. ✗: failed.
+Passed: speedrun 19/19, Maestro 16/19. ✗: failed.
 
 | Flow (ios) | speedrun | Maestro | Speedup |
 |---|---:|---:|---:|
@@ -88,30 +90,37 @@ Passed: speedrun 19/19, Maestro 17/19. ✗: failed.
 | Confetti, a button that turns on late, a layout shift, a busy JavaScript thread | 21 s | 70 s ✗ |  |
 | Dark mode, screenshots and a recording | 14 s | 45 s | 3.2x |
 | Deep links to a product, a lab screen and the cart | 29 s | 43 s | 1.5x |
-| Drag a slider and a card, scroll sideways, a long list with sticky headers | 74 s | 171 s | 2.3x |
+| Drag a slider and a card, scroll sideways, a long list with sticky headers | 41 s | 60 s ✗ |  |
 | Edit the profile, change settings, set a PIN, sign out | 37 s | 86 s ✗ |  |
 | Elements told apart by place (index, relative, parent, child) and by state | 29 s | 62 s ✗ |  |
 | Feed with a ticker, stories, likes, a double tap, more posts and pull to refresh | 71 s | 96 s ✗ |  |
 | Launch arguments, location, permissions, photos, orientation, app lifecycle, airplane mode | 28 s | 96 s | 3.4x |
-| Onboarding pages, and no onboarding on the next launch | 10 s | 38 s | 4.0x |
+| Onboarding pages, and no onboarding on the next launch | 12 s | 51 s ✗ |  |
 | Popups that come one after another (native modals, a sheet) | 27 s | 60 s | 2.2x |
 | Scripts, env, conditions, repeat and retry | 20 s | 44 s | 2.2x |
 | Sign in with a phone number and a code, a wrong one first | 23 s | 48 s | 2.1x |
 | Swipes in four directions, taps at a point, single, double and long press | 13 s | 48 s | 3.6x |
 | Taps on screens that never stop moving | 82 s | 1231 s ✗ |  |
 | Typing, keys, erasing, copy and paste, random text, a draft kept across restarts | 55 s | 107 s ✗ |  |
-| **All flows** | **692 s** | **2504 s** | **3.6x** |
-| **Wall clock** | **696 s** | **2517 s** | **3.6x** |
+| **All flows** | **661 s** | **2406 s** | **3.6x** |
+| **Wall clock** | **665 s** | **2419 s** | **3.6x** |
 
-Passed: speedrun 19/19, Maestro 10/19. ✗: failed.
+Passed: speedrun 19/19, Maestro 8/19. ✗: failed.
 
 Why Maestro failed:
 
 - **Screens that never stop moving** (both): each step waits for a still screen until its
   timeout: 20–24 minutes for the flow against 1.4–2.2 minutes. On iOS a tap on the
   auto-advancing carousel was not counted, then the flow ended with "Unknown error".
-- **Long lists** (Android): `scrollUntilVisible` ran out of time on the 500-row list with
-  sticky headers and on the feed that loads more posts as it scrolls.
+- **Long lists** (Android): `scrollUntilVisible` ran out of time on the feed that loads more
+  posts as it scrolls (and on the 500-row list with sticky headers, before the drag flow
+  changed).
+- **A list away from the screen's center** (both): `scrollUntilVisible` swipes across the
+  screen's center, below the drag screen's card list, so card 25 never comes (drag).
+  speedrun drags across the list.
+- **A paging list** (both): on Android, Maestro's sideways swipes from the center did not
+  bring the onboarding's first page back in 8 tries; on iOS each swipe then waited 11–15 s
+  for the floating illustration to settle, and the scroll ran out of its 20 s after two.
 - **React Native checkboxes and radio buttons** (iOS): iOS reads their state as part of their
   value ("checkbox, checked"); Maestro does not take that as `checked` (selectors, shop,
   profile).

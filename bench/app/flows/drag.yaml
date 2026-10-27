@@ -17,15 +17,10 @@ tags: [lab, gestures]
       id: drag-card
     direction: DOWN
 - assertVisible: "Dropped in the zone"
-- repeat:
-    while:
-      notVisible: "Card 25"
-    commands:
-      - swipe:
-          from:
-            id: h-list
-          direction: LEFT
-- assertVisible: "Card 25"
+# The card list is above the screen's center.
+- scrollUntilVisible:
+    element: "Card 25"
+    direction: RIGHT
 - tapOn:
     id: open-long-list
 - scrollUntilVisible:

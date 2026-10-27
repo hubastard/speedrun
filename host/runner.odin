@@ -1075,6 +1075,104 @@ bring_in :: proc(r: ^Runner, el: int, cx, cy, ex, ey: i32) -> (tx, ty: i32, ok: 
 	return cx + clamp(shift, -stride, stride), cy, true
 }
 
+// A drag's start and end: cx, cy, ex, ey.
+@(private = "file")
+Line :: [4]i32
+
+// Where scrollUntilVisible drags sideways, in the order tried (the next when a drag moves
+// nothing): across the list the element is in (iOS keeps an element its list has scrolled
+// away in the hierarchy, with its frame), the other lists that scroll sideways, the one under
+// the screen's center first, then the screen's center. A drag runs from 90% of the screen's
+// width, or a margin inside the list, to 10%: a drag that does not fling moves a list by its
+// length, and past half a page a paging list turns the page instead of springing back.
+@(private = "file")
+side_lines :: proc(r: ^Runner, sel: ^Selector, dir: Swipe_Dir) -> (lines: [8]Line, count: int) {
+	add :: proc(lines: ^[8]Line, count: ^int, l: Line) {
+		for k in 0 ..< count^ do if lines[k] == l do return
+		if count^ < len(lines) {
+			lines[count^] = l
+			count^ += 1
+		}
+	}
+	across :: proc(r: ^Runner, dir: Swipe_Dir, sv: H_Node, y: i32) -> Line {
+		margin := r.w / 12
+		y := clamp(y, max(sv.top, 0) + 1, min(sv.bottom, r.h_px) - 1)
+		if dir == .Left do return {min(sv.right - margin, r.w * 9 / 10), y, r.w / 10, y}
+		return {max(sv.left + margin, r.w / 10), y, r.w * 9 / 10, y}
+	}
+	if r.dev.platform == .IOS && sel.child_of == nil {
+		all := make([]int, len(r.h.nodes), context.temp_allocator)
+		for &k, i in all do k = i
+		if res, err := apply(r, sel, all); err == nil && len(res) > 0 {
+			n := r.h.nodes[res[0]]
+			f := n.full if n.full_area > 0 else {n.left, n.top, n.right, n.bottom}
+			for p := n.parent; p >= 0; p = r.h.nodes[p].parent {
+				sv := r.h.nodes[p]
+				if sv.kept && scroll_container(sv) && scrolls_sideways(r, p) {
+					add(&lines, &count, across(r, dir, sv, f[1] + (f[3] - f[1]) / 2))
+					break
+				}
+			}
+		}
+	}
+	lists: [dynamic]int
+	lists.allocator = context.temp_allocator
+	for n, k in r.h.nodes {
+		if n.kept && n.right > n.left && n.bottom > n.top && scroll_container(n) && scrolls_sideways(r, k) do append(&lists, k)
+	}
+	// Nearest to the screen's center first: 0 for the one it is in.
+	off_center :: proc(r: ^Runner, n: H_Node) -> i32 {
+		cx, cy := r.w / 2, r.h_px / 2
+		dx := max(n.left - cx, cx - n.right, 0)
+		dy := max(n.top - cy, cy - n.bottom, 0)
+		return dx + dy
+	}
+	for len(lists) > 0 {
+		best := 0
+		for k in 1 ..< len(lists) do if off_center(r, r.h.nodes[lists[k]]) < off_center(r, r.h.nodes[lists[best]]) do best = k
+		sv := r.h.nodes[lists[best]]
+		add(&lines, &count, across(r, dir, sv, sv.top + (sv.bottom - sv.top) / 2))
+		unordered_remove(&lists, best)
+	}
+	add(&lines, &count, across(r, dir, H_Node{node = {left = 0, top = 0, right = r.w, bottom = r.h_px}}, r.h_px / 2))
+	return
+}
+
+// Whether a scroll view scrolls sideways, as far as the hierarchy tells: iOS keeps content
+// scrolled away, with its frame, so content past its left or right edge (its own, not a
+// nested list's); Android names its horizontal views, else lays out a row of items.
+@(private = "file")
+scrolls_sideways :: proc(r: ^Runner, sv: int) -> bool {
+	n := r.h.nodes[sv]
+	if r.dev.platform != .IOS {
+		if strings.contains(n.class, "HorizontalScrollView") || strings.contains(n.class, "ViewPager") do return true
+		if strings.has_suffix(n.class, "ScrollView") || strings.has_suffix(n.class, "ListView") do return false
+		// A RecyclerView, Compose's lazy lists: items side by side, not a column or a grid.
+		items := n.children[:]
+		for len(items) == 1 do items = r.h.nodes[items[0]].children[:]
+		if len(items) < 2 do return false
+		a := r.h.nodes[items[0]]
+		for k in items[1:] {
+			b := r.h.nodes[k]
+			if b.top >= a.bottom || b.bottom <= a.top do return false
+		}
+		return true
+	}
+	f := n.full if n.full_area > 0 else {n.left, n.top, n.right, n.bottom}
+	k := sv + 1
+	for k < len(r.h.nodes) && r.h.nodes[k].depth > n.depth {
+		c := r.h.nodes[k]
+		k += 1
+		if scroll_container(c) {
+			for k < len(r.h.nodes) && r.h.nodes[k].depth > c.depth do k += 1
+			continue
+		}
+		cf := c.full if c.full_area > 0 else {c.left, c.top, c.right, c.bottom}
+		if cf[2] > cf[0] && (cf[0] < f[0] - 1 || cf[2] > f[2] + 1) do return true
+	}
+	return false
+}
+
 // The last element containing the point, its own children first.
 @(private = "file")
 element_at :: proc(r: ^Runner, list: []int, x, y: i32) -> int {
@@ -1127,6 +1225,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	retry_center := 0
 	cx, cy := r.w / 2, r.h_px / 2
 	ex, ey := edge_point(r, cx, cy, dir)
+	// Sideways, where to drag (side_lines), picked before the first drag; the next line when a
+	// drag moves nothing.
+	sideways := dir == .Left || dir == .Right
+	lines: [8]Line
+	line, n_lines := 0, 0
 	// Each swipe is a drag that does not fling (the agent's SWIPE without the flag): the
 	// content stops as the touch lifts. A flinging swipe moves it farther, but it drifts on
 	// for 0.5-2 s that a settle would wait out.
@@ -1145,6 +1248,8 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	// covers after two is no cover: views a list shows through (a closed side drawer that
 	// accessibility still places on screen), and covers stop counting for this scroll.
 	clears := 0
+	seen: bool // the last read showed the element partly, at seen_frame
+	seen_frame: [4]i32
 	for {
 		if moving {
 			if !read_screen(r) do return "agent connection lost"
@@ -1152,10 +1257,22 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 			// Shown as much as asked: a sliver at the screen's edge (an iOS row coming into a
 			// list) is dragged on, not settled on and looked at again.
 			shown := false
+			partly: bool
+			frame: [4]i32
 			if el >= 0 {
-				vis := visible_share(r.h.nodes[el], r.w, r.h_px)
+				n := r.h.nodes[el]
+				vis := visible_share(n, r.w, r.h_px)
 				shown = vis > 0 && vis >= visibility
+				partly = vis > 0 && !shown
+				frame = n.full if n.full_area > 0 else {n.left, n.top, n.right, n.bottom}
 			}
+			// Partly shown, and moved since the last read: the content moves on its own, a
+			// paging list turning to its page, a list bouncing back from its end. It is read
+			// again, for up to a second: a drag would stop it there and carry it on past the
+			// element (at the list's end, pull it out and set it bouncing again).
+			moved := !seen || frame != seen_frame
+			seen, seen_frame = partly, frame
+			if partly && moved && time.tick_since(swiped) < time.Second do continue
 			cover := -1
 			if shown && clears < MAX_COVER_CLEARS do cover = covered_by(r, el)
 			if !shown || cover >= 0 {
@@ -1167,6 +1284,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				if since < gesture || (r.h.hash == swiped_from && since < 500 * time.Millisecond) {
 					time.sleep(20 * time.Millisecond)
 					continue
+				}
+				// Nothing moved: no list there scrolls that way (or it is at its end).
+				if r.h.hash == swiped_from && n_lines > 1 {
+					line = (line + 1) % n_lines
+					cx, cy, ex, ey = expand_values(lines[line])
 				}
 				// Shown under something drawn over it (a sticky footer or header), which would
 				// take a tap: drag it just clear.
@@ -1196,7 +1318,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		}
 		el, found, ferr := try_find(r, d.sel, 0)
 		if ferr != nil do return ferr
-		tx, ty := ex, ey // the drag: from the screen center towards the edge
+		if sideways && n_lines == 0 {
+			lines, n_lines = side_lines(r, d.sel, dir)
+			cx, cy, ex, ey = expand_values(lines[0])
+		}
+		tx, ty := ex, ey // the drag: from the screen center (sideways: the line) towards the edge
 		if found {
 			n := r.h.nodes[el]
 			vis := visible_share(n, r.w, r.h_px)

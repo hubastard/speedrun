@@ -25,6 +25,17 @@ the commands where speedrun is still closest to Maestro, with what is known abou
 - **The iOS simulator's hardware keyboard setting** decides whether the software keyboard
   shows; this one has it on, yet the keyboard showed in some fields: flows should not depend
   on it either way.
+- **`scrollUntilVisible` up and down still drags across the screen's center, 40% of its
+  height.** Sideways it finds the list and drags 80% of the width (2026-10-27). Vertically, a
+  list away from the center (a bottom sheet, half of a split screen) does not move, and a
+  paging list (a full-screen feed) springs back after each drag, as the onboarding pager did
+  sideways; Maestro's flinging swipe turns such pages. The same choice of list and a longer
+  drag from the list's lower part would cover both, and cut the drags in long lists; to
+  measure on Settings and the suite (a start low on the screen can land on a tab bar or the
+  keyboard).
+- **A list at its end:** once no drag moves anything, the element will not come, yet
+  `scrollUntilVisible` drags until its timeout (20 s by default), as Maestro does; failing
+  there would only shorten failing runs.
 
 ## Measuring
 
@@ -59,8 +70,8 @@ The benchmark app's suite, 2026-10-27, Apple M1 Pro 16 GB:
 
 | device | speedrun | Maestro | ratio | passed (speedrun / Maestro) |
 |---|---|---|---|---|
-| Android 17 emulator (API 37), `-gpu host` | 510 s | 2892 s | 5.7x | 19/19 / 17/19 |
-| iPhone 17 Pro simulator, iOS 26.2 | 696 s | 2517 s | 3.6x | 19/19 / 10/19 |
+| Android 17 emulator (API 37), `-gpu host` | 494 s | 2816 s | 5.7x | 19/19 / 16/19 |
+| iPhone 17 Pro simulator, iOS 26.2 | 665 s | 2419 s | 3.6x | 19/19 / 8/19 |
 
 Per flow: `bench/app/README.md`. Closest to Maestro: the deep-link flow (1.4–1.5x: three
 "Open in …?" checks wait 7 s each when the dialog does not show, in both tools), the popups
@@ -129,8 +140,8 @@ characters) 255 ms against 2.9 s.
   tap begins, and a snapshot costs ~70 ms. Not waiting for the confirmation gained little for
   taps (the app's reaction is the floor).
 - **iOS `scrollUntilVisible`.** Its drags do not fling, so each moves ~340 points against
-  ~540 for Maestro's swipe (more swipes for the same distance); a drag that reaches the end
-  of a list waits ~0.4 s for the bounce.
+  ~540 for Maestro's swipe (more swipes for the same distance; sideways ~310 points, 80% of
+  the width); a drag that reaches the end of a list waits ~0.4 s for the bounce.
 - **Android `eraseText` and `back`: ~4.5x, the closest commands there.** `eraseText` sends
   all 25 DELs when the field holds fewer characters (iOS bounds them by the field's length):
   ~460 ms here. `scrollUntilVisible` (0.33 s vs 2.5 s) drags without a fling since

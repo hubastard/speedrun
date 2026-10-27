@@ -14,6 +14,15 @@ tags: [auth]
     end: 10%,50%
 - assertVisible: "Page 3 of 3"
 - assertVisible: "Share"
+# Sideways scrolls turn the pages: two back, two forward.
+- scrollUntilVisible:
+    element: "Discover"
+    direction: LEFT
+- assertVisible: "Page 1 of 3"
+- scrollUntilVisible:
+    element: "Share"
+    direction: RIGHT
+- assertVisible: "Page 3 of 3"
 - tapOn: "Get started"
 - assertVisible: "Let's start with your phone number"
 # Only the first launch after an install shows the onboarding.
