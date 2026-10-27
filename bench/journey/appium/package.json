@@ -1,0 +1,13 @@
+{
+  "name": "speedrun-journey-appium",
+  "private": true,
+  "type": "module",
+  "description": "The benchmark journey (../journey.yaml) with Appium and WebdriverIO.",
+  "scripts": {
+    "setup": "APPIUM_HOME=.appium appium driver install uiautomator2 && APPIUM_HOME=.appium appium driver install xcuitest"
+  },
+  "dependencies": {
+    "appium": "^3.8.0",
+    "webdriverio": "^10.1.0"
+  }
+}

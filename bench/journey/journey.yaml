@@ -1,0 +1,84 @@
+# The journey every tool runs (README.md): the same steps and checks in each one's language.
+# The app starts fresh (run.sh resets its data before each run).
+appId: dev.speedrun.bench
+name: Journey
+---
+# Sign in with a phone number and a code.
+- launchApp
+- tapOn:
+    id: onboarding-skip
+- tapOn:
+    id: phone-input
+- inputText: "5550101234"
+- tapOn:
+    id: next
+- tapOn:
+    id: code-input
+- inputText: "123456"
+- tapOn:
+    id: notify-later
+- assertVisible: "Hi, Alex"
+# Search the shop, pick options, add to the cart.
+- tapOn:
+    id: tab-shop
+- tapOn:
+    id: search-input
+- inputText: "sneaker"
+- pressKey: Enter
+- assertVisible: "6 products"
+- tapOn: "City Sneaker"
+- tapOn:
+    id: size-M
+- tapOn:
+    id: color-Blue
+- tapOn:
+    id: qty-plus
+- assertVisible: "Qty 2"
+- tapOn:
+    id: qty-plus
+- assertVisible: "Qty 3"
+- tapOn:
+    id: add-to-cart
+- assertVisible: "Cart \\(3\\)"
+- tapOn:
+    id: go-to-cart
+- assertVisible: "Size M · Blue"
+- tapOn:
+    id: header-back
+- tapOn:
+    id: header-back
+# Set a PIN on a keypad that a loading overlay covers for its first 1.5 s.
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: security
+- tapOn:
+    id: key-1
+- tapOn:
+    id: key-2
+- tapOn:
+    id: key-3
+- tapOn:
+    id: key-4
+- assertVisible: "Confirm your PIN"
+- tapOn:
+    id: key-1
+- tapOn:
+    id: key-2
+- tapOn:
+    id: key-3
+- tapOn:
+    id: key-4
+- assertVisible: "PIN set"
+# Scroll a long list to a row and pick it.
+- tapOn:
+    id: tab-lab
+- tapOn:
+    id: lab-drag
+- tapOn:
+    id: open-long-list
+- scrollUntilVisible:
+    element: "Row 60"
+    timeout: 60000
+- tapOn: "Row 60"
+- assertVisible: "Picked row 60"
