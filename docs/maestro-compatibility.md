@@ -72,6 +72,10 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 - **`scrollUntilVisible` scrolls the element clear of what is drawn over it** (a sticky
   footer, a floating search bar), so a tap that follows lands on it. Maestro stops once the
   element is on screen, under the footer or not.
+- **A tap on an element something fixed covers** (a sticky footer or header, the keyboard)
+  **scrolls it clear first**, as a user would, when it is in a list; otherwise it lands on
+  the part of the element that shows. Maestro taps the element's center, which hits what is
+  on top: on a small screen, a footer's button instead of the element under it.
 - **`longPressOn` holds for 1.2 s**, where Maestro holds 3 s: past the 0.4–0.8 s after which
   apps take a touch as a long press (on Android, at least the device's touch & hold delay
   plus 0.7 s). For an app that waits longer, set `SPEEDRUN_LONG_PRESS_MS`.

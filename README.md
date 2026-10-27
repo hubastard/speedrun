@@ -11,6 +11,11 @@
   <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache%202.0-000000?style=flat-square"></a>
 </p>
 
+<p align="center">
+  <img alt="The same test run by Maestro in 35.0 s and by Speedrun in 4.5 s" src="docs/assets/maestro-vs-speedrun-android-settings.gif" width="600"><br>
+  <sub>The same 15-step test of Android's Settings app (<a href="bench/settings/bench_scenario_android.yaml">flow</a>) on one emulator, in real time.</sub>
+</p>
+
 ---
 
 Speedrun tests your app the way a user uses it: it taps, types, scrolls and checks what is on
@@ -35,7 +40,8 @@ appId: com.example.app
   changing: no sleeps, no comparing screenshots. Screens that never stop moving (spinners,
   tickers, carousels) don't hold it up.
 - **Fewer flaky failures.** It doesn't tap a popup that is still sliding in or a button behind
-  a loading overlay, and it scrolls an element clear of a sticky footer before tapping it.
+  a loading overlay, and it scrolls an element out from under a sticky footer or the keyboard
+  before tapping it, so the same flow passes on a small phone.
 - **Black-box.** Any build of your app, release builds included, through the platform's
   accessibility layer. Tested on native and React Native apps.
 - **One download.** A single binary and its iOS agent: no JVM, no drivers to install, no SDK

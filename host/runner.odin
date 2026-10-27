@@ -777,6 +777,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		path:              u64, // class_path
 		window:            map[u64]struct{}, // window_texts
 	}
+	center: [2]i32 // the element's center when tapped (the tap can land off it: uncovered_point)
 	in_sheet := false // iOS: the element is in a system sheet or alert (sheet_retries)
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
@@ -802,8 +803,9 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
+		if d.point == "" do el, x, y = uncovered_point(r, d.sel, el, c.optional) or_return
 		n := r.h.nodes[el]
-		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+		center = {n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2}
 		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
 		if r.dev.platform == .IOS {
 			for k := r.h.nodes[el].parent; k >= 0 && !in_sheet; k = r.h.nodes[k].parent {
@@ -871,19 +873,19 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				n := r.h.nodes[el]
 				nx, ny := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 				same := n.text == tapped.text && n.desc == tapped.desc && n.flags == tapped.flags
-				moved := abs(int(nx - x)) > 4 || abs(int(ny - y)) > 4
+				moved := abs(int(nx - center.x)) > 4 || abs(int(ny - center.y)) > 4
 				if same && moved {
 					containers := class_path(r, el) == tapped.path
 					window := window_texts(r, el)
 					shared := 0
 					for t in tapped.window do if t in window do shared += 1
 					same = containers && shared == len(tapped.window)
-					if r.debug do fmt.printf("      [tapped %s moved by %d,%d; same containers %v, %d of %d texts still there]\n", tapped.class, nx - x, ny - y, containers, shared, len(tapped.window))
+					if r.debug do fmt.printf("      [tapped %s moved by %d,%d; same containers %v, %d of %d texts still there]\n", tapped.class, nx - center.x, ny - center.y, containers, shared, len(tapped.window))
 				}
 				// A field the tap focused moves out of the keyboard's way (and the read can
 				// predate its focus flag): that is no miss.
 				if same && moved && (typing_before || !typing(r)) {
-					x, y = nx, ny
+					x, y = nx + x - center.x, ny + y - center.y
 					if _, ok := op_tap(r.c, x, y); !ok do return "agent connection lost"
 					settle(r, d.settle_ms) or_return
 					read_since_tap = false
@@ -1028,9 +1030,133 @@ under_loading :: proc(r: ^Runner, el: int) -> (bool, Err) {
 		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{}
 		fmt.printf("      [a spinner shows; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", hit, h.class, h.left, h.top, h.right, h.bottom, el)
 	}
-	if hit < 0 || hit >= len(r.h.nodes) || (hit >= el && hit < end) do return false, nil
-	for p := n.parent; p >= 0; p = r.h.nodes[p].parent do if p == hit do return false, nil
-	return true, nil
+	return !reaches(r, el, hit), nil
+}
+
+// Whether a touch the hit test took to node `hit` reaches element `el`: the element, a node in
+// it, or one of its containers. An unknown node (-1, or past the last read's) counts as the
+// element: nothing is known to be in the way.
+@(private = "file")
+reaches :: proc(r: ^Runner, el, hit: int) -> bool {
+	if hit < 0 || hit >= len(r.h.nodes) do return true
+	end := el + 1
+	for end < len(r.h.nodes) && r.h.nodes[end].depth > r.h.nodes[el].depth do end += 1
+	if hit >= el && hit < end do return true
+	for p := r.h.nodes[el].parent; p >= 0; p = r.h.nodes[p].parent do if p == hit do return true
+	return false
+}
+
+// What would take a tap at the element's center in its place (covered_by's rules): a sticky
+// footer or header, the keyboard. iOS's tree is ordered by place on screen, not as drawn: its
+// hit test has the last word there. -1: none.
+@(private = "file")
+tap_cover :: proc(r: ^Runner, el: int) -> (int, Err) {
+	cover := covered_by(r, el)
+	if cover < 0 || r.dev.platform != .IOS do return cover, nil
+	n := r.h.nodes[el]
+	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+	if !ok do return -1, "agent connection lost"
+	if reaches(r, el, hit) do return -1, nil
+	return cover, nil
+}
+
+// Where to tap element `el` (found by `sel`): its center, unless something fixed covers it
+// there (tap_cover), which would take the tap. As a user would, an element in a list that
+// scrolls the cover's way is dragged just clear (clear_of; up to MAX_COVER_CLEARS drags, while
+// it moves) and found again. One still covered (no such list: the keyboard over a screen that
+// does not scroll) is tapped in the middle of the largest part of it that shows, if that part
+// is no sliver; else at its center, as before. idx: the element as found last.
+@(private = "file")
+uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> (idx: int, x, y: i32, err: Err) {
+	idx = el
+	n := r.h.nodes[idx]
+	x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+	cover := tap_cover(r, idx) or_return
+	if cover < 0 do return
+	gain := 1.0 // the content's move for the finger's, on the last drag
+	for clears := 0; clears < MAX_COVER_CLEARS; clears += 1 {
+		n = r.h.nodes[idx]
+		c := r.h.nodes[cover]
+		// A bar along the top or bottom is cleared up or down, one along a side sideways: by
+		// the nearest list around the element that scrolls that way, unless the cover is in it
+		// too (it moves along).
+		vertical := c.right - c.left >= c.bottom - c.top
+		sv := -1
+		for p := n.parent; p >= 0 && sv < 0; p = r.h.nodes[p].parent {
+			if r.h.nodes[p].kept && scroll_container(r.h.nodes[p]) && scrolls_sideways(r, p) != vertical do sv = p
+		}
+		if sv < 0 do break
+		end := sv + 1
+		for end < len(r.h.nodes) && r.h.nodes[end].depth > r.h.nodes[sv].depth do end += 1
+		if cover > sv && cover < end do break
+		// The drag: in the part of the list that shows, clear of the cover, from its middle
+		// over up to half its length.
+		s := r.h.nodes[sv]
+		lo, hi, cover_lo, cover_hi, screen := max(s.top, 0), min(s.bottom, r.h_px), c.top, c.bottom, r.h_px
+		if !vertical do lo, hi, cover_lo, cover_hi, screen = max(s.left, 0), min(s.right, r.w), c.left, c.right, r.w
+		if cover_lo + (cover_hi - cover_lo) / 2 > screen / 2 {
+			hi = min(hi, cover_lo)
+		} else {
+			lo = max(lo, cover_hi)
+		}
+		if hi - lo < r.w / 6 do break
+		mid := lo + (hi - lo) / 2
+		cx, cy, ex, ey: i32
+		if vertical {
+			cx = clamp(s.left + (s.right - s.left) / 2, 0, r.w - 1)
+			cy, ex, ey = mid, cx, lo
+		} else {
+			cy = clamp(s.top + (s.bottom - s.top) / 2, 0, r.h_px - 1)
+			cx, ex, ey = mid, lo, cy
+		}
+		// A list can move less than the finger (half of a short drag on the product page, on
+		// Android): a drag after one that fell short goes as much farther.
+		tx, ty := clear_of(r, idx, cover, cx, cy, ex, ey)
+		if vertical {
+			ty = cy + clamp(i32(f64(ty - cy) / gain), lo - cy, hi - cy)
+		} else {
+			tx = cx + clamp(i32(f64(tx - cx) / gain), lo - cx, hi - cx)
+		}
+		if r.debug do fmt.printf("      [%s covered by %s: drag %d,%d -> %d,%d]\n", n.class, c.class, cx, cy, tx, ty)
+		frame := [4]i32{n.left, n.top, n.right, n.bottom}
+		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return idx, x, y, "agent connection lost"
+		// Android injects the drag at once, stamped as if it had just ended (see scroll_until).
+		if r.dev.platform != .IOS do time.sleep(time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond)
+		settle(r, no_change_ms = 500) or_return
+		idx = find_element(r, sel, optional, -1) or_return
+		n = r.h.nodes[idx]
+		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+		if r.debug do fmt.printf("      [%s now at %d,%d-%d,%d]\n", n.class, n.left, n.top, n.right, n.bottom)
+		cover = tap_cover(r, idx) or_return
+		if cover < 0 do return
+		if frame == {n.left, n.top, n.right, n.bottom} do break // the list moves no further
+		// How far it moved, by its edge on the side it moved to (the other can be cut by the
+		// screen's edge).
+		asked, moved := ty - cy, (n.top - frame[1] if ty < cy else n.bottom - frame[3])
+		if !vertical do asked, moved = tx - cx, (n.left - frame[0] if tx < cx else n.right - frame[2])
+		if asked != 0 && moved * asked > 0 do gain = clamp(f64(moved) / f64(asked), 0.2, 1)
+	}
+	n = r.h.nodes[idx]
+	c := r.h.nodes[cover]
+	parts := [4][4]i32 {
+		{n.left, n.top, n.right, min(n.bottom, c.top)}, // above the cover
+		{n.left, max(n.top, c.bottom), n.right, n.bottom}, // below
+		{n.left, n.top, min(n.right, c.left), n.bottom}, // left of it
+		{max(n.left, c.right), n.top, n.right, n.bottom}, // right of it
+	}
+	least := max(r.w / 60, 4)
+	best, area := -1, i64(0)
+	for p, k in parts {
+		w, h := p[2] - p[0], p[3] - p[1]
+		if w < least || h < least || i64(w) * i64(h) <= area do continue
+		best, area = k, i64(w) * i64(h)
+	}
+	if best < 0 do return
+	p := parts[best]
+	px, py := p[0] + (p[2] - p[0]) / 2, p[1] + (p[3] - p[1]) / 2
+	if cover_at(r, idx, px, py) >= 0 do return
+	if r.debug do fmt.printf("      [%s covered by %s: tapping its part that shows, at %d,%d]\n", n.class, c.class, px, py)
+	return idx, px, py, nil
 }
 
 // SPEEDRUN_DEBUG: what the screen holds at the element's center, in tree order, the window-wide

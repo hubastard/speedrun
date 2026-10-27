@@ -325,6 +325,18 @@ Known differences in how, not what:
   bar in the screen's bottom half, down past one in its top half; after two such drags it
   stops checking (a closed side drawer that Android still places on screen covered every row
   of an Ignite list).
+- A tap makes the same check (on iOS, the hit test confirms it: its tree is ordered by
+  place on screen), and an element something fixed covers (outside the list around it: a
+  sticky footer, the keyboard) is dragged just clear by that list, the nearest that scrolls
+  the cover's way, then found again; up to two drags, while it moves. A drag can move the
+  list less than the finger (half of a short one on Speedrun Bench's product page, on
+  Android): the second goes as much farther. Still covered (the keyboard over a screen that
+  does not scroll), it is tapped in the middle of the largest part that shows, unless that
+  is a sliver (under a 60th of the screen's width) or under something else; else at its
+  center, as before. On a 320x640 emulator (CI's default), the journey's size and quantity
+  taps hit the product page's footer, and the sign-in's Next the keyboard; they now pass.
+  A cover inside the same list (an OTP field's digit boxes drawn over its hidden input)
+  moves with the element: no drag, the center.
 - While its drags move the content, `scrollUntilVisible` stops on an element only once it
   shows as much as asked (`visibility`), and drags an element its list cuts on the side it
   comes in from (iOS) just far enough to bring it all in, a margin past the list's edge or
