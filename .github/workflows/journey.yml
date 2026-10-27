@@ -54,8 +54,12 @@ jobs:
 
       # A phone's screen, as the journey expects (the emulator's default is 320x640: the
       # product page's options sit under its sticky footer and below the fold).
+      # SPEEDRUN_DEBUG: every read, settle and drag in the log (CI's emulator is slower than
+      # a local one).
       - name: Run the journey on an emulator
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SPEEDRUN_DEBUG: 1
         with:
           api-level: 35
           arch: x86_64
