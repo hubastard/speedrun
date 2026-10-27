@@ -1,0 +1,34 @@
+# The Settings benchmark, run as-is by both tools. It starts the Settings app fresh
+# (launchApp). Iterations come from TIMES (1 when not given):
+#   ./compare.sh bench_scenario.yaml -e TIMES=3            (both tools, side by side)
+#   ./speedrun test bench_scenario.yaml -e TIMES=3         (speedrun)
+#   maestro test -e TIMES=3 bench_scenario.yaml            (Maestro)
+
+appId: com.android.settings
+env:
+  TIMES: ${TIMES || 1}
+---
+- launchApp
+- repeat:
+    times: ${TIMES}
+    commands:
+      - tapOn: "Display & touch"
+      - tapOn: "Display size & text"
+      - assertVisible: "Bold text"
+      - back
+      - back
+      - scrollUntilVisible:
+          element:
+            text: "About emulated device"
+          direction: DOWN
+      - tapOn: "About emulated device"
+      - tapOn: "Device name"
+      - eraseText: 25
+      - inputText: "Speedrun bench"
+      - assertVisible: "Speedrun bench"
+      - tapOn: "Cancel"
+      - back
+      - scrollUntilVisible:
+          element:
+            text: "Network & internet"
+          direction: UP

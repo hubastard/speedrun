@@ -33,6 +33,8 @@ cd bench/app
 ./bench.sh compare ios             # the suite with speedrun, then Maestro: results/ios.md
 ./bench.sh compare android
 cd ../.. && ./compare.sh bench/app/flows/gestures.yaml    # one flow, per command
+./compare.sh bench_scenario.yaml -e TIMES=3                # the Settings benchmark (Android)
+./compare.sh bench_scenario_ios.yaml -e TIMES=3            # and on iOS (simulator in English)
 ```
 
 `bench.sh compare` runs the benchmark app's suite (`bench/app/flows`, 19 flows) with each
@@ -41,7 +43,10 @@ tool on the same device and writes a table per flow plus the wall clock of each 
 run, so both start cold. `compare.sh` takes one flow file: it starts the flow's app fresh
 before each tool, lines the two runs up command by command (warning if their command
 sequences or statuses differ) and prints medians per command, then the flow, the time outside
-it and the wall clock per tool. Both need `maestro` and `python3` on PATH.
+it and the wall clock per tool. Both need `maestro` and `python3` on PATH. The Settings
+benchmark (`bench_scenario.yaml`, `bench_scenario_ios.yaml`) is 14 commands on the system
+Settings app, native screens: navigation two levels deep and back, scrolling down and up,
+text input; TIMES=3 runs it three times.
 
 Before a run: shut the iOS simulator down for Android numbers (memory pressure on a 16 GB Mac
 stalls the emulator; stop speedrun's iOS agent first with `./speedrun --stop-agent`, or
@@ -61,11 +66,40 @@ Per flow: `bench/app/README.md`. Closest to Maestro: the deep-link flow (1.4–1
 "Open in …?" checks wait 7 s each when the dialog does not show, in both tools), the popups
 and scripting flows on iOS (2.2x).
 
+The Settings benchmark, TIMES=3, 2026-10-27 (`compare.sh`; flow time, then the wall clock
+with each tool's start-up and shutdown, speedrun's iOS agent started cold):
+
+| flow | device | speedrun | Maestro | ratio (wall) |
+|---|---|---|---|---|
+| `bench_scenario.yaml` | Android 17 emulator, `-gpu host` | 10.9 s, 13.4 s | 104.7 s, 113.1 s | 8.4x |
+| `bench_scenario_ios.yaml` | iPhone 17 Pro simulator, iOS 26.2 | 29.8 s, 32.8 s | 80.5 s, 90.5 s | 2.8x |
+
+On 2026-10-26: Android 10.5 s vs 88.0 s, iOS 26.9 s vs 78.8 s. Maestro's Android run was
+slower this time (its taps took up to 4.9 s; the emulator's load was 2.5–3.5). speedrun's iOS
+run was 33.2 s with v0.1.2: its `scrollUntilVisible` down to "Developer" took 2.5 s, as the
+row first came in as a sliver inside iOS 26's bottom toolbar and the drag meant to clear the
+toolbar went the wrong way (fixed: 1.4 s; on 10-26 the sliver still counted as fully
+visible, 0.8 s). `scrollUntilVisible` up to "General" takes 0.8 s, a drag: on 10-26 "General"
+already showed (0.1 s).
+
+Per command (median ms, speedrun / Maestro):
+
+| command | Android | iOS |
+|---|---|---|
+| tap that opens a screen | 235–319 / 2422–4978 | 576–772 / 2262–2939 |
+| tap that closes a dialog or the search | 165 / 4785 | 875 / 1956 |
+| back | 124–179 / 765–871 | (a tap) |
+| `scrollUntilVisible` | down 377 / 2538, up 372 / 2408 | down 1442 / 3647, up 791 / 3296 |
+| `eraseText: 25` | 417 / 2091 | 745 / 1977 |
+| `inputText` (14 characters) | 250 / 3565 | 1122 / 1578 |
+| `assertVisible` | 4–55 / 86–723 | 71–80 / 215–253 |
+| `launchApp` | 627 / 1912 | 593 / 1737 |
+
 ## Earlier benchmarks (flows removed 2026-10-26)
 
-Before the benchmark app, speedrun was measured on Android's and iOS's Settings app (a
-14-step scenario, 3 laps) and on the Ignite React Native demo app; those flows, and the
-other tools' ports of the Settings scenario, are in git history up to commit 5fdcb19.
+Before the benchmark app, speedrun was also measured on the Ignite React Native demo app;
+those flows, and the other tools' ports of the Settings scenario, are in git history up to
+commit 5fdcb19 (the Settings flows came back on 2026-10-27).
 Wall clock on 2026-10-26: Settings on Android, speedrun 11.2 s, tester-army e2e 0.17 32.0 s,
 UI Automator 2.3 48.9 s, Appium 3.8 52.7 s, Maestro 2.11 90.7 s; Settings on iOS, speedrun
 31 s, e2e 65 s, Maestro 93 s; Ignite, speedrun 31.2 s vs Maestro 188.1 s on Android and

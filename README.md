@@ -48,6 +48,15 @@ then Maestro's, on the same device), on 2026-10-27, Apple M1 Pro with 16 GB, an 
 emulator and an iPhone 17 Pro simulator (iOS 26.2). The per-flow tables are in the app's
 [README](bench/app/README.md).
 
+On native screens, the system Settings app (`bench_scenario.yaml` and
+`bench_scenario_ios.yaml`: 14 commands, navigation, scrolling and text input, run three
+times), with `./compare.sh <flow> -e TIMES=3`:
+
+| Platform | speedrun | Maestro 2.11 | speedrun is |
+|---|---:|---:|---:|
+| Android emulator | **13.4 s** | 113.1 s | 8.4x faster |
+| iOS simulator | **32.8 s** | 90.5 s | 2.8x faster |
+
 speedrun runs a small agent on the device. The agent reads the screen in a few milliseconds
 and tells exactly when the app has settled, instead of comparing screenshots or sleeping.
 

@@ -1,0 +1,39 @@
+# iOS version of bench_scenario.yaml, for the Settings app on a simulator set to English.
+# Iterations come from TIMES (1 when not given):
+#   ./compare.sh bench_scenario_ios.yaml -e TIMES=3        (both tools, side by side)
+#   ./speedrun test -p ios bench_scenario_ios.yaml -e TIMES=3
+#   maestro --device <udid> test -e TIMES=3 bench_scenario_ios.yaml
+appId: com.apple.Preferences
+env:
+  TIMES: ${TIMES || 1} # the flow's env wins over -e, so the default must fall back to it
+---
+- launchApp
+- repeat:
+    times: ${TIMES}
+    commands:
+      # Navigation, two levels deep and back. iOS has no back key: the navigation bar's
+      # back button (labelled with the previous screen's title) has this id.
+      - tapOn: "General"
+      - tapOn: "About"
+      - assertVisible: "iOS Version"
+      - tapOn:
+          id: "BackButton"
+      - tapOn:
+          id: "BackButton"
+      # Scrolling down to the last row.
+      - scrollUntilVisible:
+          element:
+            text: "Developer"
+          direction: DOWN
+      # Text input in the search field (erase, type, assert, close, so nothing changes).
+      - tapOn:
+          id: "magnifyingglass"
+      - eraseText: 25
+      - inputText: "Speedrun bench"
+      - assertVisible: "Speedrun bench"
+      - tapOn: "close"
+      # Scrolling back up.
+      - scrollUntilVisible:
+          element:
+            text: "General"
+          direction: UP
