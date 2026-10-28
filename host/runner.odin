@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:mem/virtual"
+import "core:net"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -27,6 +28,11 @@ SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
+MAX_RECONNECTS             :: 2 // per flow (run_list)
+IOS_AGENT_LOG_LINES        :: 400 // of the agent's log in a failed flow's debug output
+MAX_ERROR_DIALOGS          :: 3 // Android error dialogs answered per read (answer_error_dialog)
+APP_READY_TIMEOUT_MS       :: 20_000 // a launched app's UI
+APP_READY_SLICE_MS         :: 2_000
 
 // ---- hierarchy ------------------------------------------------------------------------
 
@@ -98,6 +104,7 @@ Runner :: struct {
 	launch_due:           string, // the app launched, its UI not waited for yet (exec)
 	long_press_ms:        i32, // how long longPressOn holds (long_press_ms proc), 0 until known
 	condition_ms:         i64, // how long a `when:` waits (condition_timeout proc), 0 until known
+	reconnects:           int, // the agent's connection lost and made again (run_list)
 }
 
 Rx :: struct {
@@ -110,6 +117,7 @@ Rx :: struct {
 Err :: Maybe(string)
 
 SKIPPED :: "\x00skipped" // a command whose condition was false
+AGENT_LOST :: "agent connection lost"
 SUB_FLOW_FAILED :: "a command in the sub-flow failed"
 
 // ---- entry ----------------------------------------------------------------------------
@@ -286,7 +294,7 @@ COMMANDS_JSON_NAMES :: [][2]string {
 
 // The flow's debug output, in the artifacts layout tools expect: commands.json (each
 // command under its name there, with its status, start and duration), logs/speedrun.log, and
-// on failure screenshots/final.png.
+// on failure screenshots/final.png (and on iOS logs/ios-agent.log).
 @(private = "file")
 write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 	if !make_dirs(fmt.tprintf("%s/logs", dir)) {
@@ -326,6 +334,14 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 		if png, ok := op_screenshot(r.c, context.temp_allocator); ok {
 			make_dirs(fmt.tprintf("%s/screenshots", dir))
 			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
+		}
+		// iOS: the end of the agent's log (xcodebuild's output: the agent's lines, a crash).
+		if r.dev.platform == .IOS {
+			if data, err := os.read_entire_file(ios_runner_log(r.dev.port), context.temp_allocator); err == nil {
+				lines := strings.split_lines(string(data), context.temp_allocator)
+				end := strings.join(lines[max(len(lines) - IOS_AGENT_LOG_LINES, 0):], "\n", context.temp_allocator)
+				write_file(fmt.tprintf("%s/logs/ios-agent.log", dir), transmute([]byte)end)
+			}
 		}
 	}
 }
@@ -387,6 +403,17 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 		saved_rec, saved_node := r.log_rec, r.log_node
 		r.log_rec, r.log_node = seq, node
 		mutating, err := exec(r, &c)
+		// The agent's connection lost (it crashed, or closed it on an error, as a just-booted
+		// CI simulator has shown): connected again, the agent started again if it has to be,
+		// and the command run again. A sub-flow's or a repeat's own commands are.
+		if msg, failed := err.?; failed && msg == AGENT_LOST && r.reconnects < MAX_RECONNECTS {
+			#partial switch _ in c.data {
+			case Run_Flow, Repeat, Retry:
+			case:
+				r.reconnects += 1
+				if reconnect(r) do mutating, err = exec(r, &c)
+			}
+		}
 		rec := &r.records[seq]
 		// evalScript's description is its script as written (EvalScriptCommand keeps it).
 		if _, is_eval := c.data.(Eval_Script); !is_eval && strings.contains(rec.description, "${") {
@@ -421,6 +448,22 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 	return true
 }
 
+// A new connection to the agent, started again if it does not answer.
+@(private = "file")
+reconnect :: proc(r: ^Runner) -> bool {
+	net.close(r.c.sock)
+	t := time.tick_now()
+	if err := device_restart(r.dev); err != "" {
+		if r.debug do fmt.printf("      [agent restart failed: %s]\n", err)
+		return false
+	}
+	c, ok := connect(r.dev.port)
+	debug_step(r, "reconnect", &t)
+	if !ok do return false
+	r.c^ = c
+	return true
+}
+
 // ---- commands -------------------------------------------------------------------------
 
 // The waits put off (exec): the launched app's UI, then a settle.
@@ -428,11 +471,19 @@ pay_due :: proc(r: ^Runner) -> Err {
 	if !r.settle_due && r.launch_due == "" do return nil
 	no_change := i32(SETTLE_NO_CHANGE_MS)
 	if app := r.launch_due; app != "" {
-		r.launch_due = ""
 		t := time.tick_now()
-		ready, ok := op_launched(r.c, app, 20_000, r.alloc)
+		// Android: in slices, each followed by a read, which answers an error dialog hiding
+		// the app (answer_error_dialog).
+		slice := i32(APP_READY_TIMEOUT_MS) if r.dev.platform == .IOS else APP_READY_SLICE_MS
+		ready: bool
+		for waited: i32 = 0; waited < APP_READY_TIMEOUT_MS && !ready; waited += slice {
+			if waited > 0 && !read_screen(r) do return AGENT_LOST
+			ok: bool
+			ready, ok = op_launched(r.c, app, slice, r.alloc)
+			if !ok do return AGENT_LOST
+		}
 		debug_step(r, "app ready", &t)
-		if !ok do return "agent connection lost"
+		r.launch_due = "" // kept until here: a command run again after a lost connection waits
 		if !ready do return fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
 		// Android: with the app's window up, a screen unchanged since the launch was the
 		// app's already (stopApp: false), with nothing to wait for.
@@ -483,7 +534,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			// Just reinstalled, the app is not running.
 			if d.stop_app && !d.clear_state do simctl("terminate", r.dev.udid, app)
 			debug_step(r, "terminate", &t)
-			if !op_mark(r.c) do return true, "agent connection lost"
+			if !op_mark(r.c) do return true, AGENT_LOST
 			cmd := make([dynamic]string, 0, 3 + 2 * len(args), context.temp_allocator)
 			append(&cmd, "launch", r.dev.udid, app)
 			append(&cmd, ..ios_launch_arguments(args))
@@ -497,7 +548,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		set_permissions(r, app, perms) or_return
 		if d.stop_app do _ = shell(r, "am force-stop %s", app)
 		comp := launcher(r, app) or_return
-		if !op_mark(r.c) do return true, "agent connection lost"
+		if !op_mark(r.c) do return true, AGENT_LOST
 		if err := android_launch(r, comp, args); err != nil do return true, err
 		r.launch_due = strings.clone(app, r.alloc)
 		return true, nil
@@ -527,24 +578,24 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		return true, type_text(r, eval(r, d.text) or_return)
 	case Erase_Text:
 		res, ok := op_erase(r.c, i32(d.count))
-		if !ok do return true, "agent connection lost"
+		if !ok do return true, AGENT_LOST
 		if res.inject_path == .None do return true, nil // the field was empty: nothing changed
 		return true, settle(r, no_change_ms = SETTLE_TYPED_NO_CHANGE_MS)
 	case Key_Press:
-		if _, ok := op_key(r.c, d.keycode); !ok do return true, "agent connection lost"
+		if _, ok := op_key(r.c, d.keycode); !ok do return true, AGENT_LOST
 		return true, settle(r)
 	case Navigate:
 		switch d {
 		case .Back:
 			if r.dev.platform == .IOS do return true, nil // no back key: a no-op
-			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
+			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, AGENT_LOST
 			return true, settle(r)
 		case .Hide_Keyboard:
 			if r.dev.platform == .IOS do return true, ios_hide_keyboard(r)
 			// BACK, then a failure if (G)board ids are still on screen.
-			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, "agent connection lost"
+			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, AGENT_LOST
 			if e := settle(r); e != nil do return true, e
-			if !read_screen(r) do return true, "agent connection lost"
+			if !read_screen(r) do return true, AGENT_LOST
 			for &n in r.h.nodes do if n.kept && strings.contains(n.id, GBOARD_ID) {
 				return true, "Couldn't hide the keyboard"
 			}
@@ -565,9 +616,9 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Wait_Animation:
 		timeout := i64(ANIMATION_TIMEOUT_MS)
 		if t, has := d.timeout.?; has do timeout = parse_timeout(r, t) or_return
-		if !op_mark(r.c) do return true, "agent connection lost"
+		if !op_mark(r.c) do return true, AGENT_LOST
 		s, ok := op_settle(r.c, SETTLE_QUIET_MS, 0, i32(timeout))
-		if !ok do return true, "agent connection lost"
+		if !ok do return true, AGENT_LOST
 		_ = s
 		return true, nil
 	case Open_Link:
@@ -710,7 +761,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
 	res, skipped, ok := op_type(r.c, text, r.alloc)
-	if !ok do return "agent connection lost"
+	if !ok do return AGENT_LOST
 	if res.inject_path == .None do return nil
 	if skipped > 0 {
 		return fmt.aprintf("Could not type \"%s\": %d characters have no key sequence, and no editable field has the input focus to insert them into", text, skipped, allocator = r.alloc)
@@ -724,14 +775,14 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 // Native's default) keeps it.
 @(private = "file")
 ios_hide_keyboard :: proc(r: ^Runner) -> Err {
-	if !read_screen(r) do return "agent connection lost"
+	if !read_screen(r) do return AGENT_LOST
 	intro := compile(r, "Speed up your typing by sliding your finger across the letters to compose a word.*") or_return
 	cont := compile(r, "Continue") or_return
 	for &n in r.h.nodes do if n.kept && has_bounds(n) && rx_full(intro, n.text) {
 		y := n.top + (n.bottom - n.top) / 2
 		if y < r.h_px / 2 do break
 		for &b in r.h.nodes do if b.kept && has_bounds(b) && rx_full(cont, b.text) && b.top + (b.bottom - b.top) / 2 > y {
-			if _, ok := op_press(r.c, b.left + (b.right - b.left) / 2, b.top + (b.bottom - b.top) / 2, IOS_FRAME_TAP_MS); !ok do return "agent connection lost"
+			if _, ok := op_press(r.c, b.left + (b.right - b.left) / 2, b.top + (b.bottom - b.top) / 2, IOS_FRAME_TAP_MS); !ok do return AGENT_LOST
 			settle(r) or_return
 			break
 		}
@@ -739,7 +790,7 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 	}
 	// The keyboard element, or its delete key (the number pad's has another id).
 	keyboard_shown :: proc(r: ^Runner) -> (shown: bool, err: Err) {
-		if !read_screen(r) do return false, "agent connection lost"
+		if !read_screen(r) do return false, AGENT_LOST
 		for &n in r.h.nodes do if n.kept && (n.class == "Keyboard" || n.id == "delete") do return true, nil
 		return false, nil
 	}
@@ -801,7 +852,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			t := time.tick_now()
 			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
 			for el >= 0 && time.tick_since(t) < limit {
-				if !read_screen(r) do return "agent connection lost"
+				if !read_screen(r) do return AGENT_LOST
 				el = select(r, d.sel) or_return
 				if el < 0 || !(under_loading(r, el) or_return) do break
 			}
@@ -834,7 +885,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	for attempt := 0; attempt < (2 if d.retry else 1); attempt += 1 {
 		// iOS: repeated taps (doubleTapOn) as one gesture, else they land ~230 ms apart.
 		if r.dev.platform == .IOS && d.repeat > 1 && !d.long_press {
-			if _, ok := op_taps(r.c, x, y, i32(d.repeat), i32(d.delay_ms)); !ok do return "agent connection lost"
+			if _, ok := op_taps(r.c, x, y, i32(d.repeat), i32(d.delay_ms)); !ok do return AGENT_LOST
 		} else do for i in 0 ..< d.repeat {
 			t := time.tick_now()
 			ok: bool
@@ -843,7 +894,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			} else {
 				ok = tap_at(r, x, y, frame)
 			}
-			if !ok do return "agent connection lost"
+			if !ok do return AGENT_LOST
 			if d.repeat > 1 {
 				left := f64(d.delay_ms) - us(t) / 1000
 				if left > 0 do time.sleep(time.Duration(left * f64(time.Millisecond)))
@@ -856,13 +907,13 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// buttons does nothing. Such a button always acts (it dismisses or changes the sheet),
 		// so one that left the screen unchanged and is still there is tapped again.
 		for retry := 0; in_sheet && status == .No_Change && !d.long_press && retry < SHEET_TAP_RETRIES; retry += 1 {
-			if !read_screen(r) do return "agent connection lost"
+			if !read_screen(r) do return AGENT_LOST
 			el := select(r, d.sel) or_return
 			if el < 0 do break
 			n := r.h.nodes[el]
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 			if r.debug do fmt.printf("      [a tap in a sheet changed nothing: tapping again]\n")
-			if !tap_at(r, x, y, frame) do return "agent connection lost"
+			if !tap_at(r, x, y, frame) do return AGENT_LOST
 			status = settle_status(r, d.settle_ms) or_return
 		}
 		// The element moved between the lookup and the tap: an app that keeps laying out after
@@ -874,7 +925,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// tapping again typed a fifth). The screen a tap opened can repeat the tapped text
 		// elsewhere: iOS titles a pushed screen with the row that opened it.
 		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
-			if !read_screen(r) do return "agent connection lost"
+			if !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
 			if el := select(r, d.sel) or_return; el >= 0 {
 				n := r.h.nodes[el]
@@ -893,7 +944,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				// predate its focus flag): that is no miss.
 				if same && moved && (typing_before || !typing(r)) {
 					x, y = nx + x - center.x, ny + y - center.y
-					if !tap_at(r, x, y, frame) do return "agent connection lost"
+					if !tap_at(r, x, y, frame) do return AGENT_LOST
 					settle(r, d.settle_ms) or_return
 					read_since_tap = false
 				}
@@ -901,7 +952,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		}
 		if !d.retry do break
 		if !read_since_tap {
-			if !read_screen(r) do return "agent connection lost"
+			if !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
 		}
 		if r.h.hash != before do break
@@ -909,7 +960,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	// waitUntilVisible: the screen did not change and something covers the
 	// element at its center: wait for it to show (10 reads, 1 s apart), then tap it again.
 	if d.sel != nil && d.sel.wait_until_visible {
-		if !read_since_tap && !read_screen(r) do return "agent connection lost"
+		if !read_since_tap && !read_screen(r) do return AGENT_LOST
 		if r.h.hash != before do return nil
 		for attempt in 0 ..< 10 {
 			if el := select(r, d.sel) or_return; el >= 0 {
@@ -919,9 +970,9 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			}
 			if attempt == 9 do break
 			time.sleep(time.Second)
-			if !read_screen(r) do return "agent connection lost"
+			if !read_screen(r) do return AGENT_LOST
 		}
-		if !tap_at(r, x, y, frame) do return "agent connection lost"
+		if !tap_at(r, x, y, frame) do return AGENT_LOST
 		settle(r, d.settle_ms) or_return
 	}
 	return nil
@@ -1063,7 +1114,7 @@ under_loading :: proc(r: ^Runner, el: int) -> (bool, Err) {
 	}
 	if !spinner do return false, nil
 	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
-	if !ok do return false, "agent connection lost"
+	if !ok do return false, AGENT_LOST
 	if r.debug {
 		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{}
 		fmt.printf("      [a spinner shows; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", hit, h.class, h.left, h.top, h.right, h.bottom, el)
@@ -1093,7 +1144,7 @@ tap_cover :: proc(r: ^Runner, el: int) -> (int, Err) {
 	if cover < 0 || r.dev.platform != .IOS do return cover, nil
 	n := r.h.nodes[el]
 	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
-	if !ok do return -1, "agent connection lost"
+	if !ok do return -1, AGENT_LOST
 	if reaches(r, el, hit) do return -1, nil
 	return cover, nil
 }
@@ -1157,7 +1208,7 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		}
 		if r.debug do fmt.printf("      [%s covered by %s: drag %d,%d -> %d,%d]\n", n.class, c.class, cx, cy, tx, ty)
 		frame := [4]i32{n.left, n.top, n.right, n.bottom}
-		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return idx, x, y, "agent connection lost"
+		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return idx, x, y, AGENT_LOST
 		// Android injects the drag at once, stamped as if it had just ended (see scroll_until).
 		if r.dev.platform != .IOS do time.sleep(time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond)
 		settle(r, no_change_ms = 500) or_return
@@ -1552,7 +1603,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	seen_frame: [4]i32
 	for {
 		if moving {
-			if !read_screen(r) do return "agent connection lost"
+			if !read_screen(r) do return AGENT_LOST
 			sig, empty := watched(r, cx, cy, !sideways)
 			if r.debug do debug_list(r, cx, cy)
 			// Android: no wait for rest (see watched).
@@ -1625,7 +1676,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
 				last_sig = swiped_from
 				if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
-				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
+				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return AGENT_LOST
 				continue
 			}
 			// The element was on screen before the drag too (centering it, clearing a cover):
@@ -1680,7 +1731,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
 		last_sig = swiped_from
 		if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
-		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return "agent connection lost"
+		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return AGENT_LOST
 		moving = true
 		if time.tick_now()._nsec >= end do break
 	}
@@ -1804,7 +1855,7 @@ swipe :: proc(r: ^Runner, c: ^Cmd, d: Swipe) -> Err {
 // Like `adb shell input swipe`: the content keeps the gesture's speed and flings.
 @(private = "file")
 swipe_points :: proc(r: ^Runner, x1, y1, x2, y2, duration: i32, settle_ms: Maybe(int)) -> Err {
-	if _, ok := op_swipe(r.c, x1, y1, x2, y2, duration, fling = true); !ok do return "agent connection lost"
+	if _, ok := op_swipe(r.c, x1, y1, x2, y2, duration, fling = true); !ok do return AGENT_LOST
 	return settle(r, settle_ms)
 }
 
@@ -1840,7 +1891,7 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 	timeout := i32(SETTLE_TIMEOUT_MS)
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
-	if !ok do return .Timeout, "agent connection lost"
+	if !ok do return .Timeout, AGENT_LOST
 	if r.debug do fmt.printf("      [settle %v: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
 	return res.status, nil
 }
@@ -1943,7 +1994,7 @@ find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -
 try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, found: bool, err: Err) {
 	end := time.tick_now()._nsec + timeout_ms * 1_000_000
 	for {
-		if !read_screen(r) do return -1, false, "agent connection lost"
+		if !read_screen(r) do return -1, false, AGENT_LOST
 		i := select(r, sel) or_return
 		if i >= 0 do return i, true, nil
 		if time.tick_now()._nsec >= end do return -1, false, nil
@@ -2524,6 +2575,17 @@ read_screen :: proc(r: ^Runner) -> bool {
 		if tapped {
 			if settle(r) != nil do return false
 			return read_screen_once(r)
+		}
+	}
+	// On Android a system error dialog is answered on hierarchy reads (answer_error_dialog):
+	// a few, as another can be queued behind the first.
+	if r.dev.platform == .Android {
+		for _ in 0 ..< MAX_ERROR_DIALOGS {
+			tapped, ok := answer_error_dialog(r)
+			if !ok do return false
+			if !tapped do break
+			if settle(r) != nil do return false
+			if !read_screen_once(r) do return false
 		}
 	}
 	return true

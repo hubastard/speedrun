@@ -47,7 +47,8 @@ appId: com.example.app
 - **One download.** A single binary and its iOS agent: no JVM, no drivers to install, no SDK
   in your app.
 - **Ready for CI.** JUnit and HTML reports, sharding across devices, tags, and a debug folder
-  with screenshots and logs for every failure.
+  with screenshots and logs for every failure. It answers the "isn't responding" dialogs a
+  freshly booted emulator puts up, and reconnects to its agent if the agent crashes.
 
 ## Quick start
 

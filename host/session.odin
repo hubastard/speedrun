@@ -455,10 +455,9 @@ session_handle :: proc(s: ^Session, sock: net.TCP_Socket) -> (stop: bool) {
 @(private = "file")
 agent_alive :: proc(s: ^Session) -> bool {
 	if _, ok := op_ping(s.r.c); ok do return true
-	fmt.println("the agent does not answer: starting it again")
+	fmt.println("the agent does not answer: connecting again")
 	net.close(s.r.c.sock)
-	device_stop(s.r.dev)
-	if err := device_start(s.r.dev); err != "" {
+	if err := device_restart(s.r.dev); err != "" {
 		fmt.eprintln(err)
 		return false
 	}
@@ -505,7 +504,7 @@ session_do :: proc(s: ^Session, cwd, payload: string) -> (code: u8, out: string)
 		return 2, fmt.tprintf("Invalid command (line %d): %s\n%s", max(pline - 2, 1), perr, strings.join(items[:], "\n", context.temp_allocator))
 	}
 	if len(s.shown) == 0 {
-		if !read_screen(r) do return 1, "agent connection lost"
+		if !read_screen(r) do return 1, AGENT_LOST
 		_ = screen_elements(s)
 	}
 	// The app changed on its own since the last `do` (a look saw it), and the first command
@@ -562,7 +561,7 @@ session_do :: proc(s: ^Session, cwd, payload: string) -> (code: u8, out: string)
 	}
 	before := make(map[int]string, len(s.shown), context.temp_allocator)
 	for ref, line in s.shown do before[ref] = line
-	if !read_content(s) do return 1, strings.concatenate({strings.to_string(b), "agent connection lost"}, context.temp_allocator)
+	if !read_content(s) do return 1, strings.concatenate({strings.to_string(b), AGENT_LOST}, context.temp_allocator)
 	els := screen_elements(s)
 	clear(&s.after_do)
 	for e in els do s.after_do[e.ref] = true
@@ -614,7 +613,7 @@ last_error :: proc(r: ^Runner, first: int) -> string {
 session_look :: proc(s: ^Session, shot, all: bool) -> (code: u8, out: string) {
 	r := &s.r
 	if e, bad := pay_due(r).?; bad do return 1, e
-	if !read_content(s) do return 1, "agent connection lost"
+	if !read_content(s) do return 1, AGENT_LOST
 	els := screen_elements(s)
 	b := strings.builder_make(context.temp_allocator)
 	write_screen(s, els, &b)

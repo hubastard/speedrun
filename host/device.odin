@@ -14,6 +14,7 @@ import "core:fmt"
 import "core:hash"
 import "core:net"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
@@ -50,6 +51,7 @@ Platform :: enum {
 
 IOS_PORT :: 7778 // default: Android's 7777 is often forwarded to an emulator already
 IOS_RUNNER_APP :: "com.speedrun.agent.uitests.xctrunner"
+AGENT_PING_TIMEOUT :: 5 * time.Second // device_restart: an agent that does not answer by then is started again
 IOS_PRODUCTS :: "agent/ios/build/Build/Products" // next to the speedrun binary
 // The built test bundle: its hash is the build id a running runner must match.
 IOS_TEST_BINARY :: "Release-iphonesimulator/SpeedrunAgentUITests-Runner.app/PlugIns/SpeedrunAgentUITests.xctest/SpeedrunAgentUITests"
@@ -400,9 +402,9 @@ ios_start :: proc(d: ^Device) -> string {
 		for e in entries do if strings.has_suffix(e.name, ".xctestrun") do xctestrun = e.fullpath
 	}
 	if xctestrun == "" do return fmt.tprintf("The iOS agent is not built (%s): run ./build.sh (it needs Xcode).", products)
+	ios_end_runners(d.udid)
 
-	tmp, _ := os.temp_directory(context.temp_allocator)
-	log := fmt.tprintf("%s/speedrun-ios-runner-%d.log", strings.trim_right(tmp, "/"), d.port)
+	log := ios_runner_log(d.port)
 	f, ferr := os.open(log, {.Write, .Create, .Trunc})
 	if ferr != nil do return fmt.tprintf("could not create %s: %v", log, ferr)
 	defer os.close(f)
@@ -440,6 +442,59 @@ ios_start :: proc(d: ^Device) -> string {
 	}
 	ios_stop(d)
 	return fmt.tprintf("The iOS agent did not answer within %v.", IOS_START_TIMEOUT)
+}
+
+// xcodebuild's output for the runner serving on port (the agent's log lines included).
+ios_runner_log :: proc(port: int) -> string {
+	tmp, _ := os.temp_directory(context.temp_allocator)
+	return fmt.tprintf("%s/speedrun-ios-runner-%d.log", strings.trim_right(tmp, "/"), port)
+}
+
+// After the agent's connection was lost: nothing to do if the agent answers a new one (it
+// closed the old one on an error), else the agent is started again (it crashed or was
+// killed). The caller connects again.
+device_restart :: proc(d: ^Device) -> string {
+	if answers_ping(d.port, AGENT_PING_TIMEOUT) do return ""
+	if d.platform == .IOS {
+		simctl("terminate", d.udid, IOS_RUNNER_APP)
+		d.started, d.serving, d.warm = false, false, false
+		return ios_start(d) // it ends the runner's xcodebuild
+	}
+	device_stop(d)
+	return device_start(d)
+}
+
+// Ends the xcodebuild processes that ran speedrun's runner on this simulator (ios_start's
+// command line), none of them answering: xcodebuild restarts a runner that died but runs no
+// test in it (testServe ran), and exits ~40 s later; meanwhile its restart takes the
+// simulator's only runner from a new one.
+@(private = "file")
+ios_end_runners :: proc(udid: string) {
+	pids := ios_runner_pids(udid)
+	for pid in pids do posix.kill(posix.pid_t(pid), .SIGTERM)
+	start := time.tick_now()
+	for pid in pids {
+		for posix.kill(posix.pid_t(pid), posix.Signal(0)) == .OK && time.tick_since(start) < 5 * time.Second {
+			time.sleep(100 * time.Millisecond)
+		}
+	}
+}
+
+@(private = "file")
+ios_runner_pids :: proc(udid: string) -> []int {
+	pids := make([dynamic]int, context.temp_allocator)
+	// pgrep, not ps: ps is setuid root, and process_exec's wait for it fails.
+	_, out, _, err := os.process_exec({command = {"pgrep", "-lf", "xcodebuild test-without-building"}}, context.temp_allocator)
+	if err != nil do return nil
+	dest := fmt.tprintf("id=%s", udid)
+	for line in strings.split_lines(string(out), context.temp_allocator) {
+		l := strings.trim_space(line)
+		if !strings.contains(l, "xcodebuild test-without-building") || !strings.contains(l, IOS_PRODUCTS) || !strings.contains(l, dest) do continue
+		sp := strings.index_byte(l, ' ')
+		if sp < 0 do continue
+		if pid, ok := strconv.parse_int(l[:sp]); ok do append(&pids, pid)
+	}
+	return pids[:]
 }
 
 // The runner stays up for the next run (it stops itself when idle). Only one that never came
@@ -491,12 +546,14 @@ ios_products :: proc() -> string {
 	return strings.concatenate({dir, "/", IOS_PRODUCTS}, context.temp_allocator)
 }
 
-// An agent serving on 127.0.0.1:port (it answers PING).
+// An agent serving on 127.0.0.1:port (it answers PING). With a timeout, an agent busy with
+// another client (the iOS runner serves one at a time) counts as not answering.
 @(private = "file")
-answers_ping :: proc(port: int) -> bool {
+answers_ping :: proc(port: int, timeout: time.Duration = 0) -> bool {
 	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
 	if err != nil do return false
 	defer net.close(sock)
+	if timeout > 0 && net.set_option(sock, .Receive_Timeout, timeout) != nil do return false
 	c := Conn{sock = sock}
 	defer delete(c.buf)
 	_, ok := op_ping(&c)

@@ -86,13 +86,13 @@ for flows whose scripts make HTTP requests.
   Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
   speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
   newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
-  The Android job waits for a window to have the focus before it starts: a freshly booted
-  emulator once had none (speedrun's first read found no window, and the app never came to
-  the foreground). The iOS job builds speedrun without the Android agent (`SPEEDRUN_NO_ANDROID=1`: the binary
-  embeds an empty agent, `-define:ANDROID_AGENT=false`, and refuses Android devices), so it
-  needs no JDK: setting up Java and the Gradle build took 5 of its minutes. The Android
-  emulator has a Pixel 7's screen (`profile: pixel_7`): the default, 320x640, put the
-  journey's product options under the page's sticky footer.
+  On the Android emulator, speedrun answers the "Pixel Launcher isn't responding" dialog a
+  freshly booted one often shows (under "Maestro flow files"). The iOS job builds speedrun
+  without the Android agent (`SPEEDRUN_NO_ANDROID=1`: the binary embeds an empty agent,
+  `-define:ANDROID_AGENT=false`, and refuses Android devices), so it needs no JDK: setting up
+  Java and the Gradle build took 5 of its minutes. The Android emulator has a Pixel 7's
+  screen (`profile: pixel_7`): the default, 320x640, put the journey's product options under
+  the page's sticky footer.
 - `.github/workflows/bench-app.yml`: when Speedrun Bench's sources change on `main`, builds
   it for an Android emulator and an iOS simulator and uploads both to the `bench-app`
   pre-release, named after the sources' hash (`bench/app/bench.sh hash`).
@@ -137,7 +137,8 @@ replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
   `report.xml` / `report.html`), with flow `tags` and `properties` (`junitId`,
   `junitClassname`).
 - The debug output: `~/.speedrun/tests/<yyyy-MM-dd_HHmmss>/<flow>/` with `commands.json`,
-  `logs/speedrun.log`, on a failure `screenshots/final.png`, and what `takeScreenshot` and
+  `logs/speedrun.log`, on a failure `screenshots/final.png` (and on iOS `logs/ios-agent.log`,
+  the end of the agent's log), and what `takeScreenshot` and
   `startRecording` write (`takeScreenshot/<path>.png`, `startRecording/<path>.mp4`, as in
   Maestro 2.11; a path leaving that folder is an error); `--debug-output`,
   `--flatten-debug-output`, `--test-output-dir` as in Maestro.
@@ -517,6 +518,21 @@ Known differences in how, not what:
   before SpringBoard's (the fallback for an app being relaunched): with three tries at most,
   an app whose main thread was blocked ~2 s at a time on CI failed them all, the read threw,
   and the agent closed the connection ("agent connection lost").
+- A lost connection to the agent (it crashed, was killed, or closed the connection when an
+  operation threw) is made again, and the command that saw it runs again, twice per flow at
+  most (`run_list`, `reconnect`). `device_restart` connects again when the agent answers a
+  new connection within 5 s, else starts it again (iOS: a new runner, even one this run
+  reused). A sub-flow or a repeat is not run again: its own commands are. CI's iOS
+  simulator once lost the connection 3 s into the journey, after a first read that took
+  41 s (1 s in other runs). A failed iOS flow's debug output has the end of the runner's log
+  (`logs/ios-agent.log`: xcodebuild's output, the agent's NSLog lines, a crash).
+- Android's "… isn't responding" and "… keeps stopping" dialogs are answered on reads (Wait,
+  else Close app; their buttons' ids, `android:id/aerr_wait` and `android:id/aerr_close`, are
+  the same in every language), and the wait for a launched app reads the screen every 2 s.
+  The dialog is modal: it hides the windows under it from the accessibility window list, so
+  the launched app never seemed to come to the foreground. CI's freshly booted emulator put
+  up "Pixel Launcher isn't responding" for minutes; `hide_error_dialogs` did not stop it
+  (Android reads it on a configuration change) and Back did not close it.
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).

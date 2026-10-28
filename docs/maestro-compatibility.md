@@ -96,6 +96,11 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 - **iOS screens with an endless animation settle anyway.** An element that moves on every
   read (a looping animation, a marquee) while the rest of the screen holds still is left
   out of the wait.
+- **Android's "… isn't responding" and "… keeps stopping" dialogs are answered** (Wait,
+  else Close app), whichever app they are about: a freshly booted emulator's launcher often
+  shows one, and it would hide the app under test.
+- **A lost connection to Speedrun's agent is made again** (the agent started again if it
+  crashed), and the step that saw it runs again, up to twice per flow.
 
 ## Conditions take up to 7 s
 

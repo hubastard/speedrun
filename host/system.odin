@@ -350,6 +350,27 @@ answer_notification_alert :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	return true, true
 }
 
+// Android's "… isn't responding" and "… keeps stopping" dialogs, whatever app they are about
+// (a freshly booted emulator's launcher often stalls long enough to get one): modal, they hide
+// the app's window from reads and take its taps until answered. Their buttons' ids are the
+// same in every language: Wait (the app keeps running), else Close app.
+answer_error_dialog :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
+	wait, close, title := -1, -1, ""
+	for n, i in r.h.nodes {
+		switch n.id {
+		case "android:id/alertTitle": title = n.text
+		case "android:id/aerr_wait":  wait = i
+		case "android:id/aerr_close": close = i
+		}
+	}
+	pick := wait if wait >= 0 else close
+	if pick < 0 do return false, true
+	n := r.h.nodes[pick]
+	if r.debug do fmt.printf("      [error dialog %q: tapping %q]\n", title, n.text)
+	if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return false, false
+	return true, true
+}
+
 @(private = "file")
 sql_quote :: proc(s: string) -> string {
 	q, _ := strings.replace_all(s, "'", "''", context.temp_allocator)
@@ -363,7 +384,7 @@ sql_quote :: proc(s: string) -> string {
 set_orientation :: proc(r: ^Runner, name: string) -> Err {
 	o, known := orientation_by_name(name)
 	if !known do return unknown_orientation(name, r.alloc)
-	if !op_mark(r.c) do return "agent connection lost"
+	if !op_mark(r.c) do return AGENT_LOST
 	if r.dev.platform == .IOS {
 		device: i32 = 1 // UIDeviceOrientation
 		switch o {
@@ -371,7 +392,7 @@ set_orientation :: proc(r: ^Runner, name: string) -> Err {
 		case "LANDSCAPE_LEFT":  device = 3
 		case "LANDSCAPE_RIGHT": device = 4
 		}
-		if !op_orientation(r.c, device) do return "agent connection lost"
+		if !op_orientation(r.c, device) do return AGENT_LOST
 	} else {
 		rotation := 0
 		switch o {
@@ -387,7 +408,7 @@ set_orientation :: proc(r: ^Runner, name: string) -> Err {
 		// app (~1 s), and a screenshot caught the half-done rotation. Wait for the active
 		// window, in the new orientation.
 		if active_window_rotated(r, rotation % 2 == 1) {
-			if !op_mark(r.c) do return "agent connection lost"
+			if !op_mark(r.c) do return AGENT_LOST
 			return settle(r)
 		}
 		return nil
@@ -440,12 +461,12 @@ device_mode :: proc(r: ^Runner, op: Device_Mode_Op) -> (mutating: bool, err: Err
 		if r.dev.platform == .IOS {
 			// XCUIDevice.appearance. The app redraws in place: no wait (the next lookup
 			// sees the new screen).
-			if _, ok := op_appearance(r.c, 2 if on else 1); !ok do return true, "agent connection lost"
+			if _, ok := op_appearance(r.c, 2 if on else 1); !ok do return true, AGENT_LOST
 			return true, nil
 		}
 		// Android restarts the visible activities: the next command that needs the screen
 		// waits for that (exec); mode switches and asserts on them run meanwhile.
-		if !op_mark(r.c) do return true, "agent connection lost"
+		if !op_mark(r.c) do return true, AGENT_LOST
 		_ = shell(r, "cmd uimode night %s", "yes" if on else "no")
 		r.settle_due = true
 		return true, nil
@@ -482,7 +503,7 @@ airplane_enabled :: proc(r: ^Runner) -> (on: bool, err: Err) {
 dark_enabled :: proc(r: ^Runner) -> (on: bool, err: Err) {
 	if r.dev.platform == .IOS {
 		appearance, ok := op_appearance(r.c, 0)
-		if !ok do return false, "agent connection lost"
+		if !ok do return false, AGENT_LOST
 		return appearance == 2, nil
 	}
 	switch out := strings.trim_space(shell(r, "cmd uimode night")); out {
@@ -532,7 +553,7 @@ screenshot :: proc(r: ^Runner, crop_on: ^Selector, optional: bool) -> (png: []by
 	if crop_on == nil {
 		ok: bool
 		png, ok = op_screenshot(r.c, r.alloc)
-		if !ok do return nil, "agent connection lost"
+		if !ok do return nil, AGENT_LOST
 		return png, nil
 	}
 	el := find_element(r, crop_on, optional, -1) or_return
@@ -543,7 +564,7 @@ screenshot :: proc(r: ^Runner, crop_on: ^Selector, optional: bool) -> (png: []by
 			selector_description(crop_on), n.right - n.left, n.bottom - n.top, allocator = r.alloc)
 	}
 	full, ok := op_screenshot(r.c, context.temp_allocator)
-	if !ok do return nil, "agent connection lost"
+	if !ok do return nil, AGENT_LOST
 	img, decoded := image_decode(full)
 	if !decoded do return nil, "could not decode the screenshot"
 	defer image_free(img)
@@ -881,10 +902,10 @@ travel_distance :: proc(a, b: [2]f64) -> f64 {
 auto_verify :: proc(r: ^Runner, app: string) -> Err {
 	if label, ok := op_label(r.c, app, context.temp_allocator); app != "" && ok && label != "" {
 		if r.debug do fmt.printf("      [autoVerify: %s is named %q]\n", app, label)
-		if !read_screen(r) do return "agent connection lost"
+		if !read_screen(r) do return AGENT_LOST
 		if el := deepest_text_match(r, compile(r, label) or_return); el >= 0 {
 			n := r.h.nodes[el]
-			if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return "agent connection lost"
+			if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return AGENT_LOST
 			_ = tap_id(r, "android:id/button_once") or_return
 		} else if deepest_text_match(r, compile(r, fmt.tprintf(".*%s.*", label)) or_return) >= 0 {
 			_ = tap_id(r, "android:id/button_once") or_return
@@ -895,9 +916,9 @@ auto_verify :: proc(r: ^Runner, app: string) -> Err {
 	return nil
 
 	tap_id :: proc(r: ^Runner, id: string) -> (tapped: bool, err: Err) {
-		if !read_screen(r) do return false, "agent connection lost"
+		if !read_screen(r) do return false, AGENT_LOST
 		for &n in r.h.nodes do if n.kept && n.id == id && has_bounds(n) {
-			if _, ok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !ok do return false, "agent connection lost"
+			if _, ok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !ok do return false, AGENT_LOST
 			return true, settle(r)
 		}
 		return false, nil

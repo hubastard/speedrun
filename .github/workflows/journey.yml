@@ -72,14 +72,10 @@ jobs:
           ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          # A freshly booted emulator's launcher is slow to start, and Android put up "Pixel
-          # Launcher isn't responding" over the app under test (it never came to the
-          # foreground): no such dialogs (hide_error_dialogs, as test labs set it), Back on one
-          # already up, and the launcher in focus before the journey starts.
+          # A freshly booted emulator often shows "Pixel Launcher isn't responding": speedrun
+          # answers it.
           script: |
             adb shell wm size
-            adb shell settings put global hide_error_dialogs 1
-            for i in $(seq 1 60); do f=$(adb shell dumpsys window | grep -m1 mCurrentFocus); case "$f" in *"Not Responding"*) adb shell input keyevent KEYCODE_BACK ;; *Launcher*) break ;; esac; sleep 2; done; adb shell dumpsys window | grep -m1 mCurrentFocus
             adb install -r bench/app/prebuilt/speedrun-bench.apk
             ./speedrun test bench/journey/journey.yaml --format junit --output journey-android.xml --debug-output debug-android --flatten-debug-output
 
