@@ -25,6 +25,7 @@ MAX_RETRIES_ALLOWED        :: 3
 // "touch & hold delay", 1.5 s at most), 500 ms for iOS's recognizers, React Native and Flutter.
 // A flow does not say how long; the 3 s `input swipe x y x y 3000` holds are mostly waiting.
 SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a change ~1 s
+DISABLED_POLL_MS           :: 100 // tap: a disabled element read again this often until it turns on
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
@@ -860,6 +861,22 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if el < 0 || !(under_loading(r, el) or_return) do break
 			}
 			if r.debug do fmt.printf("      [under a loading overlay: waited %.0f ms]\n", us(t) / 1000)
+			settle(r, no_change_ms = 0) or_return
+			el = find_element(r, d.sel, c.optional, -1) or_return
+		}
+		// Disabled (a button that turns on once a form is filled or a request ends): a tap on
+		// it does nothing, so wait for it to turn on, as a user would (up to the lookup's time;
+		// then tap anyway). Not when the selector names the state (`enabled: false`).
+		if _, named := d.sel.enabled.?; !named && .Enabled not_in r.h.nodes[el].flags {
+			t := time.tick_now()
+			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
+			for time.tick_since(t) < limit {
+				time.sleep(DISABLED_POLL_MS * time.Millisecond) // iOS reads take the app's main thread
+				if !read_screen(r) do return AGENT_LOST
+				el = select(r, d.sel) or_return
+				if el < 0 || .Enabled in r.h.nodes[el].flags do break
+			}
+			if r.debug do fmt.printf("      [disabled: waited %.0f ms]\n", us(t) / 1000)
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}

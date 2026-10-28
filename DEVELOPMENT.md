@@ -494,6 +494,11 @@ Known differences in how, not what:
 - A lookup that had to wait for its element settles once it shows, then finds it again: an
   element enters the hierarchy at its final place while it may still slide in (Stripe's
   payment sheet, presented once its SDK has loaded), and a tap then hits what is behind.
+- A tap waits for a disabled element to turn on (`.Enabled` not in its flags), up to the
+  lookup's time, then taps anyway: a tap on Speedrun Bench's delayed button (enabled 1.5 s
+  after its screen opens) did nothing, and "Taps: 3" became "Taps: 2" whenever the steps
+  before were quick. A selector that names the state (`enabled: false`) taps at once. Reads
+  are 100 ms apart (on iOS a read takes the app's main thread).
 - A tap waits while a loading overlay covers its element. Apps draw one over a screen while it
   loads, see-through and fading in and out, with a spinner: the element shows through and
   stays in the hierarchy, but the overlay takes the tap, the settle does not wait for the
