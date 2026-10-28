@@ -65,6 +65,11 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_7
+          # The runner's 4 cores and more memory than the action's default (2 cores): CI's
+          # software-rendered emulator was slow enough that a React Native list read blank
+          # between drags, and scrollUntilVisible overshot its row.
+          cores: 4
+          ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           # A freshly booted emulator's launcher is slow to start, and Android put up "Pixel

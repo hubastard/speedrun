@@ -139,18 +139,24 @@ final class Screen {
 
     /// A snapshot of the foreground app. An app being relaunched (launchApp) can fail it
     /// ("Application ... is not running"): find the foreground app again and retry, then fall
-    /// back to SpringBoard rather than failing the read. One that timed out (an app busy in a
-    /// transition) is tried again, up to twice, while the app is still in the foreground: not
-    /// SpringBoard's screen, which is not the one on screen.
+    /// back to SpringBoard rather than failing the read. One that timed out is tried again
+    /// while the app is still in the foreground, for up to snapshotBudgetSeconds: a snapshot
+    /// stuck in a transition gives way to the next after axTimeoutSeconds, and an app whose
+    /// main thread is busy is read once it answers (with up to three tries, an app blocked
+    /// ~2 s at a time failed them all on CI, and the read with them: the host saw the
+    /// connection close).
+    static let snapshotBudgetSeconds = 20.0
+
     private func snapshotForeground() throws -> XCUIElementSnapshot {
         if let s = try? foregroundApp().snapshot() { return s }
         foreground = nil
         foregroundID = ""
-        for _ in 0..<2 {
+        let deadline = Date().addingTimeInterval(Self.snapshotBudgetSeconds)
+        repeat {
             let app = foregroundApp()
             if let s = try? app.snapshot() { return s }
             if app == springboard || app.state != .runningForeground { break }
-        }
+        } while Date() < deadline
         return try springboard.snapshot()
     }
 

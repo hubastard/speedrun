@@ -443,6 +443,13 @@ Known differences in how, not what:
   (6.3 s). `centerElement` drags just as far as brings the element to the screen's center (at
   most a stride): a whole stride, once longer, carried a product on the grid's third row past
   the center and off screen, and the scroll went on to the list's end.
+- Android scroll on a slow emulator (open): with CI's software rendering, a React Native list
+  can read blank right after a drag, and some drags fling (rows 77 to 123 in one drag),
+  carrying the row looked for out of sight. Tried, each run alternated with the current code
+  on the same emulator (software rendering, as CI): no drag on a list that reads empty (3 of
+  5 passed, the current code 14 of 15 over three rounds), a rest check and backtracking after
+  a jump (2 of 5), 150 ms drags (5 of 5 but 3-4x slower), a real-time hold before the lift
+  (worse). The Journey workflow gives the emulator the runner's 4 cores and 4 GB instead.
 - Android keeps its scroll as before (`watched`: the whole screen's hash; no wait for rest,
   none for a list loading, drags from the center). With the iOS waits, a settle after each
   drag, and with longer drags too, the long list of Speedrun Bench flung now and then on an
@@ -506,8 +513,10 @@ Known differences in how, not what:
   interface in Xcode 27, `setAXTimeout:` elsewhere, the setting Appium's WebDriverAgent
   exposes as snapshotTimeout). On CI's simulator one read, in the screen transition after a
   PIN's last key, took 14 s, and the 2 s toast it was to see came and went. A snapshot that
-  fails while the app is in the foreground is tried again, twice, before SpringBoard's (the
-  fallback for an app being relaunched).
+  fails while the app is in the foreground is tried again until one succeeds, for up to 20 s,
+  before SpringBoard's (the fallback for an app being relaunched): with three tries at most,
+  an app whose main thread was blocked ~2 s at a time on CI failed them all, the read threw,
+  and the agent closed the connection ("agent connection lost").
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
