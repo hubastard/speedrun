@@ -168,4 +168,6 @@ Why Maestro failed:
     up and refreshes in one drag): the feed flow pulls until it refreshes.
   - A revoked permission reads as "undetermined" until the app asks for it.
   - A Reanimated entering animation did not show the toast when it came in the same update
-    as a menu closing or a screen going back; the toast fades in from a shared value.
+    as a menu closing or a screen going back, and a fade-in from a shared value once never
+    started on iOS's CI simulator (the toast stayed invisible): it only slides in now,
+    visible from its first frame.

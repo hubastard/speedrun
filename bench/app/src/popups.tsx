@@ -17,8 +17,10 @@ export function ToastHost() {
   return <Toast key={t.id} text={t.text} />;
 }
 
-// Slides and fades in. (A Reanimated entering animation did not show on Android when the
-// toast came in the same update as a menu closing or a screen going back.)
+// Slides in, visible from its first frame. (A Reanimated entering animation did not show on
+// Android when the toast came in the same update as a menu closing or a screen going back;
+// a fade-in from a shared value once never started on iOS, coming with a screen going back,
+// and the toast stayed invisible for its 2 s.)
 function Toast({ text }: { text: string }) {
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -26,7 +28,7 @@ function Toast({ text }: { text: string }) {
   useEffect(() => {
     shown.value = withTiming(1, { duration: 250 });
   }, [shown]);
-  const style = useAnimatedStyle(() => ({ opacity: shown.value, transform: [{ translateY: (shown.value - 1) * 20 }] }));
+  const style = useAnimatedStyle(() => ({ transform: [{ translateY: (shown.value - 1) * 20 }] }));
   return (
     <Animated.View
       pointerEvents="none"
