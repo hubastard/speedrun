@@ -27,12 +27,6 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: bench/app/package-lock.json
-
       - name: Install Odin
         run: |
           curl -fsSL "https://github.com/odin-lang/Odin/releases/download/$ODIN_VERSION/odin-linux-amd64-$ODIN_VERSION.tar.gz" \
@@ -42,9 +36,25 @@ jobs:
       - name: Build speedrun
         run: ./build.sh
 
-      - name: Get Speedrun Bench (prebuilt, else built)
+      # Node only to build the app, when the release has none for these sources (setup-node
+      # took 3-4 minutes on the macOS runner).
+      - name: Get the prebuilt Speedrun Bench
+        id: prebuilt
+        continue-on-error: true
         working-directory: bench/app
-        run: ./bench.sh fetch android || ./bench.sh compile android
+        run: ./bench.sh fetch android
+
+      - uses: actions/setup-node@v4
+        if: steps.prebuilt.outcome == 'failure'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: bench/app/package-lock.json
+
+      - name: Build Speedrun Bench (no prebuilt app for these sources)
+        if: steps.prebuilt.outcome == 'failure'
+        working-directory: bench/app
+        run: ./bench.sh compile android
 
       - name: Enable KVM
         run: |
@@ -114,12 +124,6 @@ jobs:
           xcrun simctl boot "$udid"
           echo "SIMULATOR=$udid" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: bench/app/package-lock.json
-
       - name: Install Odin
         run: |
           curl -fsSL "https://github.com/odin-lang/Odin/releases/download/$ODIN_VERSION/odin-macos-arm64-$ODIN_VERSION.tar.gz" \
@@ -132,9 +136,25 @@ jobs:
           SPEEDRUN_NO_ANDROID: 1
         run: ./build.sh
 
-      - name: Get Speedrun Bench (prebuilt, else built)
+      # Node only to build the app, when the release has none for these sources (setup-node
+      # took 3-4 minutes on the macOS runner).
+      - name: Get the prebuilt Speedrun Bench
+        id: prebuilt
+        continue-on-error: true
         working-directory: bench/app
-        run: ./bench.sh fetch ios || ./bench.sh compile ios
+        run: ./bench.sh fetch ios
+
+      - uses: actions/setup-node@v4
+        if: steps.prebuilt.outcome == 'failure'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: bench/app/package-lock.json
+
+      - name: Build Speedrun Bench (no prebuilt app for these sources)
+        if: steps.prebuilt.outcome == 'failure'
+        working-directory: bench/app
+        run: ./bench.sh compile ios
 
       - name: Wait for the simulator, install the app
         timeout-minutes: 15

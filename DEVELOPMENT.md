@@ -82,10 +82,12 @@ for flows whose scripts make HTTP requests.
   `speedrun-<tag>-linux-x86_64.tar.gz` to the tag's release, creating the release if it has
   none yet. The macOS package is still built and attached by hand. Run it by hand
   (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
-- `.github/workflows/journey.yml`: after every push to `main`, builds speedrun and Speedrun
-  Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
-  speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
-  newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
+- `.github/workflows/journey.yml`: after every push to `main`, builds speedrun, downloads
+  the prebuilt Speedrun Bench for these sources (builds it, with Node, when the release has
+  none: setup-node alone took 3-4 minutes on the macOS runner) and runs the benchmark
+  journey (`bench/journey/journey.yaml`) with speedrun on an Android 15 emulator (Ubuntu,
+  KVM) and an iOS simulator (macOS runner, the newest Xcode installed). The JUnit report
+  and the debug output are kept as artifacts.
   The Android job turns error dialogs off (`hide_error_dialogs`) and ends the home app,
   which closes a "Pixel Launcher isn't responding" dialog already up: a freshly booted
   emulator's launcher often stalls, and once its dialog came up as the journey typed the
