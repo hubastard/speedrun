@@ -73,6 +73,10 @@ Device :: struct {
 	started:    bool, // iOS: this run is starting the runner (else it reuses one already serving)
 	serving:    bool, // iOS: the runner this run started answered (it stays up for the next run)
 	warm:       bool, // iOS: a runner of this build serves this simulator already
+	motion:     Maybe(bool), // iOS: Reduce Motion as this run left it (ios_motion_start)
+	motion_was: Maybe(bool), // iOS: as it was before this run changed it, restored by device_stop
+	motion_writer:  os.Process, // iOS: the `defaults write` setting it, while motion_writing
+	motion_writing: bool,
 }
 
 // The device adb talks to (--device); empty: adb's default (ANDROID_SERIAL, or the only one).
@@ -323,6 +327,7 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 // Stops the agent, removes the port forward and the temp APK. Safe to call twice.
 device_stop :: proc(d: ^Device) {
 	if d.platform == .IOS {
+		ios_restore_motion(d)
 		ios_stop(d)
 		current = nil
 		return

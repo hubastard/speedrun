@@ -526,6 +526,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		// UI, then settles (exec): a tap during the launch would be ignored, and a swipe could
 		// land on the home screen.
 		if r.dev.platform == .IOS {
+			ios_motion_start(r.dev, args) // in the background, waited for before the launch
 			if d.clear_keychain {
 				if out, ok := simctl("keychain", r.dev.udid, "reset"); !ok do return true, out
 			}
@@ -537,6 +538,8 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			// Just reinstalled, the app is not running.
 			if d.stop_app && !d.clear_state do simctl("terminate", r.dev.udid, app)
 			debug_step(r, "terminate", &t)
+			ios_motion_wait(r.dev)
+			debug_step(r, "reduce motion", &t)
 			if !op_mark(r.c) do return true, AGENT_LOST
 			cmd := make([dynamic]string, 0, 3 + 2 * len(args), context.temp_allocator)
 			append(&cmd, "launch", r.dev.udid, app)

@@ -199,6 +199,66 @@ ios_animation_arguments :: proc(args: []Launch_Arg) -> []string {
 	return ios_animation_args[:]
 }
 
+// Reduce Motion on the simulator while it runs flows: React Native's and Reanimated's
+// animations end at once (iOS's counterpart of Android's animation scales, turned off in
+// device_prepare). A flow that sets UIAnimationDragCoefficient keeps the animations as they
+// were, Reduce Motion too, and SPEEDRUN_REDUCE_MOTION=0 leaves it alone. The app reads it when
+// it starts: set before each launch, only when it differs. device_stop puts it back.
+// Measured on Speedrun Bench: the suite 12% faster (657 s to 577 s), its animation scenes 16-29%.
+// The value is read from the simulator's preferences file (18 ms; `defaults read` through
+// simctl: 450 ms), and written in the background (simctl spawn, ~340 ms) while launchApp
+// clears the app and sets its permissions: ios_motion_wait before the launch.
+ios_motion_start :: proc(d: ^Device, args: []Launch_Arg) {
+	if os.get_env("SPEEDRUN_REDUCE_MOTION", context.temp_allocator) == "0" do return
+	now, known := d.motion.?
+	if !known do now = ios_motion_read(d.udid)
+	want := true
+	if len(ios_animation_arguments(args)) == 0 { // the flow keeps its own animation speed
+		was, changed := d.motion_was.?
+		want = was if changed else now
+	}
+	d.motion = now
+	if want == now do return
+	if _, changed := d.motion_was.?; !changed do d.motion_was = now
+	p, err := os.process_start({command = ios_motion_command(d.udid, want)})
+	if err != nil do return
+	d.motion_writer, d.motion_writing = p, true
+	d.motion = want
+}
+
+ios_motion_wait :: proc(d: ^Device) {
+	if !d.motion_writing do return
+	_, _ = os.process_wait(d.motion_writer)
+	d.motion_writing = false
+}
+
+ios_restore_motion :: proc(d: ^Device) {
+	ios_motion_wait(d)
+	was, changed := d.motion_was.?
+	if !changed do return
+	if now, known := d.motion.?; !known || now != was {
+		_, _, _, _ = os.process_exec({command = ios_motion_command(d.udid, was)}, context.temp_allocator)
+	}
+	d.motion, d.motion_was = was, nil
+}
+
+@(private = "file")
+ios_motion_read :: proc(udid: string) -> bool {
+	home := os.get_env("HOME", context.temp_allocator)
+	plist := fmt.tprintf("%s/Library/Developer/CoreSimulator/Devices/%s/data/Library/Preferences/com.apple.Accessibility.plist", home, udid)
+	state, out, _, err := os.process_exec({command = {"plutil", "-extract", "ReduceMotionEnabled", "raw", plist}}, context.temp_allocator)
+	if err != nil || !state.success do return false // no such file or key: off
+	v := strings.trim_space(string(out))
+	return v == "true" || v == "1"
+}
+
+@(private = "file")
+ios_motion_command :: proc(udid: string, on: bool) -> []string {
+	cmd := make([dynamic]string, 0, 10, context.temp_allocator)
+	append(&cmd, "xcrun", "simctl", "spawn", udid, "defaults", "write", "com.apple.Accessibility", "ReduceMotionEnabled", "-bool", "true" if on else "false")
+	return cmd[:]
+}
+
 // `simctl launch`'s environment: ours, with the feature flag added to the app's
 // (SIMCTL_CHILD_X reaches it as X; flags are separated by colons).
 ios_launch_env :: proc() -> []string {

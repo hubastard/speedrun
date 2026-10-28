@@ -361,6 +361,19 @@ which uses 10) and the `UIKit/UIPreferences` feature flag under which UIKit read
 screen or brings up the keyboard settles in about half the time; scrolling momentum and React Native's
 JavaScript-driven animations are not UIKit animations and keep their speed, and apps opened
 another way (`openLink`, the system) run at normal speed.
+The simulator's Reduce Motion is on while flows run (`ios_motion_start`): React Native's and
+Reanimated's animations then end at once, the bulk of an iOS run's animation time once UIKit's
+run 10x faster. The app reads it when it starts, so it is set before each `launchApp` when it
+differs; `device_stop` (the run's end, Ctrl-C included) puts back what it was. The value is
+read from the simulator's preferences file
+(`data/Library/Preferences/com.apple.Accessibility.plist`, 18 ms; `defaults read` through
+`simctl spawn` takes ~450 ms) and written with `simctl spawn ... defaults write` (~340 ms) in
+the background while `launchApp` clears the app and grants its permissions. A flow's own
+`UIAnimationDragCoefficient` keeps it as it was; `SPEEDRUN_REDUCE_MOTION=0` leaves it alone.
+maestro-runner turns it on too, and leaves it on: that is how it was found (our iOS numbers
+of an afternoon had been measured with it on). Speedrun Bench on iOS, off then on: the suite
+684 s to 599 s (wall clock), the animations flow 72 s to 65 s, eight animated scenes 25.4 s
+to 21.4 s, the journey 29.7 s to 28.4 s, the Settings app (native) unchanged.
 
 Known differences in how, not what:
 
