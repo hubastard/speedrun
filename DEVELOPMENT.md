@@ -86,8 +86,13 @@ for flows whose scripts make HTTP requests.
   Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
   speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
   newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
-  On the Android emulator, speedrun answers the "Pixel Launcher isn't responding" dialog a
-  freshly booted one often shows (under "Maestro flow files"). The iOS job builds speedrun
+  The Android job turns error dialogs off (`hide_error_dialogs`) and ends the home app,
+  which closes a "Pixel Launcher isn't responding" dialog already up: a freshly booted
+  emulator's launcher often stalls, and once its dialog came up as the journey typed the
+  phone number, which never reached the field. speedrun answers those that still show
+  (under "Maestro flow files"). The iOS agent started in 37-78 s on CI's just-booted
+  simulator, and took over 90 s in 4 of 5 runs on 2026-10-28: `IOS_START_TIMEOUT` is 4
+  minutes. The iOS job builds speedrun
   without the Android agent (`SPEEDRUN_NO_ANDROID=1`: the binary embeds an empty agent,
   `-define:ANDROID_AGENT=false`, and refuses Android devices), so it needs no JDK: setting up
   Java and the Gradle build took 5 of its minutes. The Android emulator has a Pixel 7's
@@ -526,13 +531,17 @@ Known differences in how, not what:
   simulator once lost the connection 3 s into the journey, after a first read that took
   41 s (1 s in other runs). A failed iOS flow's debug output has the end of the runner's log
   (`logs/ios-agent.log`: xcodebuild's output, the agent's NSLog lines, a crash).
-- Android's "… isn't responding" and "… keeps stopping" dialogs are answered on reads (Wait,
-  else Close app; their buttons' ids, `android:id/aerr_wait` and `android:id/aerr_close`, are
-  the same in every language), and the wait for a launched app reads the screen every 2 s.
-  The dialog is modal: it hides the windows under it from the accessibility window list, so
-  the launched app never seemed to come to the foreground. CI's freshly booted emulator put
-  up "Pixel Launcher isn't responding" for minutes; `hide_error_dialogs` did not stop it
-  (Android reads it on a configuration change) and Back did not close it.
+- Android's "… isn't responding" and "… keeps stopping" dialogs are answered on reads
+  (`answer_error_dialog`; their buttons' ids, `android:id/aerr_wait` and
+  `android:id/aerr_close`, are the same in every language), and the wait for a launched app
+  reads the screen every 2 s. The app launchApp launched gets Wait; another app (its name,
+  `op_label`, not in the dialog's title) gets Close app: Wait left CI's stalled launcher
+  stalled, its dialog came back every ~5 s, and one that came up as the journey typed took
+  the keys (the phone field stayed empty). The dialog is modal: it hides the windows under
+  it from the accessibility window list, so the launched app never seemed to come to the
+  foreground. `hide_error_dialogs` takes effect at once (API 37: `am crash` on Settings
+  showed no dialog with it on, one with it off) but leaves a dialog already up, and Back
+  does not close one: the workflow also ends the home app.
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).

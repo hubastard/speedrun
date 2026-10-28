@@ -72,10 +72,14 @@ jobs:
           ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          # A freshly booted emulator often shows "Pixel Launcher isn't responding": speedrun
-          # answers it.
+          # A freshly booted emulator's launcher often stalls: "Pixel Launcher isn't
+          # responding". With hide_error_dialogs, Android ends a stalled app instead of
+          # asking; a dialog already up stays, so the launcher is ended too (it starts again).
+          # speedrun answers the dialogs that still show.
           script: |
             adb shell wm size
+            adb shell settings put global hide_error_dialogs 1
+            adb shell 'am force-stop $(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME | tail -n 1 | cut -d/ -f1)'
             adb install -r bench/app/prebuilt/speedrun-bench.apk
             ./speedrun test bench/journey/journey.yaml --format junit --output journey-android.xml --debug-output debug-android --flatten-debug-output
 

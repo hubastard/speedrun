@@ -55,7 +55,9 @@ AGENT_PING_TIMEOUT :: 5 * time.Second // device_restart: an agent that does not 
 IOS_PRODUCTS :: "agent/ios/build/Build/Products" // next to the speedrun binary
 // The built test bundle: its hash is the build id a running runner must match.
 IOS_TEST_BINARY :: "Release-iphonesimulator/SpeedrunAgentUITests-Runner.app/PlugIns/SpeedrunAgentUITests.xctest/SpeedrunAgentUITests"
-IOS_START_TIMEOUT :: 90 * time.Second
+// A just-booted CI simulator took 37-78 s to start the runner, and over 90 s in 4 of 5 runs
+// on a busy day.
+IOS_START_TIMEOUT :: 4 * time.Minute
 
 Device :: struct {
 	platform:   Platform,
@@ -441,7 +443,8 @@ ios_start :: proc(d: ^Device) -> string {
 		time.sleep(100 * time.Millisecond)
 	}
 	ios_stop(d)
-	return fmt.tprintf("The iOS agent did not answer within %v.", IOS_START_TIMEOUT)
+	data, _ := os.read_entire_file(log, context.temp_allocator)
+	return fmt.tprintf("The iOS agent did not answer within %v. The end of xcodebuild's output:\n%s", IOS_START_TIMEOUT, indent(tail(string(data), 15)))
 }
 
 // xcodebuild's output for the runner serving on port (the agent's log lines included).

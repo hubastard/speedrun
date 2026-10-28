@@ -105,6 +105,8 @@ Runner :: struct {
 	long_press_ms:        i32, // how long longPressOn holds (long_press_ms proc), 0 until known
 	condition_ms:         i64, // how long a `when:` waits (condition_timeout proc), 0 until known
 	reconnects:           int, // the agent's connection lost and made again (run_list)
+	launched:             string, // Android: the app launchApp launched last (answer_error_dialog)
+	launched_label:       string, // its name, read when an error dialog first needs it
 }
 
 Rx :: struct {
@@ -551,6 +553,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		if !op_mark(r.c) do return true, AGENT_LOST
 		if err := android_launch(r, comp, args); err != nil do return true, err
 		r.launch_due = strings.clone(app, r.alloc)
+		if r.launched != app do r.launched, r.launched_label = r.launch_due, ""
 		return true, nil
 	case App_Cmd:
 		app := eval(r, d.app_id) or_return

@@ -350,10 +350,12 @@ answer_notification_alert :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	return true, true
 }
 
-// Android's "… isn't responding" and "… keeps stopping" dialogs, whatever app they are about
-// (a freshly booted emulator's launcher often stalls long enough to get one): modal, they hide
-// the app's window from reads and take its taps until answered. Their buttons' ids are the
-// same in every language: Wait (the app keeps running), else Close app.
+// Android's "isn't responding" and "keeps stopping" dialogs (a freshly booted emulator's
+// launcher often stalls long enough to get one): modal, they hide the app's window from
+// reads and take its taps and keys until answered. Their buttons' ids are the same in every
+// language. The app launchApp launched gets Wait (a slow start is no failure), any other app
+// Close app: Wait leaves it stalled, and its dialog comes back every ~5 s (one up while a
+// phone number was typed took the keys).
 answer_error_dialog :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	wait, close, title := -1, -1, ""
 	for n, i in r.h.nodes {
@@ -365,6 +367,15 @@ answer_error_dialog :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	}
 	pick := wait if wait >= 0 else close
 	if pick < 0 do return false, true
+	// The title names the app: "<name> isn't responding". A name unknown: Wait.
+	if wait >= 0 && close >= 0 && r.launched != "" {
+		if r.launched_label == "" {
+			label, lok := op_label(r.c, r.launched, r.alloc)
+			if !lok do return false, false
+			r.launched_label = label
+		}
+		if r.launched_label != "" && !strings.contains(title, r.launched_label) do pick = close
+	}
 	n := r.h.nodes[pick]
 	if r.debug do fmt.printf("      [error dialog %q: tapping %q]\n", title, n.text)
 	if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return false, false
