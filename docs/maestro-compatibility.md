@@ -63,11 +63,11 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 - **Android animations are turned off** by every run, as is usual for UI tests, and stay
   off. To turn them back on: `adb shell settings put global window_animation_scale 1` (and
   the same for `transition_animation_scale` and `animator_duration_scale`).
-- **iOS apps started by `launchApp` animate 10x faster, with Reduce Motion on.** This speeds
-  up screen transitions and ends React Native's animations at once, without changing what
-  the flow sees. Speedrun turns the simulator's Reduce Motion back to what it was when the run
-  ends. A flow can pass the launch argument `UIAnimationDragCoefficient: 1` to keep normal
-  speed and Reduce Motion as it is; `SPEEDRUN_REDUCE_MOTION=0` leaves Reduce Motion alone.
+- **iOS apps started by `launchApp` animate 10x faster.** This speeds up screen transitions
+  without changing what the flow sees. A flow can pass the launch argument
+  `UIAnimationDragCoefficient: 1` to keep normal speed. With `SPEEDRUN_REDUCE_MOTION=1`,
+  Speedrun also turns the simulator's Reduce Motion on for the run (React Native's animations
+  end at once) and back as it was afterwards.
 - **`scrollUntilVisible` scrolls without momentum**, so the list stops where the finger
   stops, even on a slow CI emulator. It takes more, shorter swipes, and its `speed` has no
   effect. `swipe` and `scroll`
