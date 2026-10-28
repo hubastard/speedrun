@@ -34,8 +34,8 @@ appId: com.example.app
 ## Why Speedrun?
 
 - **Fast.** A tap that opens a screen takes about 0.3 s, and a run starts in 1–3 s. The same
-  user journey takes 22 s with Speedrun on Android, 59 s with Appium and 127 s with Maestro
-  ([benchmark](#benchmark)).
+  user journey takes 20 s with Speedrun on Android, 59 s with Appium, 66 s with
+  maestro-runner and 127 s with Maestro ([benchmark](#benchmark)).
 - **Waits for the app, not the clock.** Each step starts the moment the app has finished
   changing: no sleeps, no comparing screenshots. Screens that never stop moving (spinners,
   tickers, carousels) don't hold it up.
@@ -159,19 +159,20 @@ same files.
 
 | | Speedrun | Maestro 2.11 | Speedrun is |
 |---|---|---|---|
-| **Android emulator**, whole suite | **8 min 14 s**, 19/19 passed | 46 min 56 s, 16/19 passed | |
-| on the 16 flows both pass | 7 min 12 s | 43 min 58 s | **6.1x faster** |
-| **iOS simulator**, whole suite | **11 min 5 s**, 19/19 passed | 40 min 19 s, 8/19 passed | |
-| on the 8 flows both pass | 2 min 58 s | 7 min 42 s | **2.6x faster** |
+| **Android emulator**, whole suite | **7 min 9 s**, 19/19 passed | 46 min 56 s, 16/19 passed | |
+| on the 16 flows both pass | 6 min 17 s | 43 min 58 s | **7.0x faster** |
+| **iOS simulator**, whole suite | **9 min 59 s**, 19/19 passed | 40 min 19 s, 8/19 passed | |
+| on the 8 flows both pass | 2 min 35 s | 7 min 42 s | **3.0x faster** |
 
 Maestro's time for a flow it fails stops at the failure. Estimating the whole suite as if it
-had finished those flows, Speedrun is about 5.8x faster on Android and 4.1x on iOS. On native
-screens, the system Settings app ([`bench/settings`](bench/settings)), Speedrun is 8.4x faster
-on Android and 2.8x on iOS.
+had finished those flows, Speedrun is about 6.7x faster on Android and 4.5x on iOS. On native
+screens, the system Settings app ([`bench/settings`](bench/settings)), Speedrun is 10.7x
+faster on Android and 2.9x on iOS.
 
-Measured on 2026-10-27 on an Apple M1 Pro (16 GB), with an Android 17 emulator and an
-iPhone 17 Pro simulator (iOS 26.2). Per-flow results, why Maestro failed, and how to rerun
-it all: [bench/app](bench/app/README.md).
+Measured on an Apple M1 Pro (16 GB), with an Android 17 emulator and an iPhone 17 Pro
+simulator (iOS 26.2): Speedrun's current code on 2026-10-28, the other tools on 2026-10-27
+(they have not changed since). Per-flow results, why Maestro failed, and how to rerun it all:
+[bench/app](bench/app/README.md).
 
 ### Against other black-box tools
 
@@ -182,18 +183,21 @@ warm-up; the time is the median of its passing runs, its start-up included.
 
 | Tool | Android emulator | iOS simulator |
 |---|---:|---:|
-| **Speedrun** | **21.8 s**, 3/3 passed | **33.2 s**, 3/3 passed |
+| **Speedrun** | **20.4 s**, 3/3 passed | **28.4 s**, 3/3 passed |
 | Appium 3.9 | 59.4 s, 3/3 passed | 94.1 s, 3/3 passed |
+| [maestro-runner](https://github.com/devicelab-dev/maestro-runner) 1.1.29 | 65.9 s, 2/3 passed | 49.6 s, 3/3 passed |
 | XCUITest | | 81.2 s, 3/3 passed |
 | Maestro 2.11 | 126.5 s, 2/3 passed | 113.1 s, 2/3 passed |
 
-Speedrun runs the journey 2.7x faster than Appium on Android and 2.8x on iOS, 2.4x faster
-than XCUITest, and 5.8x (Android) and 3.4x (iOS) faster than Maestro.
+Speedrun runs the journey 2.9x faster than Appium on Android and 3.3x on iOS, 3.2x (Android)
+and 1.7x (iOS) faster than maestro-runner, 2.9x faster than XCUITest, and 6.2x (Android) and
+4.0x (iOS) faster than Maestro. Speedrun and maestro-runner ran on 2026-10-28, the others on
+2026-10-27, on the same machine.
 
 It also passed every run, as it passes all 19 flows of the app's test suite on both
 platforms. Maestro failed one journey run on each platform (a tap lost on the product page on
 iOS, the long-list scroll out of time on Android) and 3 of the suite's 19 flows on Android, 11
-on iOS. The journey leaves out one step of the suite that the other tools could not pass
+on iOS; maestro-runner's long-list scroll ran out of time in one Android run. The journey leaves out one step of the suite that the other tools could not pass
 reliably: tapping a checkbox right after scrolling to it, a tap Maestro lost in all 4 of its
 iOS runs and XCUITest in 1 of 4.
 

@@ -4,9 +4,10 @@
 # reset (not timed). A run's time is the wall clock of the tool's command, its start-up
 # included. The table goes to results/<platform>.md: the median of the runs that passed (a
 # failed run stops early), the pass count, and each run's time (✗: failed).
-#   ./run.sh android|ios [tool...]     tools: speedrun maestro appium xcuitest (iOS only)
+#   ./run.sh android|ios [tool...]     tools: speedrun maestro maestro-runner appium xcuitest (iOS only)
 # Needs ../../speedrun (./build.sh), Speedrun Bench installed (../app/bench.sh install <platform>),
-# maestro, Node (cd appium && npm install && npm run setup), and Xcode for xcuitest.
+# maestro, maestro-runner (~/.maestro-runner/bin, or MAESTRO_RUNNER=<path>), Node (cd appium &&
+# npm install && npm run setup), and Xcode for xcuitest.
 # The device: DEVICE=<serial or simulator UDID>, else the first adb device (Android) or the
 # booted simulator (iOS).
 set -euo pipefail
@@ -23,11 +24,11 @@ mkdir -p results
 case "$PLATFORM" in
   android)
     DEVICE="${DEVICE:-$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')}"
-    TOOLS=("${@:-speedrun maestro appium}")
+    TOOLS=("${@:-speedrun maestro maestro-runner appium}")
     ;;
   ios)
     DEVICE="${DEVICE:-$(xcrun simctl list devices booted | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\)) (Booted).*/\1/p' | head -1)}"
-    TOOLS=("${@:-speedrun maestro appium xcuitest}")
+    TOOLS=("${@:-speedrun maestro maestro-runner appium xcuitest}")
     ;;
   *) echo "platform: android or ios"; exit 1 ;;
 esac
@@ -50,6 +51,10 @@ run_tool() {
   case "$1" in
     speedrun) "$SPEEDRUN" test --device "$DEVICE" --plain journey.yaml ;;
     maestro) maestro --device "$DEVICE" test journey.yaml ;;
+    # Its default driver (DeviceLab), usage stats off; its own journey (one wait more).
+    maestro-runner) MAESTRO_RUNNER_NO_TELEMETRY=1 "${MAESTRO_RUNNER:-$HOME/.maestro-runner/bin/maestro-runner}" \
+                      --platform "$PLATFORM" --device "$DEVICE" test --output results/maestro-runner --flatten \
+                      maestro-runner/journey.yaml ;;
     appium) node appium/journey.mjs "$PLATFORM" "$DEVICE" ;;
     xcuitest) xcodebuild test-without-building -xctestrun "$(ls xcuitest/build/Build/Products/*.xctestrun)" \
                 -destination "id=$DEVICE" ;;
@@ -61,6 +66,15 @@ cleanup() { [ -n "$APPIUM_PID" ] && kill "$APPIUM_PID" 2> /dev/null || true; }
 trap cleanup EXIT
 
 for tool in "${TOOLS[@]}"; do
+  if [ "$PLATFORM" = ios ]; then
+    # A simulator runs one UI test runner at a time: the previous tool's goes (the warm-up
+    # starts this tool's).
+    "$SPEEDRUN" --stop-agent > /dev/null 2>&1 || true
+    xcrun simctl terminate "$DEVICE" dev.devicelab.agent.uitests.xctrunner 2> /dev/null || true
+    # maestro-runner turns on Reduce Motion (the app's animations end at once) and leaves it on:
+    # each tool starts with it off (the app reads it when it starts, after reset_app).
+    xcrun simctl spawn "$DEVICE" defaults write com.apple.Accessibility ReduceMotionEnabled -bool false
+  fi
   case "$tool" in
     appium)
       # The server is started once, as in a test suite; each run opens its own session.
