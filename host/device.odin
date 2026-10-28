@@ -173,7 +173,8 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 	// (then the simulator list is not even needed), else stop it.
 	if udid, name, build, ok := ios_info(d.port); ok {
 		if (device == "" || device == udid) && build == ios_build_id() {
-			d.udid, d.name, d.warm = udid, name, true // name: the description, from INFO
+			// Heap copies: a session outlives the temp allocator its requests free.
+			d.udid, d.name, d.warm = strings.clone(udid), strings.clone(name), true // name: the description, from INFO
 			return ""
 		}
 		ios_quit(d.port)
@@ -184,9 +185,9 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 	case device != "":
 		sim, ok := is_sim(sims, device)
 		if !ok do return fmt.tprintf("Simulator %s is not booted (xcrun simctl boot %s); real iOS devices are not supported yet.", device, device)
-		d.udid, d.name = sim.udid, sim.name
+		d.udid, d.name = strings.clone(sim.udid), strings.clone(sim.name)
 	case len(sims) == 1:
-		d.udid, d.name = sims[0].udid, sims[0].name
+		d.udid, d.name = strings.clone(sims[0].udid), strings.clone(sims[0].name)
 	case len(sims) == 0:
 		return "No booted iOS simulator (xcrun simctl boot <udid>)."
 	case:
