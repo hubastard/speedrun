@@ -638,7 +638,11 @@ Known differences in how, not what:
   transition moves most nodes and is still waited for. Core Animation loops (spinners,
   Lottie) never counted: the model layer does not move and XCTest's quiescence ignores
   repeating animations. Measured on a test app: 14.3 s to 6.1 s for 10 commands, the
-  same as with no animation.
+  same as with no animation. A pause of up to 600 ms (`restlessPauseNs`) does not end a
+  node's moving: a shimmer's highlight, clipped by its block, holds still while it is out
+  of it, and with one of Speedrun Bench's three skeleton highlights paused for a read the
+  settle after "Continue as guest" waited for the feed and its promo (2.3–3.9 s) instead
+  of 1.1 s, in 4 runs of 6 (found through sessions: `speedrun do` per step).
 - `SPEEDRUN_CONDITION_TIMEOUT_MS` replaces the 7 s of a `when:` check (not of an
   assertion or a lookup): flows that dismiss popups "if they show" after every action
   otherwise wait 7 s after each. A condition's own `timeout` (a field Maestro does not

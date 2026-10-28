@@ -9,10 +9,13 @@
 // to user" attribute: every node is flagged visible and the host drops those mostly off
 // screen.
 // An endless animation moves a few elements on every read (a Reanimated or Animated loop, a
-// marquee): the screen would never hold still. An element seen moving on every read for
-// restlessNs, while most of the screen holds still, is restless: the signature leaves its
-// frame out, and its node carries the restless flag (128) so the host's hash does too. A
-// scroll or a screen transition moves most of the screen, and is waited for.
+// marquee): the screen would never hold still. An element seen moving for restlessNs, while
+// most of the screen holds still, is restless: the signature leaves its frame out, and its
+// node carries the restless flag (128) so the host's hash does too. A pause of up to
+// restlessPauseNs does not end its moving: a shimmer's highlight, clipped by its block,
+// holds still while it is out of it (a skeleton's three highlights, one paused, kept a settle
+// waiting 2.8 s instead of 1.1 s). A scroll or a screen transition moves most of the screen,
+// and is waited for.
 import XCTest
 
 final class Screen {
@@ -35,10 +38,13 @@ final class Screen {
     /// A hashed node of a walk: identity (what it is and says), frame, and where its flags byte is.
     struct Mark { var id: Int; var frame: SIMD4<Int32>; var flagsAt: Int }
     private static let restlessNs: UInt64 = 500_000_000
+    private static let restlessPauseNs: UInt64 = 600_000_000
     private static let restlessFlag: UInt8 = 128
     /// The last digest's frames and, for each node moving on every read since, when it began.
     private var lastFrames: [Int: SIMD4<Int32>] = [:]
     private var movingSince: [Int: UInt64] = [:]
+    /// For each node in movingSince, when its frame last changed.
+    private var movedAt: [Int: UInt64] = [:]
 
     /// Forgets every cached read (a new client). Main thread.
     func reset() {
@@ -48,6 +54,7 @@ final class Screen {
         statusBars.at = 0
         lastFrames = [:]
         movingSince = [:]
+        movedAt = [:]
     }
 
     /// lastActionNs: when the last action began (a settled snapshot older than it is stale).
@@ -110,16 +117,24 @@ final class Screen {
         var seen = [Int: Int](minimumCapacity: marks.count)
         var frames = [Int: SIMD4<Int32>](minimumCapacity: marks.count)
         var moving = [Int: UInt64]()
+        var moved = [Int: UInt64]()
         for (k, m) in marks.enumerated() {
             // Same identity twice (rows alike): told apart by their order.
             let n = seen[m.id, default: 0]
             seen[m.id] = n + 1
             ids[k] = n == 0 ? m.id : m.id &+ n &* 0x9E37_79B9
             frames[ids[k]] = m.frame
-            if let f = lastFrames[ids[k]], f != m.frame { moving[ids[k]] = movingSince[ids[k]] ?? now }
+            if let f = lastFrames[ids[k]], f != m.frame {
+                moving[ids[k]] = movingSince[ids[k]] ?? now
+                moved[ids[k]] = now
+            } else if let since = movingSince[ids[k]], let at = movedAt[ids[k]], now - at < Self.restlessPauseNs {
+                moving[ids[k]] = since // paused: still moving
+                moved[ids[k]] = at
+            }
         }
         lastFrames = frames
         movingSince = moving
+        movedAt = moved
         let few = moving.count * 3 <= marks.count
         var hasher = Hasher()
         for (k, m) in marks.enumerated() {
