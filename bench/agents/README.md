@@ -25,11 +25,12 @@ printed, which is what the agent reads (in characters, and in tokens estimated a
 
 2026-10-28, Apple M1 Pro (16 GB), an Android 17 emulator and an iPhone 17 Pro simulator
 (iOS 26.2). The median of 3 runs after a warm-up (each run's time in seconds); every run
-passed.
+passed. Speedrun's iOS row is with the settle fix that came out of this benchmark (an endless
+animation's pause, see DEVELOPMENT.md): 12.0 s before it (12.29, 12.01, 11.31).
 
 | Tool | Android emulator | iOS simulator |
 |---|---|---|
-| **Speedrun** | **4.2 s** (4.27, 4.15, 4.23), 11 calls, 6,247 characters (~1,560 tokens) | **12.0 s** (12.29, 12.01, 11.31), 11 calls, 4,904 characters (~1,230 tokens) |
+| **Speedrun** | **4.2 s** (4.27, 4.15, 4.23), 11 calls, 6,247 characters (~1,560 tokens) | **9.4 s** (9.32, 9.39, 10.62), 11 calls, 4,900 characters (~1,230 tokens) |
 | agent-device | 9.1 s (9.52, 9.12, 9.13), 10 calls, 8,953 characters (~2,240 tokens) | 14.0 s (14.39, 14.01, 13.94), 11 calls, 6,471 characters (~1,620 tokens) |
 | Argent | 11.7 s (11.71, 11.56, 11.65), 21 calls, 14,538 characters (~3,630 tokens) | 12.2 s (12.46, 11.24, 12.15), 21 calls, 10,586 characters (~2,650 tokens) |
 

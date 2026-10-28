@@ -231,7 +231,7 @@ characters / 4).
 
 | Tool | Android emulator | iOS simulator |
 |---|---:|---:|
-| **Speedrun** (`speedrun session`) | **4.2 s**, ~1,560 tokens | **12.0 s**, ~1,230 tokens |
+| **Speedrun** (`speedrun session`) | **4.2 s**, ~1,560 tokens | **9.4 s**, ~1,230 tokens |
 | [agent-device](https://github.com/callstackincubator/agent-device) 0.21 | 9.1 s, ~2,240 tokens | 14.0 s, ~1,620 tokens |
 | [Argent](https://github.com/software-mansion/argent) 0.31 | 11.7 s, ~3,630 tokens | 12.2 s, ~2,650 tokens |
 
