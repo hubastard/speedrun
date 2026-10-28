@@ -133,14 +133,24 @@ final class Screen {
         return hasher.finalize()
     }
 
+    /// How long a snapshot may wait for the app (Private.setAXTimeout): a stuck one is tried
+    /// again rather than waited out (~15 s by XCTest's default).
+    static let axTimeoutSeconds = 2.0
+
     /// A snapshot of the foreground app. An app being relaunched (launchApp) can fail it
-    /// ("Application ... is not running"): find the foreground app again and retry once, then
-    /// fall back to SpringBoard rather than failing the read.
+    /// ("Application ... is not running"): find the foreground app again and retry, then fall
+    /// back to SpringBoard rather than failing the read. One that timed out (an app busy in a
+    /// transition) is tried again, up to twice, while the app is still in the foreground: not
+    /// SpringBoard's screen, which is not the one on screen.
     private func snapshotForeground() throws -> XCUIElementSnapshot {
         if let s = try? foregroundApp().snapshot() { return s }
         foreground = nil
         foregroundID = ""
-        if let s = try? foregroundApp().snapshot() { return s }
+        for _ in 0..<2 {
+            let app = foregroundApp()
+            if let s = try? app.snapshot() { return s }
+            if app == springboard || app.state != .runningForeground { break }
+        }
         return try springboard.snapshot()
     }
 

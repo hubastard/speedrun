@@ -71,6 +71,8 @@ final class SpeedrunAgentUITests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         let port = UInt16(env["SPEEDRUN_PORT"] ?? "") ?? 7778
         let idle = TimeInterval(env["SPEEDRUN_IDLE_S"] ?? "") ?? 600
+        let ax = Private.setAXTimeout(Screen.axTimeoutSeconds)
+        NSLog("speedrun: accessibility timeout \(ax ? "\(Screen.axTimeoutSeconds) s" : "unchanged (no setter in this Xcode)")")
         let server = try Server(port: port, idleSeconds: idle)
         Thread.detachNewThread { server.run() }
         NSLog("speedrun: listening on 127.0.0.1:\(port)")

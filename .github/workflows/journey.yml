@@ -67,8 +67,11 @@ jobs:
           profile: pixel_7
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          # A freshly booted emulator can have no window yet (speedrun's first read found none,
+          # and the app never came to the foreground): wait until one has the focus.
           script: |
             adb shell wm size
+            for i in $(seq 1 60); do adb shell dumpsys window | grep -q "mCurrentFocus=Window{" && break; sleep 2; done; adb shell dumpsys window | grep -m1 mCurrentFocus
             adb install -r bench/app/prebuilt/speedrun-bench.apk
             ./speedrun test bench/journey/journey.yaml --format junit --output journey-android.xml --debug-output debug-android --flatten-debug-output
 

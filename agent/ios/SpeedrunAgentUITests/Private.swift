@@ -48,6 +48,32 @@ enum Private {
         return unsafeBitCast(client.method(for: sel), to: Hit.self)(client, sel, app, hardwarePoint(point), &error)?.takeUnretainedValue()
     }
 
+    /// XCTest's accessibility timeout: how long a snapshot may wait for the app (~15 s by
+    /// default). On CI's simulator one read took 14 s in a screen transition, and the 2 s toast
+    /// it was to show had come and gone: a shorter one fails, and the read tries again (Screen's
+    /// snapshotForeground). XCUIDevice's accessibilityInterface, _setAXTimeout:error: (Xcode 27;
+    /// setAXTimeout: elsewhere). False when this Xcode has neither. Main thread.
+    @discardableResult
+    static func setAXTimeout(_ seconds: Double) -> Bool {
+        let interface = NSSelectorFromString("accessibilityInterface")
+        let device = XCUIDevice.shared as NSObject
+        guard device.responds(to: interface),
+              let client = device.perform(interface)?.takeUnretainedValue() as? NSObject else { return false }
+        let withError = NSSelectorFromString("_setAXTimeout:error:")
+        if client.responds(to: withError) {
+            typealias Set = @convention(c) (NSObject, Selector, Double, UnsafeMutablePointer<NSError?>?) -> Bool
+            var error: NSError?
+            return unsafeBitCast(client.method(for: withError), to: Set.self)(client, withError, seconds, &error)
+        }
+        let plain = NSSelectorFromString("setAXTimeout:")
+        if client.responds(to: plain) {
+            typealias Set = @convention(c) (NSObject, Selector, Double) -> Void
+            unsafeBitCast(client.method(for: plain), to: Set.self)(client, plain, seconds)
+            return true
+        }
+        return false
+    }
+
     /// The device's orientation (ORIENTATION sets it) and whether the foreground app's UI is
     /// laid out in landscape (its last snapshot is wider than tall: an app that supports
     /// portrait only stays upright when the device turns). Touches come in the UI's points

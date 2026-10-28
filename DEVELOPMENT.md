@@ -86,7 +86,9 @@ for flows whose scripts make HTTP requests.
   Bench from source and runs the benchmark journey (`bench/journey/journey.yaml`) with
   speedrun on an Android 15 emulator (Ubuntu, KVM) and an iOS simulator (macOS runner, the
   newest Xcode installed). The JUnit report and the debug output are kept as artifacts.
-  The iOS job builds speedrun without the Android agent (`SPEEDRUN_NO_ANDROID=1`: the binary
+  The Android job waits for a window to have the focus before it starts: a freshly booted
+  emulator once had none (speedrun's first read found no window, and the app never came to
+  the foreground). The iOS job builds speedrun without the Android agent (`SPEEDRUN_NO_ANDROID=1`: the binary
   embeds an empty agent, `-define:ANDROID_AGENT=false`, and refuses Android devices), so it
   needs no JDK: setting up Java and the Gradle build took 5 of its minutes. The Android
   emulator has a Pixel 7's screen (`profile: pixel_7`): the default, 320x640, put the
@@ -499,6 +501,13 @@ Known differences in how, not what:
   toggle or checkbox, an element type speedrun does not name (sliders, steppers, segmented
   controls), a system sheet's or alert's button, and a tap at a point (its target unknown)
   are held 20 ms (PRESS). Shorter than 100 ms also makes a tap ~100 ms faster.
+- iOS: the agent lowers XCTest's accessibility timeout, how long a snapshot may wait for the
+  app, to 2 s (~15 s by default; `_setAXTimeout:error:` on XCUIDevice's accessibility
+  interface in Xcode 27, `setAXTimeout:` elsewhere, the setting Appium's WebDriverAgent
+  exposes as snapshotTimeout). On CI's simulator one read, in the screen transition after a
+  PIN's last key, took 14 s, and the 2 s toast it was to see came and went. A snapshot that
+  fails while the app is in the foreground is tried again, twice, before SpringBoard's (the
+  fallback for an app being relaunched).
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
