@@ -17,11 +17,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -44,7 +44,7 @@ jobs:
         working-directory: bench/app
         run: ./bench.sh fetch android
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.prebuilt.outcome == 'failure'
         with:
           node-version: '22'
@@ -93,7 +93,7 @@ jobs:
             adb install -r bench/app/prebuilt/speedrun-bench.apk
             ./speedrun test bench/journey/journey.yaml --format junit --output journey-android.xml --debug-output debug-android --flatten-debug-output
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: journey-android
@@ -106,7 +106,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -144,7 +144,7 @@ jobs:
         working-directory: bench/app
         run: ./bench.sh fetch ios
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.prebuilt.outcome == 'failure'
         with:
           node-version: '22'
@@ -169,7 +169,7 @@ jobs:
           SPEEDRUN_DEBUG: 1
         run: ./speedrun test --device "$SIMULATOR" bench/journey/journey.yaml --format junit --output journey-ios.xml --debug-output debug-ios --flatten-debug-output
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: journey-ios
