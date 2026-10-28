@@ -205,7 +205,8 @@ app is ready instead of after a fixed wait.
 
 ## Requirements
 
-- **macOS**, Apple silicon.
+- **macOS** on Apple silicon, for Android and iOS, or **Linux** x86_64, for Android (CI
+  runners included). The install script picks the right package.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
 - **iOS:** Xcode and a booted simulator. Real iOS devices are not supported yet. A release's
