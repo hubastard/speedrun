@@ -56,6 +56,19 @@ jobs:
         working-directory: bench/app
         run: ./bench.sh compile android
 
+      # The emulator action downloads the emulator once, and a corrupt download ("Error on
+      # ZipFile unknown archive") failed a run before any test: installed here, retried, the
+      # action finds it in place.
+      - name: Install the Android emulator
+        run: |
+          sdkmanager=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          for i in 1 2 3; do
+            "$sdkmanager" --install emulator --channel=0 > /dev/null && exit 0
+            echo "sdkmanager failed (try $i of 3)"
+            sleep 15
+          done
+          exit 1
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
