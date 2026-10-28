@@ -456,6 +456,14 @@ Known differences in how, not what:
   5 passed, the current code 14 of 15 over three rounds), a rest check and backtracking after
   a jump (2 of 5), 150 ms drags (5 of 5 but 3-4x slower), a real-time hold before the lift
   (worse). The Journey workflow gives the emulator the runner's 4 cores and 4 GB instead.
+  It still flung on CI (rows 23 to 149, 43 to 97 in one drag; reads took 1-3.6 s), in 2
+  of 2 runs on 2026-10-28: Android's up and down drags now end with a CANCEL instead of a
+  lift (see `SWIPE` under the agent), which no scroll view flings on; sideways ones still
+  lift, for a paging list to snap (the onboarding carousel did not turn a page on a
+  CANCEL: "Page 1 of 3" never showed). A local emulator with software
+  rendering flung once in 159 drags with the lift, 0 in 164 with the CANCEL; load in the
+  guest (busy loops) did not slow the app's reads, and pausing qemu in slices stalled the
+  app's start.
 - Android keeps its scroll as before (`watched`: the whole screen's hash; no wait for rest,
   none for a list loading, drags from the center). With the iOS waits, a settle after each
   drag, and with longer drags too, the long list of Speedrun Bench flung now and then on an
@@ -609,7 +617,8 @@ Known differences in how, not what:
   otherwise wait 7 s after each. A condition's own `timeout` (a field Maestro does not
   have, so such a flow no longer runs there) overrides it for one check.
 - `scrollUntilVisible` drags without a fling on both platforms, so the content stops as
-  the touch lifts (Android: 50 ms, then still for 60 ms; iOS: see above). It reads the
+  the touch ends (Android: 50 ms, still for 60 ms, then a CANCEL up or down, a lift
+  sideways; iOS: see above). It reads the
   screen right after each drag and drags again as soon as the element is not on screen,
   the last drag shown; it settles only once the element shows, for the checks on visibility
   and centering on a still screen, as Maestro's. Maestro looks for the element for 500 ms
@@ -643,10 +652,15 @@ Known differences in how, not what:
   React Native Gesture Handler pan sometimes ended with no movement (1 run in 3 of the
   benchmark app's gestures flow). Flows fling like `adb shell input swipe`, as Maestro does;
   without the fling flag the pointer stops before lifting and the content moves by the drag
-  distance: a still MOVE more than
-  VelocityTracker's 40 ms "pointer stopped" threshold after the last moving one clears the
-  velocity. Lifting late is not enough for `ScrollView` (React Native's lists), which reads
-  the velocity before adding the UP to its tracker; `RecyclerView` adds it first.
+  distance: a still MOVE more than VelocityTracker's 40 ms "pointer stopped" threshold after
+  the last moving one clears the velocity. Lifting late is not enough for `ScrollView`
+  (React Native's lists), which reads the velocity before adding the UP to its tracker;
+  `RecyclerView` adds it first. That kept a fast emulator from flinging, not CI's starved
+  one: with the cancel flag (the host sets it for up and down drags) the gesture ends with a
+  CANCEL instead, and scroll views fling only on an UP (`ScrollView` and `RecyclerView` end
+  a cancelled drag where it is, Compose and Flutter with no velocity). A cancelled drag
+  skips what a lift does after it: a paging list does not snap (an old `ViewPager` snaps
+  back), and React Native sends no `onScrollEndDrag`.
 - **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`. Text with a
   character no key produces (most non-ASCII, emoji) goes in whole through accessibility
   instead: it replaces the focused field's selection and the cursor moves after it, as the

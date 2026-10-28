@@ -407,8 +407,10 @@ op_key :: proc(c: ^Conn, code: i32) -> (res: Action_Result, ok: bool) {
 }
 
 // A drag. With `fling` it lifts at speed, like `adb shell input swipe`; without, it stops
-// before lifting and the content moves by about the drag distance.
-op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32, fling := false) -> (res: Action_Result, ok: bool) {
+// before lifting and the content moves by about the drag distance. `cancel` (Android, no
+// fling): it ends with a CANCEL instead of the lift, which no list flings on, and no paging
+// list snaps on.
+op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32, fling := false, cancel := false) -> (res: Action_Result, ok: bool) {
 	req: [25]byte
 	req[0] = u8(Op.Swipe)
 	put_i32(req[1:5], x1)
@@ -416,7 +418,7 @@ op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32, fling := false) -> 
 	put_i32(req[9:13], x2)
 	put_i32(req[13:17], y2)
 	put_i32(req[17:21], duration_ms)
-	put_i32(req[21:25], 1 if fling else 0)
+	put_i32(req[21:25], (1 if fling else 0) | (2 if cancel else 0))
 	body: []byte
 	body, _, ok = call(c, req[:])
 	if !ok do return

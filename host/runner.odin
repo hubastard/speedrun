@@ -1211,7 +1211,7 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		}
 		if r.debug do fmt.printf("      [%s covered by %s: drag %d,%d -> %d,%d]\n", n.class, c.class, cx, cy, tx, ty)
 		frame := [4]i32{n.left, n.top, n.right, n.bottom}
-		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return idx, x, y, AGENT_LOST
+		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = vertical); !ok do return idx, x, y, AGENT_LOST
 		// Android injects the drag at once, stamped as if it had just ended (see scroll_until).
 		if r.dev.platform != .IOS do time.sleep(time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond)
 		settle(r, no_change_ms = 500) or_return
@@ -1679,7 +1679,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
 				last_sig = swiped_from
 				if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
-				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return AGENT_LOST
+				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = !sideways); !ok do return AGENT_LOST
 				continue
 			}
 			// The element was on screen before the drag too (centering it, clearing a cover):
@@ -1734,7 +1734,9 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
 		last_sig = swiped_from
 		if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
-		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS); !ok do return AGENT_LOST
+		// Android: an up or down drag ends with a CANCEL (a starved emulator flung a long list
+		// past its row on the lift); a sideways one lifts, for a paging list to snap.
+		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = !sideways); !ok do return AGENT_LOST
 		moving = true
 		if time.tick_now()._nsec >= end do break
 	}

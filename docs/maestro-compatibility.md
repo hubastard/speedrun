@@ -67,7 +67,8 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   without changing what the flow sees. A flow can pass the launch argument
   `UIAnimationDragCoefficient: 1` to keep normal speed.
 - **`scrollUntilVisible` scrolls without momentum**, so the list stops where the finger
-  lifts. It takes more, shorter swipes, and its `speed` has no effect. `swipe` and `scroll`
+  stops, even on a slow CI emulator. It takes more, shorter swipes, and its `speed` has no
+  effect. `swipe` and `scroll`
   fling as in Maestro.
 - **`scrollUntilVisible` scrolls the element clear of what is drawn over it** (a sticky
   footer, a floating search bar), so a tap that follows lands on it. Maestro stops once the

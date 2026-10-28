@@ -85,8 +85,9 @@ internal object AgentLog {
  *        the end, like `adb shell input swipe`, so the content keeps its speed and flings.
  *        Otherwise the pointer stays still for SWIPE_HOLD_MS before lifting: no fling, the
  *        content moves by about the drag distance (less the first 16 dp, spent on touch
- *        slop). The events carry those timestamps but are injected right away, ending now;
- *        only the first MOVE waits for the app (~1 frame).
+ *        slop). flags & 2 (cancel): a CANCEL instead of the lift, which no scroll view flings
+ *        on, but a paging list does not snap on either. The events carry those timestamps but
+ *        are injected right away, ending now; only the first MOVE waits for the app (~1 frame).
  *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
@@ -254,11 +255,15 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.KEY -> key(input.readInt())
             Op.SETTLE -> settle(input.readInt(), input.readInt(), input.readInt())
             Op.FIND -> writeFind(readStr(input))
-            Op.SWIPE -> swipe(
-                input.readInt().toFloat(), input.readInt().toFloat(),
-                input.readInt().toFloat(), input.readInt().toFloat(), input.readInt(),
-                fling = input.readInt() and 1 != 0,
-            )
+            Op.SWIPE -> {
+                val x1 = input.readInt().toFloat()
+                val y1 = input.readInt().toFloat()
+                val x2 = input.readInt().toFloat()
+                val y2 = input.readInt().toFloat()
+                val duration = input.readInt()
+                val flags = input.readInt()
+                swipe(x1, y1, x2, y2, duration, fling = flags and 1 != 0, cancel = flags and 2 != 0)
+            }
             Op.TYPE -> type(readStr(input))
             Op.ERASE -> erase(input.readInt())
             Op.SCREEN -> writeScreen()
@@ -520,7 +525,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // right after a swipe right).
     private var lastEventTime = 0L
 
-    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean) = timedAction {
+    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean, cancel: Boolean) = timedAction {
         val duration = durationMs.coerceIn(0, 10_000)
         val hold = if (fling) 0 else SWIPE_HOLD_MS
         val dx = x2 - x1
@@ -577,7 +582,11 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         }
         Thread.sleep(SWIPE_LIFT_GAP_MS)
         val up = maxOf(SystemClock.uptimeMillis(), down + duration + hold)
-        injectMotion(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x2, y2, 0))
+        // CANCEL: scroll views fling only on a lift (ScrollView, RecyclerView, Compose and
+        // Flutter end a cancelled drag where it is). The still pointer alone did not do it on
+        // a starved emulator (CI): a React Native list sometimes flung 100+ rows in one drag.
+        val end = if (cancel) MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP
+        injectMotion(MotionEvent.obtain(down, up, end, x2, y2, 0))
     }
 
     private fun press(x: Float, y: Float, holdMs: Int) = timedAction {
