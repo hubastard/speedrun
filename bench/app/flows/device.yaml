@@ -91,11 +91,15 @@ tags: [lab, device]
       - extendedWaitUntil:
           visible: "Photos: [1-9]\\d*"
           timeout: 5000
-# Home, then back to the app as it was.
+# Home, then back to the app as it was: one more return to the foreground. Counted from
+# here: on iOS the photos prompt above, when it shows, makes the app inactive and counts too.
+- copyTextFrom:
+    id: resumed
+- evalScript: "${output.resumed = parseInt(maestro.copiedText.replace('Back in the foreground: ', ''))}"
 - pressKey: Home
 - launchApp:
     stopApp: false
-- assertVisible: "Back in the foreground: 1"
+- assertVisible: "Back in the foreground: ${output.resumed + 1}"
 # A restart counts one more launch.
 - copyTextFrom:
     id: launches
