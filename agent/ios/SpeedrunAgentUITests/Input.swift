@@ -25,6 +25,10 @@ final class Input {
     /// Typing key by key (the focus moves after each): how long a key may take to land.
     static let keyWaitMs = 400
     static let keyTries = 3
+    /// Typing into an empty field: how long the field may take to show the text, and to hold
+    /// still before typing stops watching it (retypeIfScrambled).
+    static let scrambleWaitMs = 2000
+    static let scrambleStillMs = 500
     /// Response field inject_path: XCTest-synthesized event (Android uses 0-2), or nothing
     /// sent (deleting from an empty field).
     static let injectPath: UInt8 = 3
@@ -188,7 +192,57 @@ final class Input {
             return true
         }
         try Private.typeText(rest, charactersPerSecond: restRate, wait: false)
+        if before == "", field?.elementType != .secureTextField,
+           !text.contains(where: { $0.isNewline || $0 == "\u{8}" }) {
+            try retypeIfScrambled(text, screen: screen, rate: restRate)
+        }
         return true
+    }
+
+    /// React Native: a field whose value the app sets from its own state (a controlled
+    /// TextInput) can take keys out of order when the app's JavaScript falls behind them
+    /// ("sneaker" came out "sakerne" on CI's simulator). Typed into an empty field, the text is
+    /// watched until the field shows it. The same characters in another order: deleted, then
+    /// typed again a key at a time, each once the last one shows. A field that changes what it
+    /// is given (a phone number's format, capitals) stops the watch at once: a character the
+    /// text does not have. So does one that still reads empty once the keys are confirmed: it
+    /// shows its placeholder (Speedrun Bench's phone number, formatted, is its placeholder).
+    private func retypeIfScrambled(_ text: String, screen: Screen, rate: Int) throws {
+        func shown() -> String { onMain { Self.focusedField(screen).map(Self.shownValue) } ?? "" }
+        func now() -> UInt64 { DispatchTime.now().uptimeNanoseconds }
+        var left = [Character: Int]()
+        for c in text { left[c, default: 0] += 1 }
+        let deadline = now() + UInt64(Self.scrambleWaitMs + text.count * 1000 / max(rate, 1)) * 1_000_000
+        var value = "", since = now()
+        while now() < deadline {
+            let v = shown()
+            if v == text { return }
+            if v.isEmpty, try Private.pendingConfirmed() { return }
+            var counts = left
+            for c in v { counts[c, default: 0] -= 1 }
+            if counts.values.contains(where: { $0 < 0 }) { return }
+            if v != value {
+                value = v
+                since = now()
+            } else if now() - since > UInt64(Self.scrambleStillMs) * 1_000_000 {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        guard value.count == text.count, value != text else { return }
+        NSLog("speedrun: typed \"\(text)\", the field shows \"\(value)\": typing it again a key at a time")
+        func waitFor(_ shows: String) {
+            let keyDeadline = now() + UInt64(Self.keyWaitMs) * 1_000_000
+            while now() < keyDeadline && shown() != shows { Thread.sleep(forTimeInterval: 0.01) }
+        }
+        try Private.typeText(String(repeating: "\u{8}", count: value.count), charactersPerSecond: rate, wait: false)
+        var typed = ""
+        waitFor(typed)
+        for key in text {
+            try Private.typeText(String(key), charactersPerSecond: rate, wait: false)
+            typed.append(key)
+            waitFor(typed)
+        }
     }
 
     /// The focused field as typing watches it: where it is and what it shows (nil: none).

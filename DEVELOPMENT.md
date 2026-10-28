@@ -339,7 +339,13 @@ Maestro's runner: settle is XCTest's quiescence checked against the screen inste
 comparing screenshots, and after the first character the rest of the text is typed as soon as
 the field shows it, at 100 characters per second (Maestro: a fixed 0.5 s pause, then 30). A
 field that does not expose its value (React Native groups it with its label) gets Maestro's
-pacing. `eraseText` sends no more deletes than the focused field holds characters (its
+pacing. Typed into an empty field, the text is watched until the field shows it: a React
+Native field whose value the app sets from its state took the keys out of order once on CI's
+simulator, its JavaScript behind them ("sneaker" read "sakerne"). The same characters in
+another order are deleted and typed again a key at a time, each once the last one shows (a
+forced test: ~3 s for 7 keys). The watch ends at once on a character the text does not have
+(a format, capitals), and on a field still reading empty once the keys are confirmed (one
+showing its placeholder); it cost the other typing steps nothing measurable. `eraseText` sends no more deletes than the focused field holds characters (its
 value's length, the placeholder's while it shows one) and none to an empty field.
 `swipe` and `scroll` are Maestro's exactly: a touch that glides over the duration and lifts
 still moving, so the content flings on, and how far it goes depends on that.
