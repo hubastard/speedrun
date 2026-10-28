@@ -1,0 +1,9 @@
+{
+  "name": "speedrun-agent-bench",
+  "private": true,
+  "description": "The agent-tools benchmark (bench.py): agent-device and Argent, pinned",
+  "dependencies": {
+    "@swmansion/argent": "0.31.0",
+    "agent-device": "0.21.33"
+  }
+}

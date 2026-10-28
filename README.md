@@ -121,7 +121,7 @@ speedrun session save flows/sign-in.yaml
 
 Each answer says how each command went and what changed on screen, in a few lines: an agent
 pays a few hundred tokens per step, not a whole accessibility tree. See
-[Sessions](docs/sessions.md).
+[Sessions](docs/sessions.md), and [the comparison with other agent tools](#for-ai-agents).
 
 ### As an MCP server
 
@@ -219,6 +219,24 @@ iOS, the long-list scroll out of time on Android) and 3 of the suite's 19 flows 
 on iOS; maestro-runner's long-list scroll ran out of time in one Android run. The journey leaves out one step of the suite that the other tools could not pass
 reliably: tapping a checkbox right after scrolling to it, a tap Maestro lost in all 4 of its
 iOS runs and XCUITest in 1 of 4.
+
+### For AI agents
+
+The steps an agent takes to try out a feature of Speedrun Bench (launch it, skip the
+onboarding, search the shop, open a product, check what shows), driven through each agent
+tool's command line with the loop its documentation recommends, the calls scripted rather
+than chosen by a model: [bench/agents](bench/agents). The time is the median of three runs
+after a warm-up; the tokens are what the tool printed, which the agent reads (estimated as
+characters / 4).
+
+| Tool | Android emulator | iOS simulator |
+|---|---:|---:|
+| **Speedrun** (`speedrun session`) | **4.2 s**, ~1,560 tokens | **12.0 s**, ~1,230 tokens |
+| [agent-device](https://github.com/callstackincubator/agent-device) 0.21 | 9.1 s, ~2,240 tokens | 14.0 s, ~1,620 tokens |
+| [Argent](https://github.com/software-mansion/argent) 0.31 | 11.7 s, ~3,630 tokens | 12.2 s, ~2,650 tokens |
+
+Every run passed. Argent reads the whole screen to find what to tap, and through its MCP server
+also attaches a screenshot after each action, which this leaves out.
 
 ## How it works
 
