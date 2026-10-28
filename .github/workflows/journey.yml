@@ -56,14 +56,16 @@ jobs:
         working-directory: bench/app
         run: ./bench.sh compile android
 
-      # The emulator action downloads the emulator once, and a corrupt download ("Error on
-      # ZipFile unknown archive") failed a run before any test: installed here, retried, the
-      # action finds it in place.
-      - name: Install the Android emulator
+      # The emulator action downloads what it needs once, and a corrupt download ("Error on
+      # ZipFile unknown archive": the emulator once, the system image once) failed runs before
+      # any test: installed here, retried, the action finds them in place. The system image
+      # matches the action's api-level, target and arch below.
+      - name: Install the Android emulator and its system image
         run: |
           sdkmanager=$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
           for i in 1 2 3; do
-            "$sdkmanager" --install emulator --channel=0 > /dev/null && exit 0
+            yes | "$sdkmanager" --install emulator --channel=0 platform-tools 'platforms;android-35' \
+              'build-tools;37.0.0' 'system-images;android-35;google_apis;x86_64' > /dev/null && exit 0
             echo "sdkmanager failed (try $i of 3)"
             sleep 15
           done
