@@ -149,13 +149,29 @@ Use the binary's full path: an MCP client may not start servers with your shell'
 Start a speedrun session for com.example.app, sign in as user@example.com, and save the flow to flows/sign-in.yaml
 ````
 
+## Built against an app made to be hard to test
+
+Speedrun is developed against [Speedrun Bench](bench/app), a React Native app built to trip up
+UI test tools: screens that never stop moving (looping Lottie and Reanimated animations,
+tickers, marquees, shimmering skeletons, carousels that page on their own), a button that
+turns on late, a banner that shifts the layout, a loading overlay over a keypad, popups that
+arrive late or one after another, the keyboard over the checkout button, lists that load
+more as you scroll, native alerts and permission prompts. Its 19 flows cover every command
+and selector, and are Speedrun's regression suite on Android and iOS; a journey through the
+app also runs on GitHub Actions' emulator and simulator after every push.
+
+<p align="center">
+  <img alt="Speedrun testing six animated screens of Speedrun Bench on the iOS simulator in 16 seconds" src="docs/assets/speedrun-bench-animations-ios.gif" width="320"><br>
+  <sub>Six of those screens on the iOS simulator, in real time, with animations at their normal speed: Speedrun taps each screen's button three times while it moves, then checks the count. No sleeps.</sub>
+</p>
+
+Waiting for a still screen would never end on such an app. Speedrun waits until what it acts
+on has settled and leaves endless animations out of that check; it also waits for a disabled
+button to turn on, a loading overlay to go and a popup to finish sliding in before it taps.
+
 ## Benchmark
 
-[Speedrun Bench](bench/app) is a React Native app built to be hard to test: animations that
-never stop, popups that arrive late or one after another, a loading overlay over a keypad, a
-keyboard over the checkout button, lists that load more as you scroll, native alerts and
-permission prompts. Its 19 flows cover every command and selector, and both tools run the
-same files.
+Speedrun Bench's 19 flows, run by Speedrun and Maestro from the same files:
 
 | | Speedrun | Maestro 2.11 | Speedrun is |
 |---|---|---|---|
@@ -171,7 +187,9 @@ faster on Android and 2.9x on iOS.
 
 Measured on an Apple M1 Pro (16 GB), with an Android 17 emulator and an iPhone 17 Pro
 simulator (iOS 26.2): Speedrun's current code on 2026-10-28, the other tools on 2026-10-27
-(they have not changed since). Per-flow results, why Maestro failed, and how to rerun it all:
+(they have not changed since). Speedrun's iOS numbers are with `SPEEDRUN_REDUCE_MOTION=1`
+(the simulator's Reduce Motion on during the run); without it this suite runs about 10%
+slower. Per-flow results, why Maestro failed, and how to rerun it all:
 [bench/app](bench/app/README.md).
 
 ### Against other black-box tools
@@ -192,7 +210,8 @@ warm-up; the time is the median of its passing runs, its start-up included.
 Speedrun runs the journey 2.9x faster than Appium on Android and 3.3x on iOS, 3.2x (Android)
 and 1.7x (iOS) faster than maestro-runner, 2.9x faster than XCUITest, and 6.2x (Android) and
 4.0x (iOS) faster than Maestro. Speedrun and maestro-runner ran on 2026-10-28, the others on
-2026-10-27, on the same machine.
+2026-10-27, on the same machine; Speedrun on iOS with `SPEEDRUN_REDUCE_MOTION=1` (29.7 s
+without).
 
 It also passed every run, as it passes all 19 flows of the app's test suite on both
 platforms. Maestro failed one journey run on each platform (a tap lost on the product page on

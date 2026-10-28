@@ -53,7 +53,8 @@ Android numbers, shut the iOS simulator down first (`../../speedrun --stop-agent
 
 `./bench.sh compare android` and `./bench.sh compare ios`, Apple M1 Pro 16 GB, an Android 17
 emulator and an iPhone 17 Pro simulator (iOS 26.2): Maestro 2.11 on 2026-10-27, Speedrun's
-current code on 2026-10-28 (`./bench.sh test`, against Maestro's same results). A failed flow's
+current code on 2026-10-28 (`./bench.sh test`, against Maestro's same results; on iOS with
+`SPEEDRUN_REDUCE_MOTION=1`, without which the suite took 684 s instead of 599 s). A failed flow's
 time stops at its failure; ~: what it would have taken had it finished the flow, estimated as
 Maestro's time up to the failing step, then speedrun's time for the rest of the flow at
 Maestro's pace on that flow so far (`bench.sh` computes it from both tools' per-command

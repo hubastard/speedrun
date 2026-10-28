@@ -93,8 +93,7 @@ with each tool's start-up and shutdown, speedrun's iOS agent started cold):
 
 Speedrun 0.1.10 again on 2026-10-28 (its half of `compare.sh`, three times; median): Android
 10.1 s, 10.6 s (10.7x Maestro's wall clock above; the first run, 14.4 s, installed the new
-agent), iOS 27.4 s, 31.3 s (2.9x; with Reduce Motion on, now speedrun's default on iOS:
-31.8 s with it off).
+agent), iOS 27.4 s, 31.3 s (2.9x; with `SPEEDRUN_REDUCE_MOTION=1`: 31.8 s without).
 
 On 2026-10-26: Android 10.5 s vs 88.0 s, iOS 26.9 s vs 78.8 s. Maestro's Android run was
 slower this time (its taps took up to 4.9 s; the emulator's load was 2.5–3.5). Speedrun's iOS

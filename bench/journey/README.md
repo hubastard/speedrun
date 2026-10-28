@@ -41,10 +41,11 @@ the passing runs, the pass count, and each run's time in seconds:
 "Blue" was lost (the product page's photos page on their own, and in React Native a scroll
 during a touch cancels the press); on Android its scroll to row 60 ran out of its 60 s.
 maestro-runner's failed run: its scroll to row 60 ran out of its 60 s too (it took 21 and 45 s
-in the other two; 13 s on iOS). On iOS, maestro-runner and Speedrun turn on the simulator's
-Reduce Motion for their runs (the app's animations end at once; maestro-runner leaves it on,
-`run.sh` turns it off before each tool), and Speedrun runs UIKit's animations 10x faster;
-Maestro, Appium and XCUITest ran with animations at their normal speed.
+in the other two; 13 s on iOS). On iOS, the simulator's Reduce Motion was on for maestro-runner
+(it turns it on by default and leaves it on; `run.sh` turns it off before each tool) and for
+Speedrun (`SPEEDRUN_REDUCE_MOTION=1`; 29.7 s without it): the app's animations end at once.
+Speedrun also runs UIKit's animations 10x faster. Maestro, Appium and XCUITest ran with
+animations at their normal speed.
 
 Each tool runs the journey once to warm up (not counted), then three times, each after the
 app's data is reset (not timed). A run's time is the wall clock of the tool's command, its
