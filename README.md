@@ -64,7 +64,7 @@ appId: com.example.app
    to the binary. To build it yourself, see [Building from source](#building-from-source).
    Later, `speedrun update` installs the newest release in its place.
 
-2. **Write a flow**, or use the ones you have:
+2. **Write a flow** ([how](docs/flows.md)), or use the ones you have:
 
    ```yaml
    # login.yaml
@@ -239,6 +239,8 @@ app is ready instead of after a fixed wait.
 
 ## Documentation
 
+- [Writing flows](docs/flows.md): a flow's steps, finding elements, every command, for
+  someone new to the format.
 - [Command line](docs/cli.md): options, environment variables, exit status.
 - [Sessions](docs/sessions.md): drive an app a command at a time, from an AI agent or a
   terminal, and save the steps as a flow.
