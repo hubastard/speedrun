@@ -33,7 +33,9 @@ Each tool runs the app the way it comes, unless said otherwise:
   (`-UIAnimationDragCoefficient 0.1`, which UIKit reads once the `UIKit/UIPreferences` feature
   flag is on); agent-device and Argent run them at normal speed. Both take launch arguments,
   so `--animations fast` gives them Speedrun's setting too (the flag reaching the app checked
-  with `ps -E`), and `--animations normal` turns Speedrun's off.
+  with `ps -E`), and `--animations normal` turns Speedrun's off. In the tables: with
+  animation optimization, all three tools at Speedrun's 10x; without, all three at normal
+  speed.
 - **Android:** Speedrun turns the system's animation scales off; the script sets them off
   before each tool, so all three run with them off.
 
@@ -46,7 +48,7 @@ DEVELOPMENT.md); before them, at normal speed on iOS, Speedrun Bench took 13.2 s
 
 **Speedrun Bench**
 
-| Tool | Android | iOS, as each comes | iOS, all at normal speed | iOS, all 10x | What the agent read |
+| Tool | Android | iOS, default settings | iOS, without animation optimization | iOS, with animation optimization | What the agent read |
 |---|---|---|---|---|---|
 | **Speedrun** | **4.5 s** (4.59, 4.51, 4.23) | **7.8 s** (7.78, 8.17, 7.79) | **11.3 s** (11.21, 11.29, 11.26) | **7.8 s** (7.95, 7.79, 7.79) | ~1,590 tokens (Android), ~1,360 (iOS) |
 | agent-device | 8.2 s (8.24, 8.00, 8.29) | 12.5 s | 12.5 s (12.52, 12.15, 12.59) | 11.5 s (11.48, 11.42, 11.98) | ~2,260, ~1,680 |
@@ -54,7 +56,7 @@ DEVELOPMENT.md); before them, at normal speed on iOS, Speedrun Bench took 13.2 s
 
 **Neutral app** (tester-army's Login Form)
 
-| Tool | Android | iOS, as each comes | iOS, all at normal speed | iOS, all 10x | What the agent read |
+| Tool | Android | iOS, default settings | iOS, without animation optimization | iOS, with animation optimization | What the agent read |
 |---|---|---|---|---|---|
 | **Speedrun** | **4.0 s** (3.92, 3.98, 3.97) | **6.8 s** (6.85, 6.76, 6.74) | **8.5 s** (8.48, 8.59, 8.50) | **6.8 s** (6.78, 6.89, 6.77) | ~1,650 tokens (Android), ~1,820 (iOS) |
 | agent-device | 4.9 s (5.26, 4.93, 4.88) | 11.3 s | 11.3 s (11.26, 11.31, 11.22) | 10.7 s (10.71, 10.72, 10.79) | ~2,350, ~1,440 |
