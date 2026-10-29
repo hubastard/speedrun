@@ -198,8 +198,9 @@ faster on Android and 2.9x on iOS.
 Measured on an Apple M1 Pro (16 GB), with an Android 17 emulator and an iPhone 17 Pro
 simulator (iOS 26.2): Speedrun's current code on 2026-10-28, the other tools on 2026-10-27
 (they have not changed since). Speedrun's iOS numbers are with `SPEEDRUN_REDUCE_MOTION=1`
-(the simulator's Reduce Motion on during the run); without it this suite runs about 10%
-slower. Per-flow results, why Maestro failed, and how to rerun it all:
+(the simulator's Reduce Motion on during the run; without it this suite runs about 10%
+slower) and, as Speedrun always runs iOS apps, their animations 10x faster (UIKit's animation
+speed setting). Per-flow results, why Maestro failed, and how to rerun it all:
 [bench/app](bench/app/README.md).
 
 ### Against other black-box tools
@@ -221,7 +222,7 @@ Speedrun runs the journey 2.9x faster than Appium on Android and 3.3x on iOS, 3.
 and 1.7x (iOS) faster than maestro-runner, 2.9x faster than XCUITest, and 6.2x (Android) and
 4.0x (iOS) faster than Maestro. Speedrun and maestro-runner ran on 2026-10-28, the others on
 2026-10-27, on the same machine; Speedrun on iOS with `SPEEDRUN_REDUCE_MOTION=1` (29.7 s
-without).
+without) and the app's animations 10x faster, as always.
 
 It also passed every run, as it passes all 19 flows of the app's test suite on both
 platforms. Maestro failed one journey run on each platform (a tap lost on the product page on
@@ -232,21 +233,25 @@ iOS runs and XCUITest in 1 of 4.
 
 ### For AI agents
 
-The steps an agent takes to try out a feature of Speedrun Bench (launch it, skip the
-onboarding, search the shop, open a product, check what shows), driven through each agent
-tool's command line with the loop its documentation recommends, the calls scripted rather
-than chosen by a model: [bench/agents](bench/agents). The time is the median of three runs
-after a warm-up; the tokens are what the tool printed, which the agent reads (estimated as
-characters / 4).
+The steps an agent takes to try out a feature of an app, driven through each agent tool's MCP
+server with the loop its documentation recommends, the calls scripted rather than chosen by a
+model: on Speedrun Bench, launch it, skip the onboarding, search the shop, open a product and
+check what shows; on a neutral app another team made to benchmark its own agent, fill in and
+submit a login form ([bench/agents](bench/agents)). The time is the median of three runs after
+a warm-up, session set-up included; the tokens are what the tool answered, which the agent
+reads.
 
-| Tool | Android emulator | iOS simulator |
-|---|---:|---:|
-| **Speedrun** (`speedrun session`) | **4.2 s**, ~1,560 tokens | **9.4 s**, ~1,230 tokens |
-| [agent-device](https://github.com/callstackincubator/agent-device) 0.21 | 9.1 s, ~2,240 tokens | 14.0 s, ~1,620 tokens |
-| [Argent](https://github.com/software-mansion/argent) 0.31 | 11.7 s, ~3,630 tokens | 12.2 s, ~2,650 tokens |
+| Tool | Android emulator | iOS simulator | Neutral app, Android / iOS |
+|---|---:|---:|---:|
+| **Speedrun** | **4.5 s**, ~1,590 tokens | **7.8 s**, ~1,270 tokens | **4.0 s** / **6.8 s** |
+| [agent-device](https://github.com/callstackincubator/agent-device) 0.21 | 8.2 s, ~2,260 tokens | 12.5 s, ~1,680 tokens | 4.9 s / 11.3 s |
+| [Argent](https://github.com/software-mansion/argent) 0.31 | 13.0 s, ~11,370 tokens + 10 screenshots | 11.8 s, ~6,250 tokens + 10 screenshots | 11.9 s / 10.5 s |
 
-Every run passed. Argent reads the whole screen to find what to tap, and through its MCP server
-also attaches a screenshot after each action, which this leaves out.
+Every run passed, each tool with their default settings. On iOS that means Speedrun runs the app's animations
+10x faster, the others at normal speed. With all three
+at normal speed, Speedrun takes 11.3 s on Speedrun Bench and 8.5 s on the neutral app; with
+all three at Speedrun's 10x, agent-device takes 11.5 s and 10.7 s, Argent 11.7 s and 10.4 s.
+On Android all three ran with the system's animations off.
 
 ## How it works
 
