@@ -407,7 +407,9 @@ the background while `launchApp` clears the app and grants its permissions. A fl
 maestro-runner turns it on too, and leaves it on: that is how it was found (our iOS numbers
 of an afternoon had been measured with it on). Speedrun Bench on iOS, off then on: the suite
 684 s to 599 s (wall clock), the animations flow 72 s to 65 s, eight animated scenes 25.4 s
-to 21.4 s, the journey 29.7 s to 28.4 s, the Settings app (native) unchanged.
+to 21.4 s, the journey 29.7 s to 28.4 s, the Settings app (native) unchanged. Since v0.2.1's
+lookup fixes (a change away from the element not waited for, no second read) the gap is
+small: the suite 585 s to 573 s, the journey 26.6 s to 25.5 s (2026-10-29).
 
 Known differences in how, not what:
 

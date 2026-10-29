@@ -187,21 +187,21 @@ Speedrun Bench's 19 flows, run by Speedrun and Maestro from the same files:
 |---|---|---|---|
 | **Android emulator**, whole suite | **5 min 55 s**, 19/19 passed | 46 min 56 s, 16/19 passed | |
 | on the 16 flows both pass | 5 min 4 s | 43 min 58 s | **8.7x faster** |
-| **iOS simulator**, whole suite | **9 min 59 s**, 19/19 passed | 40 min 19 s, 8/19 passed | |
-| on the 8 flows both pass | 2 min 35 s | 7 min 42 s | **3.0x faster** |
+| **iOS simulator**, whole suite | **9 min 33 s**, 19/19 passed | 40 min 19 s, 8/19 passed | |
+| on the 8 flows both pass | 2 min 34 s | 7 min 42 s | **3.0x faster** |
 
 Maestro's time for a flow it fails stops at the failure. Estimating the whole suite as if it
-had finished those flows, Speedrun is about 8.0x faster on Android and 4.5x on iOS. On native
+had finished those flows, Speedrun is about 8.0x faster on Android and 4.8x on iOS. On native
 screens, the system Settings app ([`bench/settings`](bench/settings)), Speedrun is 10.7x
 faster on Android and 2.9x on iOS.
 
 Measured on an Apple M1 Pro (16 GB), with an Android 17 emulator and an iPhone 17 Pro
-simulator (iOS 26.2): Speedrun's current code on 2026-10-29 (Android) and 2026-10-28 (iOS),
-the other tools on 2026-10-27 (they have not changed since). Speedrun's iOS numbers are with
-`SPEEDRUN_REDUCE_MOTION=1` (the simulator's Reduce Motion on during the run; without it this
-suite runs about 10% slower) and, as Speedrun always runs iOS apps, their animations 10x
-faster (UIKit's animation speed setting). Per-flow results, why Maestro failed, and how to
-rerun it all: [bench/app](bench/app/README.md).
+simulator (iOS 26.2): Speedrun's current code on 2026-10-29, the other tools on 2026-10-27
+(they have not changed since). Speedrun's iOS numbers are with `SPEEDRUN_REDUCE_MOTION=1` (the
+simulator's Reduce Motion on during the run; without it this suite took 585 s instead of
+573 s) and, as Speedrun always runs iOS apps, their animations 10x faster (UIKit's animation
+speed setting). Per-flow results, why Maestro failed, and how to rerun it all:
+[bench/app](bench/app/README.md).
 
 ### Against other black-box tools
 
@@ -212,16 +212,16 @@ warm-up; the time is the median of its passing runs, its start-up included.
 
 | Tool | Android emulator | iOS simulator |
 |---|---:|---:|
-| **Speedrun** | **20.9 s**, 3/3 passed | **25.5 s**, 3/3 passed |
+| **Speedrun** | **20.3 s**, 3/3 passed | **25.5 s**, 3/3 passed |
 | Appium 3.9 | 59.4 s, 3/3 passed | 94.1 s, 3/3 passed |
 | [maestro-runner](https://github.com/devicelab-dev/maestro-runner) 1.1.29 | 65.9 s, 2/3 passed | 49.6 s, 3/3 passed |
 | [Argent](https://github.com/software-mansion/argent) 0.31 (`argent e2e`) | 81.5 s, 3/3 passed | 72.2 s, 3/3 passed |
 | XCUITest | | 81.2 s, 3/3 passed |
 | Maestro 2.11 | 126.5 s, 2/3 passed | 113.1 s, 2/3 passed |
 
-Speedrun runs the journey 2.8x faster than Appium on Android and 3.7x on iOS, 3.2x (Android)
-and 1.9x (iOS) faster than maestro-runner, 3.9x (Android) and 2.8x (iOS) faster than Argent's
-e2e runner, 3.2x faster than XCUITest, and 6.1x (Android) and 4.4x (iOS) faster than Maestro.
+Speedrun runs the journey 2.9x faster than Appium on Android and 3.7x on iOS, 3.2x (Android)
+and 1.9x (iOS) faster than maestro-runner, 4.0x (Android) and 2.8x (iOS) faster than Argent's
+e2e runner, 3.2x faster than XCUITest, and 6.2x (Android) and 4.4x (iOS) faster than Maestro.
 Speedrun and Argent ran on 2026-10-29, maestro-runner on 2026-10-28, the others on
 2026-10-27, on the same machine; Speedrun on iOS with `SPEEDRUN_REDUCE_MOTION=1` (26.6 s
 without) and the app's animations 10x faster, as always.

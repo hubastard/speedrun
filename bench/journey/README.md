@@ -32,7 +32,7 @@ Speedrun (its current code) and Argent on 2026-10-29, maestro-runner on 2026-10-
 
 | Tool | Android emulator | iOS simulator |
 |---|---|---|
-| **Speedrun** | **20.9 s**, 3/3 passed (20.9, 21.2, 20.3) | **25.5 s**, 3/3 passed (25.5, 25.4, 25.6) |
+| **Speedrun** | **20.3 s**, 3/3 passed (20.8, 20.1, 20.3) | **25.5 s**, 3/3 passed (25.5, 25.4, 25.6) |
 | Appium | 59.4 s, 3/3 passed (59.4, 69.0, 59.1) | 94.1 s, 3/3 passed (94.1, 96.9, 92.7) |
 | maestro-runner | 65.9 s, 2/3 passed (50.7, 81.1, 89.4 ✗) | 49.6 s, 3/3 passed (49.6, 49.9, 49.2) |
 | Argent | 81.5 s, 3/3 passed (80.9, 84.1, 81.5) | 72.2 s, 3/3 passed (72.2, 72.3, 69.0) |
