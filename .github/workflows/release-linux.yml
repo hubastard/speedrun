@@ -54,4 +54,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "speedrun $TAG" --notes "speedrun $TAG"
-          gh release upload "$TAG" dist/speedrun-*-linux-*.tar.gz --clobber
+          gh release upload "$TAG" dist/speedrun-*-linux-*.tar.gz dist/speedrun-*-linux-*.tar.gz.sha256 --clobber

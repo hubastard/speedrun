@@ -48,6 +48,23 @@ trap 'rm -rf "$tmp"' EXIT
 echo "Downloading speedrun $version for $os $arch..."
 curl -fSL --progress-bar "$DOWNLOADS/$version/$name.tar.gz" -o "$tmp/$name.tar.gz" \
   || fail "could not download $DOWNLOADS/$version/$name.tar.gz"
+# The package's SHA-256, published next to it from v0.1.15 on: a download that does not match
+# (cut short, or changed on the way) is not installed.
+if curl -fsSL "$DOWNLOADS/$version/$name.tar.gz.sha256" -o "$tmp/$name.tar.gz.sha256" 2> /dev/null; then
+  expected=$(cut -d ' ' -f 1 < "$tmp/$name.tar.gz.sha256")
+  if command -v sha256sum > /dev/null; then
+    actual=$(sha256sum "$tmp/$name.tar.gz" | cut -d ' ' -f 1)
+  else
+    actual=$(shasum -a 256 "$tmp/$name.tar.gz" | cut -d ' ' -f 1)
+  fi
+  [ -n "$expected" ] && [ "$actual" = "$expected" ] \
+    || fail "the download does not match its checksum (SHA-256 $actual, published: $expected): not installed"
+else
+  case "$version" in
+    v0.1.[0-9] | v0.1.1[0-4]) echo "($version has no published checksum: releases before v0.1.15 have none)" ;;
+    *) fail "could not download the package's checksum ($DOWNLOADS/$version/$name.tar.gz.sha256): not installed" ;;
+  esac
+fi
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 [ -x "$tmp/$name/speedrun" ] || fail "the package has no speedrun binary"
 

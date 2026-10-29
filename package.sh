@@ -55,4 +55,6 @@ EOF
 
 tar -czf "dist/$name.tar.gz" -C dist "$name"
 rm -rf "$stage"
+# Its SHA-256, published next to it: install.sh installs nothing that does not match.
+(cd dist && { sha256sum "$name.tar.gz" 2>/dev/null || shasum -a 256 "$name.tar.gz"; } > "$name.tar.gz.sha256")
 echo "== dist/$name.tar.gz ($(du -h "dist/$name.tar.gz" | cut -f1)): $ios"

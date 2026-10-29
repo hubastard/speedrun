@@ -100,7 +100,10 @@ for flows whose scripts make HTTP requests.
 - `.github/workflows/release-linux.yml`: on a `v*` tag, builds speedrun on Ubuntu (Android
   only: the iOS agent needs a Mac) with `package.sh` and attaches
   `speedrun-<tag>-linux-x86_64.tar.gz` to the tag's release, creating the release if it has
-  none yet. The macOS package is still built and attached by hand. Run it by hand
+  none yet, with its SHA-256 (`<package>.tar.gz.sha256`, which `install.sh` checks). The
+  macOS package is still built and attached by hand: `./package.sh`, then
+  `gh release upload <tag> dist/<package>.tar.gz dist/<package>.tar.gz.sha256` (both in one
+  upload: an install in between would find no checksum and refuse). Run it by hand
   (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
 - `.github/workflows/journey.yml`: after every push to `main`, builds speedrun, downloads
   the prebuilt Speedrun Bench for these sources (builds it, with Node, when the release has
