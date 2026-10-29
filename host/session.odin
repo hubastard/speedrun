@@ -35,6 +35,11 @@ in a flow, nothing more), and ends after an idle hour (SPEEDRUN_SESSION_IDLE_S).
 
 SESSION_START_TIMEOUT :: 180 * time.Second // the iOS agent's first start takes a while
 SESSION_IDLE_S :: 3600
+// A request's limits. Any program on the Mac can connect, the session serves one client at a
+// time: one that sends nothing, or a size no request has, must not hold it up or make it
+// allocate gigabytes.
+SESSION_REQUEST_MAX :: 16 * 1024 * 1024
+SESSION_REQUEST_WAIT :: 5 * time.Second
 
 Session_Info :: struct {
 	pid:      int `json:"pid"`,
@@ -75,6 +80,8 @@ Session :: struct {
 	recorded: [dynamic]string, // the commands that passed, as flow items ("- tapOn: ...")
 	shots:    int,
 }
+
+SESSION_TOKEN_ENV :: "SPEEDRUN_SESSION_TOKEN" // session start to session serve
 
 session_dir :: proc() -> string {
 	if xdg := os.get_env("XDG_STATE_HOME", context.temp_allocator); xdg != "" do return fmt.tprintf("%s/speedrun/session", xdg)
@@ -200,25 +207,34 @@ start_session :: proc(app, platform, device: string, env: []string) -> (code: in
 	}
 	dir := session_dir()
 	if !make_dirs(dir) do return 1, fmt.tprintf("could not create %s", dir)
+	// The user's alone: it holds the session's token (session.json), the log of what the app
+	// showed, screenshots. A Mac's home folder is readable by its other users (group staff).
+	_ = os.change_mode(dir, {.Read_User, .Write_User, .Execute_User})
 	os.remove(info_path())
 	key: [16]byte
 	crypto.rand_bytes(key[:])
 	token := string(hex.encode(key[:], context.temp_allocator))
 	exe, _ := os.get_executable_path(context.temp_allocator)
 	cmd := make([dynamic]string, context.temp_allocator)
-	append(&cmd, "perl", "-MPOSIX=setsid", "-e", "setsid(); exec @ARGV", exe, "session", "serve", "--app", app, "--token", token)
+	append(&cmd, "perl", "-MPOSIX=setsid", "-e", "setsid(); exec @ARGV", exe, "session", "serve", "--app", app)
 	if platform != "" do append(&cmd, "--platform", platform)
 	if device != "" do append(&cmd, "--device", device)
 	for e in env do append(&cmd, "-e", e)
 	log := fmt.tprintf("%s/session.log", dir)
-	f, ferr := os.open(log, {.Write, .Create, .Trunc})
+	f, ferr := os.open(log, {.Write, .Create, .Trunc}, {.Read_User, .Write_User})
 	if ferr != nil do return 1, fmt.tprintf("could not create %s: %v", log, ferr)
 	defer os.close(f)
+	_ = os.change_mode(log, {.Read_User, .Write_User}) // one created before
+	// The token in the environment, not the command line: any user of the Mac sees those (ps).
+	environ, _ := os.environ(context.temp_allocator)
+	server_env := make([dynamic]string, 0, len(environ) + 1, context.temp_allocator)
+	append(&server_env, ..environ)
+	append(&server_env, fmt.tprintf("%s=%s", SESSION_TOKEN_ENV, token))
 	// Not our stdin: under `speedrun mcp` it is the client's channel.
 	null, nerr := os.open("/dev/null", {.Read})
 	if nerr != nil do return 1, "could not open /dev/null"
 	defer os.close(null)
-	p, perr := os.process_start({command = cmd[:], stdin = null, stdout = f, stderr = f})
+	p, perr := os.process_start({command = cmd[:], env = server_env[:], stdin = null, stdout = f, stderr = f})
 	if perr != nil do return 1, fmt.tprintf("could not start the session: %v", perr)
 	start := time.tick_now()
 	for time.tick_since(start) < SESSION_START_TIMEOUT {
@@ -284,17 +300,22 @@ get_u32 :: proc(b: []u8) -> u32 {
 
 @(private = "file")
 session_serve :: proc(args: []string) -> int {
-	app, platform, device, token := "", "", "", ""
+	app, platform, device := "", "", ""
 	env: [dynamic]string
 	for i := 0; i + 1 < len(args); i += 2 {
 		switch args[i] {
 		case "--app":      app = args[i + 1]
 		case "--platform": platform = args[i + 1]
 		case "--device":   device = args[i + 1]
-		case "--token":    token = args[i + 1]
 		case "-e":         append(&env, args[i + 1])
 		}
 	}
+	token := os.get_env(SESSION_TOKEN_ENV, context.allocator)
+	if token == "" {
+		fmt.eprintln("no session token (session serve is started by session start)")
+		return 1
+	}
+	os.unset_env(SESSION_TOKEN_ENV) // not for the tools it starts
 	in_session = true
 	dev := Device {
 		port = 7777,
@@ -369,7 +390,7 @@ session_serve :: proc(args: []string) -> int {
 	info := Session_Info{os.get_pid(), bound.port, token, app, "ios" if dev.platform == .IOS else "android", name, device_id}
 	data, _ := json.marshal(info, {}, context.temp_allocator)
 	tmp := fmt.tprintf("%s.tmp", info_path())
-	if os.write_entire_file(tmp, data) != nil || os.rename(tmp, info_path()) != nil {
+	if os.write_entire_file(tmp, data, {.Read_User, .Write_User}) != nil || os.rename(tmp, info_path()) != nil {
 		fmt.eprintln("could not write", info_path())
 		return 1
 	}
@@ -396,6 +417,7 @@ session_serve :: proc(args: []string) -> int {
 			continue
 		}
 		last = time.tick_now()
+		_ = net.set_option(client, .Receive_Timeout, SESSION_REQUEST_WAIT)
 		stop := session_handle(&s, client)
 		net.close(client)
 		free_all(context.temp_allocator)
@@ -410,6 +432,7 @@ session_serve :: proc(args: []string) -> int {
 session_handle :: proc(s: ^Session, sock: net.TCP_Socket) -> (stop: bool) {
 	size: [4]u8
 	if !recv_all(sock, size[:]) do return
+	if get_u32(size[:]) > SESSION_REQUEST_MAX do return
 	body := make([]u8, int(get_u32(size[:])), context.temp_allocator)
 	if !recv_all(sock, body) do return
 	token, _, rest := strings.partition(string(body), "\n")
@@ -418,7 +441,7 @@ session_handle :: proc(s: ^Session, sock: net.TCP_Socket) -> (stop: bool) {
 	code: u8
 	out: string
 	switch {
-	case token != s.token:
+	case crypto.compare_constant_time(transmute([]u8)token, transmute([]u8)s.token) != 1:
 		code, out = 2, "not this session's token"
 	case (verb == "do" || verb == "look") && !agent_alive(s):
 		code, out = 1, "The device's agent stopped and could not be started again (see the session's log); speedrun session stop, then start one."

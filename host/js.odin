@@ -161,15 +161,25 @@ js_http :: proc "c" (user: rawptr, request: [^]u8, n: c.size_t) -> [^]u8 {
 // One request as okhttp sends it: redirects followed, gzip decoded, a string
 // body without a Content-Type unless given, 5 minutes at most. The reply's headers are
 // lowercased, repeated ones joined with ",".
+// A new file in the temp folder, made here (exclusively: a name already taken, such as a
+// link another user left in a shared /tmp, is not used) and readable by the user alone. ""
+// when it cannot be made.
+private_temp_file :: proc(pattern: string, allocator := context.temp_allocator) -> string {
+	f, err := os.create_temp_file("", pattern)
+	if err != nil do return ""
+	name := strings.clone(os.name(f), allocator)
+	os.close(f)
+	_ = os.change_mode(name, {.Read_User, .Write_User})
+	return name
+}
+
 @(private = "file")
 http_request :: proc(r: ^Runner, text: string) -> (reply: Http_Reply) {
 	req: Http_Request
 	if json.unmarshal_string(text, &req) != nil do return {error = "http: malformed request"}
 
-	tmp, _ := os.temp_directory(context.temp_allocator)
-	r.http_seq += 1
-	base := fmt.tprintf("%s/speedrun-http-%d-%d", strings.trim_right(tmp, "/"), os.get_pid(), r.http_seq)
-	body_in, body_out, headers_out := strings.concatenate({base, ".request"}), strings.concatenate({base, ".body"}), strings.concatenate({base, ".headers"})
+	body_in, body_out, headers_out := private_temp_file("speedrun-http-*.request"), private_temp_file("speedrun-http-*.body"), private_temp_file("speedrun-http-*.headers")
+	if body_in == "" || body_out == "" || headers_out == "" do return {error = "http: cannot create temp files"}
 	defer {
 		os.remove(body_in)
 		os.remove(body_out)
@@ -177,7 +187,8 @@ http_request :: proc(r: ^Runner, text: string) -> (reply: Http_Reply) {
 	}
 
 	cmd := make([dynamic]string, 0, 32, context.temp_allocator)
-	append(&cmd, "curl", "-sS", "-L", "--compressed", "--max-time", "300", "-o", body_out, "-D", headers_out, "-w", "%{http_code}")
+	// http and https only, redirects too, as Maestro's OkHttp: no file://, no other protocol.
+	append(&cmd, "curl", "-sS", "-L", "--proto", "=http,https", "--proto-redir", "=http,https", "--compressed", "--max-time", "300", "-o", body_out, "-D", headers_out, "-w", "%{http_code}")
 	has_body := req.has_body || req.form
 	switch {
 	case req.method == "HEAD":                 append(&cmd, "-I")

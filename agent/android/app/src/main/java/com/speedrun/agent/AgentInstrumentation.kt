@@ -16,10 +16,12 @@ import android.os.Bundle
  */
 class AgentInstrumentation : Instrumentation() {
     private var port = 7777
+    private var token = ""
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         port = arguments?.getString("port")?.toIntOrNull() ?: 7777
+        token = arguments?.getString("token") ?: ""
         start() // spawns a thread that calls onStart()
     }
 
@@ -29,7 +31,7 @@ class AgentInstrumentation : Instrumentation() {
             val ua = uiAutomation
             val injector = UiAutomationInjector(ua)
             AgentLog.i("injection path: ${InjectPath.describe(injector.path)}")
-            Agent(ua, injector).serve(port)
+            Agent(ua, injector).serve(port, token)
         } catch (t: Throwable) {
             AgentLog.e("agent crashed", t)
         }

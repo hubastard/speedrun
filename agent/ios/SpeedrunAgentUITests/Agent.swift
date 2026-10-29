@@ -5,7 +5,8 @@
 // next one reuses it. It stops on QUIT, or after SPEEDRUN_IDLE_S seconds (default 600)
 // without a client. Each new client starts from fresh state (no cached screen).
 //
-// Wire protocol (big-endian), the Android agent's framing:
+// Wire protocol (big-endian), the Android agent's framing. A connection starts with the
+// token given at launch (SPEEDRUN_TOKEN, Server.tokenLength characters; see Server.run), then:
 //   request  = u8 op, then op-specific fields
 //   response = u32 length, u32 agent_us, body[length - 4]
 //   str = u16 len + utf8; bytes = u32 len + data
@@ -71,9 +72,15 @@ final class SpeedrunAgentUITests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         let port = UInt16(env["SPEEDRUN_PORT"] ?? "") ?? 7778
         let idle = TimeInterval(env["SPEEDRUN_IDLE_S"] ?? "") ?? 600
+        // Every connection starts with it (Server.run): any process on the Mac can reach
+        // 127.0.0.1, other users' included.
+        guard let token = env["SPEEDRUN_TOKEN"], token.utf8.count == Server.tokenLength else {
+            NSLog("speedrun: no SPEEDRUN_TOKEN (\(Server.tokenLength) characters): not serving")
+            return
+        }
         let ax = Private.setAXTimeout(Screen.axTimeoutSeconds)
         NSLog("speedrun: accessibility timeout \(ax ? "\(Screen.axTimeoutSeconds) s" : "unchanged (no setter in this Xcode)")")
-        let server = try Server(port: port, idleSeconds: idle)
+        let server = try Server(port: port, idleSeconds: idle, token: Data(token.utf8))
         Thread.detachNewThread { server.run() }
         NSLog("speedrun: listening on 127.0.0.1:\(port)")
         // XCTest APIs belong on the main thread: requests hop here, so keep its run loop going.
@@ -89,11 +96,16 @@ final class Server {
     private let listener: Int32
     private let ops = Ops()
     private let idleNs: UInt64
+    private let token: Data
+    /// The token's length, and how long a new connection may take to send it.
+    static let tokenLength = 32
+    private static let tokenWaitS = 5
     /// Set by the server thread (QUIT, idle), read by the main thread.
     private(set) var stopped = false
 
-    init(port: UInt16, idleSeconds: TimeInterval) throws {
+    init(port: UInt16, idleSeconds: TimeInterval, token: Data) throws {
         idleNs = UInt64(max(idleSeconds, 1) * 1_000_000_000)
+        self.token = token
         listener = socket(AF_INET, SOCK_STREAM, 0)
         var one: Int32 = 1
         setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
@@ -127,12 +139,32 @@ final class Server {
             var one: Int32 = 1
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
             setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-            onMain { ops.reset() }
-            serve(Conn(fd: fd))
+            let conn = Conn(fd: fd)
+            if authenticated(fd: fd, conn: conn) {
+                onMain { ops.reset() }
+                serve(conn)
+            } else {
+                NSLog("speedrun: a client without the token: closed")
+            }
             close(fd)
             lastClient = DispatchTime.now().uptimeNanoseconds
         }
         close(listener)
+    }
+
+    /// The connection's first bytes are the token, sent within tokenWaitS (a silent client
+    /// would hold the one-client server); compared in constant time.
+    private func authenticated(fd: Int32, conn: Conn) -> Bool {
+        var wait = timeval(tv_sec: Self.tokenWaitS, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+        defer {
+            var none = timeval(tv_sec: 0, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &none, socklen_t(MemoryLayout<timeval>.size))
+        }
+        guard let got = conn.read(Self.tokenLength), got.count == token.count else { return false }
+        var diff: UInt8 = 0
+        for (a, b) in zip(got, token) { diff |= a ^ b }
+        return diff == 0
     }
 
     private func serve(_ conn: Conn) {

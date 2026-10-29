@@ -54,7 +54,8 @@ internal object AgentLog {
 }
 
 /**
- * Wire protocol (big-endian):
+ * Wire protocol (big-endian). A connection starts with the agent's token (TOKEN_LENGTH ASCII
+ * characters, given when it was started; see serve), then:
  *   request  = u8 op, then op-specific fields
  *   response = u32 length, u32 agent_us, body[length - 4]
  *   str = u16 len + utf8; bytes = u32 len + data
@@ -178,6 +179,10 @@ private const val SHELL_UID = 2000 // android.os.Process.SHELL_UID
  * UiAutomation injection) and ShellMain (UiAutomation built in a shell-uid process,
  * InputManager injection).
  */
+/** The token every connection starts with (serve), and how long the agent waits for it. */
+const val TOKEN_LENGTH = 32
+private const val TOKEN_WAIT_MS = 5000
+
 class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // elapsedRealtimeNanos of the most recent UI-change accessibility event, from any window
     // and per window id.
@@ -219,16 +224,32 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         }
     }
 
-    fun serve(port: Int) {
+    /**
+     * Serves one client at a time. A connection starts with the token the agent was started
+     * with (TOKEN_LENGTH ASCII characters, within TOKEN_WAIT_MS); without it, it is closed:
+     * 127.0.0.1 is the device's, and any app on it could otherwise connect and run SHELL as the
+     * shell user (or as the agent's app, for the instrumentation).
+     */
+    fun serve(port: Int, token: String) {
+        require(token.length == TOKEN_LENGTH) { "the agent needs a $TOKEN_LENGTH-character token" }
+        val expected = token.toByteArray(Charsets.US_ASCII)
         ServerSocket(port, 1, InetAddress.getByName("127.0.0.1")).use { server ->
             AgentLog.i("listening on 127.0.0.1:$port")
             while (true) {
                 val sock = server.accept()
                 sock.tcpNoDelay = true
-                AgentLog.i("client connected")
                 try {
                     val input = DataInputStream(BufferedInputStream(sock.getInputStream()))
                     val output = DataOutputStream(BufferedOutputStream(sock.getOutputStream(), 256 * 1024))
+                    sock.soTimeout = TOKEN_WAIT_MS
+                    val got = ByteArray(TOKEN_LENGTH)
+                    input.readFully(got)
+                    if (!java.security.MessageDigest.isEqual(got, expected)) {
+                        AgentLog.i("a client without the token: closed")
+                        continue
+                    }
+                    sock.soTimeout = 0
+                    AgentLog.i("client connected")
                     while (true) {
                         val op = input.read()
                         if (op < 0) break

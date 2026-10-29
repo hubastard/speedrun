@@ -10,6 +10,8 @@ package speedrun
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:crypto"
+import "core:encoding/hex"
 import "core:fmt"
 import "core:hash"
 import "core:net"
@@ -314,7 +316,7 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 	if d.instrument {
 		if e := write_local_apk(d); e != "" do return e
 		if out, ok := adb("install", "-r", d.local_apk); !ok do return out
-		cmd := fmt.tprintf("am instrument -w --no-hidden-api-checks -e port %d %s/.AgentInstrumentation", d.port, AGENT_PACKAGE)
+		cmd := fmt.tprintf("am instrument -w --no-hidden-api-checks -e port %d -e token %s %s/.AgentInstrumentation", d.port, new_agent_token(d.port), AGENT_PACKAGE)
 		p, err := os.process_start({command = adb_command("shell", cmd)})
 		if err != nil do return fmt.tprintf("could not run adb: %v", err)
 		d.adb, d.running = p, true
@@ -367,8 +369,8 @@ start_shell_agent :: proc(d: ^Device) -> (log: string, ok: bool) {
 		os.remove(path)
 	}
 	cmd := fmt.tprintf(
-		"CLASSPATH=%s exec app_process / --nice-name=%s %s.ShellMain %d",
-		device_apk(), AGENT_NAME, AGENT_PACKAGE, d.port,
+		"CLASSPATH=%s exec app_process / --nice-name=%s %s.ShellMain %d %s",
+		device_apk(), AGENT_NAME, AGENT_PACKAGE, d.port, new_agent_token(d.port),
 	)
 	p, err := os.process_start({command = adb_command("shell", cmd), stdout = f, stderr = f})
 	if err != nil do return fmt.tprintf("could not run adb: %v", err), false
@@ -417,10 +419,13 @@ ios_start :: proc(d: ^Device) -> string {
 	if ferr != nil do return fmt.tprintf("could not create %s: %v", log, ferr)
 	defer os.close(f)
 	environ, _ := os.environ(context.temp_allocator)
-	env := make([dynamic]string, 0, len(environ) + 3, context.temp_allocator)
+	env := make([dynamic]string, 0, len(environ) + 4, context.temp_allocator)
 	append(&env, ..environ)
 	// TEST_RUNNER_X reaches the runner as X.
 	append(&env, fmt.tprintf("TEST_RUNNER_SPEEDRUN_PORT=%d", d.port))
+	token := new_agent_token(d.port)
+	if e := ios_save_token(d.port, token); e != "" do return e
+	append(&env, fmt.tprintf("TEST_RUNNER_SPEEDRUN_TOKEN=%s", token))
 	append(&env, fmt.tprintf("TEST_RUNNER_SPEEDRUN_BUILD=%s", ios_build_id()))
 	if idle := os.get_env("SPEEDRUN_IDLE_S", context.temp_allocator); idle != "" {
 		append(&env, fmt.tprintf("TEST_RUNNER_SPEEDRUN_IDLE_S=%s", idle))
@@ -518,10 +523,65 @@ ios_stop :: proc(d: ^Device) {
 	d.started = false
 }
 
+// The agents' tokens: a connection to an agent starts with the token it was started with,
+// else the agent closes it. 127.0.0.1 is shared: any app on an Android device could otherwise
+// connect to its agent and run shell commands as the shell user, and any process on the Mac,
+// other users' included, drive the iOS simulator. A new one each time an agent starts; the
+// iOS runner outlives a run, so its token is kept in a file only its user can read.
+AGENT_TOKEN_LENGTH :: 32 // the agents' TOKEN_LENGTH
+agent_tokens: map[int]string // by port
+
+new_agent_token :: proc(port: int) -> string {
+	key: [AGENT_TOKEN_LENGTH / 2]byte
+	crypto.rand_bytes(key[:])
+	token := string(hex.encode(key[:]))
+	agent_tokens[port] = token
+	return token
+}
+
+// ~/.speedrun/agents/ios-<port>.token, the folder and the file the user's alone.
+@(private = "file")
+ios_token_path :: proc(port: int) -> string {
+	return fmt.tprintf("%s/.speedrun/agents/ios-%d.token", os.get_env("HOME", context.temp_allocator), port)
+}
+
+@(private = "file")
+ios_save_token :: proc(port: int, token: string) -> string {
+	path := ios_token_path(port)
+	dir := path[:strings.last_index_byte(path, '/')]
+	if err := os.make_directory_all(dir, {.Read_User, .Write_User, .Execute_User}); err != nil && err != .Exist {
+		return fmt.tprintf("could not create %s: %v", dir, err)
+	}
+	_ = os.change_mode(dir, {.Read_User, .Write_User, .Execute_User})
+	if err := os.write_entire_file(path, token, {.Read_User, .Write_User}); err != nil {
+		return fmt.tprintf("could not write %s: %v", path, err)
+	}
+	return ""
+}
+
+// A connection to the agent on port, its token sent; false when it cannot be made. The iOS
+// runner's token is read from its file when this run did not start it.
+agent_dial :: proc(port: int) -> (sock: net.TCP_Socket, ok: bool) {
+	token, known := agent_tokens[port]
+	if !known {
+		data, err := os.read_entire_file(ios_token_path(port), context.allocator)
+		if err != nil || len(data) != AGENT_TOKEN_LENGTH do return
+		token = string(data)
+		agent_tokens[port] = token
+	}
+	s, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
+	if err != nil do return
+	if n, serr := net.send_tcp(s, transmute([]u8)token); serr != nil || n != len(token) {
+		net.close(s)
+		return
+	}
+	return s, true
+}
+
 // Asks the runner serving on port to stop; false when none answers.
 ios_quit :: proc(port: int) -> bool {
-	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
-	if err != nil do return false
+	sock, ok := agent_dial(port)
+	if !ok do return false
 	defer net.close(sock)
 	c := Conn{sock = sock}
 	defer delete(c.buf)
@@ -531,8 +591,8 @@ ios_quit :: proc(port: int) -> bool {
 // The simulator and build of the runner serving on port; ok is false when none answers.
 @(private = "file")
 ios_info :: proc(port: int) -> (udid, name, build: string, ok: bool) {
-	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
-	if err != nil do return
+	sock, dialed := agent_dial(port)
+	if !dialed do return
 	defer net.close(sock)
 	c := Conn{sock = sock}
 	defer delete(c.buf)
@@ -559,8 +619,8 @@ ios_products :: proc() -> string {
 // another client (the iOS runner serves one at a time) counts as not answering.
 @(private = "file")
 answers_ping :: proc(port: int, timeout: time.Duration = 0) -> bool {
-	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
-	if err != nil do return false
+	sock, dialed := agent_dial(port)
+	if !dialed do return false
 	defer net.close(sock)
 	if timeout > 0 && net.set_option(sock, .Receive_Timeout, timeout) != nil do return false
 	c := Conn{sock = sock}

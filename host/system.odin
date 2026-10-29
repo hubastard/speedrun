@@ -141,7 +141,7 @@ android_launch :: proc(r: ^Runner, comp: string, args: []Launch_Arg) -> Err {
 	// Values can hold spaces: through adb's shell, which quotes, not the agent's.
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, START)
-	strings.write_string(&b, comp)
+	strings.write_string(&b, sh_quote(comp))
 	for a in args {
 		flag: string
 		switch a.kind {
@@ -824,12 +824,14 @@ add_media :: proc(r: ^Runner, files: []string) -> Err {
 // folder needs no permission.
 @(private = "file")
 add_media_ios :: proc(r: ^Runner, file: string) -> Err {
-	tmp, _ := os.temp_directory(context.temp_allocator)
-	copy_path := fmt.tprintf("%s/speedrun-media-%d-%s", strings.trim_right(tmp, "/"), os.get_pid(), filepath.base(file))
 	data, rerr := os.read_entire_file(file, context.temp_allocator)
 	if rerr != nil do return fmt.aprintf("cannot read %s: %v", file, rerr, allocator = r.alloc)
-	if os.write_entire_file(copy_path, data) != nil do return fmt.aprintf("cannot write %s", copy_path, allocator = r.alloc)
+	// The file's own name last: simctl tells a photo from a video by its extension.
+	base, _ := strings.replace_all(filepath.base(file), "*", "_", context.temp_allocator)
+	copy_path := private_temp_file(strings.concatenate({"speedrun-media-*-", base}, context.temp_allocator))
+	if copy_path == "" do return "cannot create a temp file for the media"
 	defer os.remove(copy_path)
+	if os.write_entire_file(copy_path, data) != nil do return fmt.aprintf("cannot write %s", copy_path, allocator = r.alloc)
 
 	null, nerr := os.open("/dev/null", {.Write})
 	if nerr != nil do return "cannot open /dev/null"

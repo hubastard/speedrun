@@ -617,14 +617,11 @@ us :: proc(start: time.Tick) -> f64 {
 // ---- main -----------------------------------------------------------------------------
 
 connect :: proc(port: int) -> (c: Conn, ok: bool) {
-	ep, ep_ok := net.parse_endpoint(fmt.tprintf("127.0.0.1:%d", port))
-	if !ep_ok do return
-
 	// `adb forward` accepts the connection even before the agent listens, so a working
 	// connection is one that answers a PING.
 	for _ in 0 ..< 100 {
-		sock, err := net.dial_tcp(ep)
-		if err == nil {
+		sock, dialed := agent_dial(port)
+		if dialed {
 			_ = net.set_option(sock, .TCP_Nodelay, true)
 			c.sock = sock
 			if _, pok := op_ping(&c); pok do return c, true

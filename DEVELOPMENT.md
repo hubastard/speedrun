@@ -60,6 +60,26 @@ what is still slow: `TO_IMPROVE.md`.
 - `compare.sh` — one flow with speedrun, then Maestro, side by side per command (see
   `TO_IMPROVE.md`).
 
+## Who can connect to what
+
+- The agents listen on 127.0.0.1, the device's on Android and the Mac's on iOS, where others
+  connect too: any app on the Android device (and the agent runs `SHELL` as the shell user),
+  any program or user of the Mac. A connection starts with the agent's token, 32 hex
+  characters the host makes at each start (`new_agent_token`): on the agent's command line on
+  Android (an app cannot read another user id's), in the runner's environment on iOS and in
+  `~/.speedrun/agents/ios-<port>.token` (0600), which a later run reads to use the runner
+  still up. The agent closes a connection that does not start with it within 5 s.
+- The session server (127.0.0.1, a random port): each request carries the token from
+  `session.json`. The session folder is 0700 and its files 0600; `session serve` gets the
+  token in its environment, not its command line (`ps` shows those to every user). It serves
+  one client at a time: one silent for 5 s, or announcing over 16 MB, is dropped.
+- The Android agent's `SHELL` is no shell: it splits the command on spaces and runs it, so a
+  flow's values (an app id, a link) cannot add commands. Only `adb shell` strings go through
+  a shell (launch arguments: quoted, `sh_quote`).
+- Flow scripts' `http` runs curl for http and https only, redirects included: no `file://`.
+- Temp files come from `private_temp_file` (created exclusively, 0600): a shared Linux /tmp
+  can hold another user's link under a predictable name.
+
 ## Setup
 
 1. Android: the SDK with `adb` on PATH, an emulator running (or a device with USB debugging).

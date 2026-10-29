@@ -95,7 +95,6 @@ Runner :: struct {
 	log_node:             ^View_Node,
 	script_dir:           string, // of the running runScript
 	copied_text:          Maybe(string), // the scripts' maestro.copiedText
-	http_seq:             int,
 	api_level:            int, // Android, read when needed (system.odin)
 	flow_dir:             string, // this flow's debug output folder ("" for none)
 	recording:            Recording, // startRecording's, until stopRecording or the end

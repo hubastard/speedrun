@@ -30,7 +30,7 @@ html_report :: proc(suites: []Suite_Result, detailed: bool) -> string {
 		for a in args do fmt.sbprint(b, a)
 	}
 	w(&b, "<html>\n  <head>\n    <title>Test Report</title>\n",
-		"    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\">\n",
+		"    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\" integrity=\"sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH\" crossorigin=\"anonymous\">\n",
 		"  </head>\n  <body>\n")
 	for &s in suites {
 		failed := 0
@@ -104,7 +104,7 @@ html_report :: proc(suites: []Suite_Result, detailed: bool) -> string {
 		}
 		w(&b, "      </div>\n")
 		if detailed do w(&b, "      <style>", DETAILED_CSS, "</style>\n")
-		w(&b, "      <script src=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.min.js\"></script>\n    </div>\n")
+		w(&b, "      <script src=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.min.js\" integrity=\"sha384-0pUGZvbkm6XF6gxjEnlmuGrJXVbNuzT9qBBavbLwCsOGabYfZo0T0to5eqruptLy\" crossorigin=\"anonymous\"></script>\n    </div>\n")
 	}
 	w(&b, "  </body>\n</html>\n")
 	return strings.to_string(b)

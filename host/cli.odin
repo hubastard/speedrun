@@ -384,10 +384,16 @@ debug_output_path :: proc(o: ^Test_Options, plan: ^Plan) -> string {
 	home := os.get_env("HOME", context.allocator)
 	tests := fmt.aprintf("%s/.speedrun/tests", home)
 	if xdg := os.get_env("XDG_STATE_HOME", context.allocator); xdg != "" do tests = fmt.aprintf("%s/speedrun/tests", xdg)
+	out_dir := o.test_output_dir if o.test_output_dir != "" else plan.config.test_output_dir
+	if o.debug_output == "" && (o.flatten || out_dir == "") {
+		// The user's alone: its screenshots and logs show the app under test (other users of
+		// the Mac can read a home folder's subfolders by default).
+		_ = os.make_directory_all(tests, {.Read_User, .Write_User, .Execute_User})
+		_ = os.change_mode(tests, {.Read_User, .Write_User, .Execute_User})
+	}
 	if o.flatten do return absolute(o.debug_output if o.debug_output != "" else tests)
 	y, mon, d, hh, mm, ss := local_time(time.to_unix_nanoseconds(time.now()) / 1_000_000)
 	folder := fmt.tprintf("%04d-%02d-%02d_%02d%02d%02d", y, mon, d, hh, mm, ss)
-	out_dir := o.test_output_dir if o.test_output_dir != "" else plan.config.test_output_dir
 	switch {
 	case out_dir != "":
 		return fmt.aprintf("%s/%s", absolute(out_dir), folder)
@@ -530,12 +536,15 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 	}
 
 	exe, _ := os.get_executable_path(context.allocator)
-	tmp, _ := os.temp_directory(context.allocator)
 	children := make([]os.Process, effective)
 	results := make([]string, effective)
 	for k in 0 ..< effective {
 		d := devices[k]
-		results[k] = fmt.aprintf("%s/speedrun-shard-%d-%d.json", strings.trim_right(tmp, "/"), os.get_pid(), k)
+		results[k] = private_temp_file("speedrun-shard-*.json", context.allocator)
+		if results[k] == "" {
+			fmt.eprintln("could not create a temp file for the shards' results")
+			return 1
+		}
 		base_port := o.port if o.port_given else (IOS_PORT if d.platform == "ios" else 7777)
 		args: [dynamic]string
 		append(&args, exe, "test", "--shard-worker", fmt.aprintf("%d", k), "--shard-result", results[k],

@@ -25,6 +25,11 @@ object ShellMain {
     fun main(args: Array<String>) {
         AgentLog.echoToStdout = true
         val port = args.firstOrNull()?.toIntOrNull() ?: 7777
+        val token = args.getOrNull(1) ?: ""
+        if (token.length != TOKEN_LENGTH) {
+            AgentLog.e("no token: usage ShellMain <port> <token>", null)
+            exitProcess(2)
+        }
 
         // app_process has no main looper, but AccessibilityInteractionClient (created when
         // the UiAutomation connects) builds a Handler on it.
@@ -38,16 +43,16 @@ object ShellMain {
             exitProcess(2)
         }
 
-        Thread({ serve(ua, port) }, "SpeedrunAgentServer").start()
+        Thread({ serve(ua, port, token) }, "SpeedrunAgentServer").start()
         Looper.loop() // runs whatever the framework posts to the main looper
     }
 
-    private fun serve(ua: UiAutomation, port: Int) {
+    private fun serve(ua: UiAutomation, port: Int, token: String) {
         try {
             val uiAutomationInjector = UiAutomationInjector(ua)
             val injector = InputManagerInjector.create(fallback = uiAutomationInjector) ?: uiAutomationInjector
             AgentLog.i("injection path: ${InjectPath.describe(injector.path)}")
-            Agent(ua, injector).serve(port)
+            Agent(ua, injector).serve(port, token)
         } catch (t: Throwable) {
             AgentLog.e("agent crashed", t)
         }
