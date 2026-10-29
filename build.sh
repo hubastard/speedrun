@@ -70,7 +70,9 @@ fi
 echo "== Building speedrun (Odin)"
 # The version --version prints: SPEEDRUN_VERSION, else the git tag or commit.
 VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
-odin build host -o:speed -out:speedrun -define:SPEEDRUN_VERSION="$VERSION" -define:ANDROID_AGENT=$ANDROID \
-  -define:IOS_AGENT_ID="$IOS_AGENT_ID"
+# Odin takes no empty -define: without the iOS agent, IOS_AGENT_ID keeps its default ("").
+ios_define=()
+[ -n "$IOS_AGENT_ID" ] && ios_define=(-define:IOS_AGENT_ID="$IOS_AGENT_ID")
+odin build host -o:speed -out:speedrun -define:SPEEDRUN_VERSION="$VERSION" -define:ANDROID_AGENT=$ANDROID ${ios_define[@]+"${ios_define[@]}"}
 
 echo "Done: ./speedrun test <flow file or folder>"
