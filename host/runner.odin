@@ -27,6 +27,7 @@ MAX_RETRIES_ALLOWED        :: 3
 SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a change ~1 s
 DISABLED_POLL_MS           :: 100 // tap: a disabled element read again this often until it turns on
 DISABLED_WAIT_MS           :: 3_000 // tap: how long at most, then it taps anyway
+UNLISTED_COVER_WAIT_MS     :: 1_500 // tap (iOS): a cover the hit test finds and the tree does not list
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
@@ -864,13 +865,17 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// again where it rests. speedrun's settle does not wait for a spinner (an endless
 		// animation), and an overlay's fade shows nowhere in the hierarchy.
 		if r.debug do debug_at(r, el)
-		if under_loading(r, el) or_return {
+		if blocked, listed := under_loading(r, el) or_return; blocked {
 			t := time.tick_now()
 			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
+			// Nothing listed in the way (no spinner): a cover the tree does not show yet, such as
+			// an overlay fading in, which takes touches before iOS lists it; waited for briefly.
+			if !listed do limit = min(limit, UNLISTED_COVER_WAIT_MS * time.Millisecond)
 			for el >= 0 && time.tick_since(t) < limit {
 				if !read_screen(r) do return AGENT_LOST
 				el = select(r, d.sel) or_return
-				if el < 0 || !(under_loading(r, el) or_return) do break
+				if el < 0 do break
+				if still, _ := under_loading(r, el) or_return; !still do break
 			}
 			if r.debug do fmt.printf("      [under a loading overlay: waited %.0f ms]\n", us(t) / 1000)
 			settle(r, no_change_ms = 0) or_return
@@ -1135,8 +1140,8 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 // overlay takes the tap when it is neither the element nor one of its containers. Android's
 // tree keeps the views' parents (loading_cover).
 @(private = "file")
-under_loading :: proc(r: ^Runner, el: int) -> (bool, Err) {
-	if r.dev.platform != .IOS do return loading_cover(r, el) >= 0, nil
+under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) {
+	if r.dev.platform != .IOS do return loading_cover(r, el) >= 0, true, nil
 	n := r.h.nodes[el]
 	end := el + 1
 	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
@@ -1145,19 +1150,23 @@ under_loading :: proc(r: ^Runner, el: int) -> (bool, Err) {
 		spinner = true
 		break
 	}
-	if !spinner do return false, nil
 	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
-	if !ok do return false, AGENT_LOST
+	if !ok do return false, false, AGENT_LOST
 	if r.debug {
 		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{}
-		fmt.printf("      [a spinner shows; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", hit, h.class, h.left, h.top, h.right, h.bottom, el)
+		fmt.printf("      [%s; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", "a spinner shows" if spinner else "no spinner listed", hit, h.class, h.left, h.top, h.right, h.bottom, el)
 	}
-	return !reaches(r, el, hit), nil
+	// Without a spinner, something the tree lists over the element (a toast, a sticky
+	// header) is left to uncovered_point, which taps the part that shows: only a cover the
+	// tree does not show is waited for.
+	if !spinner && covered_by(r, el) >= 0 do return false, false, nil
+	return !reaches(r, el, hit), spinner, nil
 }
 
 // Whether a touch the hit test took to node `hit` reaches element `el`: the element, a node in
-// it, or one of its containers. An unknown node (-1, or past the last read's) counts as the
-// element: nothing is known to be in the way.
+// it, one of its containers, or a node within its frame (React Native lists a button twice on
+// iOS, siblings with one frame: the hit test may answer the other). An unknown node (-1, or
+// past the last read's) counts as the element: nothing is known to be in the way.
 @(private = "file")
 reaches :: proc(r: ^Runner, el, hit: int) -> bool {
 	if hit < 0 || hit >= len(r.h.nodes) do return true
@@ -1165,7 +1174,8 @@ reaches :: proc(r: ^Runner, el, hit: int) -> bool {
 	for end < len(r.h.nodes) && r.h.nodes[end].depth > r.h.nodes[el].depth do end += 1
 	if hit >= el && hit < end do return true
 	for p := r.h.nodes[el].parent; p >= 0; p = r.h.nodes[p].parent do if p == hit do return true
-	return false
+	e, h := r.h.nodes[el], r.h.nodes[hit]
+	return h.left >= e.left && h.top >= e.top && h.right <= e.right && h.bottom <= e.bottom
 }
 
 // What would take a tap at the element's center in its place (covered_by's rules): a sticky
