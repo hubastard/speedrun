@@ -55,7 +55,7 @@ if command -v xcodebuild >/dev/null; then
   # folder speedrun unpacks it into and the runner build to reuse, so an unchanged agent keeps
   # its runner up across builds. Packed again only when the id changes.
   products=agent/ios/build/Build/Products
-  xctestrun=$(cd "$products" && ls -t -- *.xctestrun | head -1)
+  xctestrun=$(cd "$products" && ls -t -- *.xctestrun | sed -n 1p)
   runner=Release-iphonesimulator/SpeedrunAgentUITests-Runner.app
   IOS_AGENT_ID=$(cd "$products" && find "$xctestrun" "$runner" -type f -print0 | LC_ALL=C sort -z \
     | xargs -0 shasum -a 256 | shasum -a 256 | cut -c 1-16)
