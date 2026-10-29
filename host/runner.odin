@@ -342,12 +342,17 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 			make_dirs(fmt.tprintf("%s/screenshots", dir))
 			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
 		}
-		// iOS: the end of the agent's log (xcodebuild's output: the agent's lines, a crash).
+		// iOS: the end of the agent's log (xcodebuild's output: the agent's lines, a crash),
+		// and after a lost agent, the end of the one before the restart: why it was lost.
 		if r.dev.platform == .IOS {
-			if data, err := os.read_entire_file(ios_runner_log(r.dev.port), context.temp_allocator); err == nil {
-				lines := strings.split_lines(string(data), context.temp_allocator)
-				end := strings.join(lines[max(len(lines) - IOS_AGENT_LOG_LINES, 0):], "\n", context.temp_allocator)
-				write_file(fmt.tprintf("%s/logs/ios-agent.log", dir), transmute([]byte)end)
+			logs := [2][2]string{{ios_runner_log(r.dev.port), "ios-agent.log"}, {ios_runner_prev_log(r.dev.port), "ios-agent-before-restart.log"}}
+			for l, k in logs {
+				if k == 1 && r.reconnects == 0 do continue
+				if data, err := os.read_entire_file(l[0], context.temp_allocator); err == nil {
+					lines := strings.split_lines(string(data), context.temp_allocator)
+					end := strings.join(lines[max(len(lines) - IOS_AGENT_LOG_LINES, 0):], "\n", context.temp_allocator)
+					write_file(fmt.tprintf("%s/logs/%s", dir, l[1]), transmute([]byte)end)
+				}
 			}
 		}
 	}

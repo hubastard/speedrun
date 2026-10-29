@@ -616,7 +616,16 @@ Known differences in how, not what:
   reused). A sub-flow or a repeat is not run again: its own commands are. CI's iOS
   simulator once lost the connection 3 s into the journey, after a first read that took
   41 s (1 s in other runs). A failed iOS flow's debug output has the end of the runner's log
-  (`logs/ios-agent.log`: xcodebuild's output, the agent's NSLog lines, a crash).
+  (`logs/ios-agent.log`: xcodebuild's output, the agent's NSLog lines, a crash), and after a
+  reconnect the end of the one before the restart (`logs/ios-agent-before-restart.log`:
+  `ios_start` keeps it as `speedrun-ios-runner-<port>.prev.log`).
+- iOS: an issue XCTest records inside its own calls (an automation failure: "Failed to get
+  matching snapshot", or an accessibility error such as `kAXErrorIPCTimeout`: "Failed to get
+  system application") ends the test, whatever `continueAfterFailure` says; an `XCTFail`
+  does not. The test is the agent: CI's iOS journey failed this way in 3 runs of 12 (a busy
+  just-booted simulator), the restart took 30-70 s and met the same errors. The agent's test
+  overrides `record(_:)` to log issues instead (`XCTest issue (not recorded)`), and each
+  request fails on its own. The agent's ISSUE op (52) makes XCTest record one, to check it.
 - Android's "… isn't responding" and "… keeps stopping" dialogs are answered on reads
   (`answer_error_dialog`; their buttons' ids, `android:id/aerr_wait` and
   `android:id/aerr_close`, are the same in every language), and the wait for a launched app

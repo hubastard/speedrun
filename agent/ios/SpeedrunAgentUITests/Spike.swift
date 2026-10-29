@@ -76,6 +76,17 @@ final class Spike {
             out.u8(exists ? 1 : 0)
             out.u8(hittable ? 1 : 0)
             out.u32(micros(since: t))
+        case 52: // ISSUE
+            // Makes XCTest record an issue, as an accessibility error inside its calls does: 0 an
+            // XCTFail, 1 an automation failure (the frame of an element that is not there).
+            let kind = try conn.readI32()
+            onMain {
+                if kind == 0 {
+                    XCTFail("speedrun: a test issue (ISSUE op)")
+                } else {
+                    _ = self.app.descendants(matching: .any).matching(identifier: "speedrun-none").firstMatch.frame
+                }
+            }
         default:
             throw AgentError(message: "unknown op \(op)")
         }

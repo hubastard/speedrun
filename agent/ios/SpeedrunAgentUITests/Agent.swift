@@ -64,6 +64,8 @@
 //        wait 0: returns once sent (spike/swipe.py traces the content meanwhile)
 //  51 HITTABLE   str identifier             -> u8 exists, u8 hittable, u32 us
 //        XCUIElement.isHittable of the first element with that identifier
+//  52 ISSUE      i32 kind                   -> (empty)
+//        makes XCTest record an issue: 0 an XCTFail, 1 an automation failure
 import XCTest
 import Darwin
 
@@ -86,6 +88,16 @@ final class SpeedrunAgentUITests: XCTestCase {
         // XCTest APIs belong on the main thread: requests hop here, so keep its run loop going.
         while !server.stopped { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5)) }
         NSLog("speedrun: stopped")
+    }
+
+    /// An issue XCTest records inside its own calls (an accessibility error: "Failed to get
+    /// system application", "Failed to get matching snapshot") ends the test, so the agent,
+    /// whatever continueAfterFailure says: on a busy CI simulator one accessibility timeout
+    /// lost the agent, and its restart (30-70 s) met the same errors. The agent serves
+    /// requests; each one fails on its own (a read retries, an op that throws closes the
+    /// connection). Issues are logged instead of recorded.
+    override func record(_ issue: XCTIssue) {
+        NSLog("speedrun: XCTest issue (not recorded): \(issue.compactDescription)")
     }
 }
 

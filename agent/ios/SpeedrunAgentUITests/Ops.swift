@@ -86,7 +86,7 @@ final class Ops {
         case 24: // HIT
             let x = try conn.readI32(), y = try conn.readI32()
             out.i32(onMain { screen.hit(x: x, y: y) })
-        case 40...51:
+        case 40...52:
             try spike.handle(op: op, conn: conn, out: &out)
         default:
             throw AgentError(message: "unknown op \(op)")

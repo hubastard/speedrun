@@ -425,6 +425,10 @@ ios_start :: proc(d: ^Device) -> string {
 	ios_end_runners(d.udid)
 
 	log := ios_runner_log(d.port)
+	// The previous runner's log is kept: after a lost agent (reconnect), its end says why.
+	if info, serr := os.stat(log, context.temp_allocator); serr == nil && info.size > 0 {
+		_ = os.rename(log, ios_runner_prev_log(d.port))
+	}
 	f, ferr := os.open(log, {.Write, .Create, .Trunc})
 	if ferr != nil do return fmt.tprintf("could not create %s: %v", log, ferr)
 	defer os.close(f)
@@ -472,6 +476,12 @@ ios_start :: proc(d: ^Device) -> string {
 ios_runner_log :: proc(port: int) -> string {
 	tmp, _ := os.temp_directory(context.temp_allocator)
 	return fmt.tprintf("%s/speedrun-ios-runner-%d.log", strings.trim_right(tmp, "/"), port)
+}
+
+// The runner's log before the last start (ios_start).
+ios_runner_prev_log :: proc(port: int) -> string {
+	tmp, _ := os.temp_directory(context.temp_allocator)
+	return fmt.tprintf("%s/speedrun-ios-runner-%d.prev.log", strings.trim_right(tmp, "/"), port)
 }
 
 // After the agent's connection was lost: nothing to do if the agent answers a new one (it
