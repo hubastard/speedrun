@@ -2375,12 +2375,19 @@ text_match :: proc(rx: ^Rx, value: string) -> bool {
 	return rx_full(rx, stripped)
 }
 
+// The regex engine's scratch and captures for one match, freed before the next. A lookup
+// matches every node on every read while it waits, and a flow does not free the temp
+// allocator: there it grew ~9 MB a read, past 1 GB in seconds on Android (issue #1).
+@(private = "file", thread_local)
+rx_scratch: virtual.Arena
+
 // regex.matches(value) || regex.pattern == value
 rx_full :: proc(rx: ^Rx, value: string) -> bool {
 	if rx.literal do return strings.equal_fold(rx.pattern, value)
 	if value == rx.pattern do return true
-	cap, ok := regex.match(rx.re, value, context.temp_allocator, context.temp_allocator)
-	_ = cap
+	virtual.arena_free_all(&rx_scratch)
+	scratch := virtual.arena_allocator(&rx_scratch)
+	_, ok := regex.match(rx.re, value, scratch, scratch)
 	return ok
 }
 
