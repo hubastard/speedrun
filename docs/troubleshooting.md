@@ -20,8 +20,8 @@
   adb shell settings put global hide_error_dialogs 1
   adb shell 'am force-stop $(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME | tail -n 1 | cut -d/ -f1)'
   ```
-- **The iOS agent does not start.** A release's agent is built with one Xcode (the archive's
-  `README.txt` names it). With a much different Xcode, build Speedrun from source. The
+- **The iOS agent does not start.** A release's agent is built with one Xcode (the release
+  notes name it). With a much different Xcode, build Speedrun from source. The
   agent's own log is `$TMPDIR/speedrun-ios-runner-7778.log`.
 - **More detail:** `SPEEDRUN_DEBUG=1 speedrun test …` prints every screen read and shell
   command with its time, and for each tap what lies at its point. Agent logs on Android:

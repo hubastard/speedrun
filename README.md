@@ -44,8 +44,8 @@ appId: com.example.app
   before tapping it, so the same flow passes on a small phone.
 - **Black-box.** Any build of your app, release builds included, through the platform's
   accessibility layer. Tested on native and React Native apps.
-- **One download.** A single binary and its iOS agent: no JVM, no drivers to install, no SDK
-  in your app.
+- **One file.** The Android and iOS agents are built in: no JVM, no drivers to install, no
+  SDK in your app.
 - **Ready for CI.** JUnit and HTML reports, sharding across devices, tags, and a debug folder
   with screenshots and logs for every failure. It answers the "isn't responding" dialogs a
   freshly booted emulator puts up, and reconnects to its agent if the agent crashes.
@@ -261,7 +261,7 @@ app is ready instead of after a fixed wait.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
 - **iOS:** Xcode and a booted simulator. Real iOS devices are not supported yet. A release's
-  iOS agent is built with one Xcode (its `README.txt` names it); with a much different Xcode,
+  iOS agent is built with one Xcode (its release notes name it); with a much different Xcode,
   build from source.
 - `curl`, for flow scripts that make HTTP requests.
 
