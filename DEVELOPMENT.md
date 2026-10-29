@@ -79,6 +79,9 @@ what is still slow: `TO_IMPROVE.md`.
 - Flow scripts' `http` runs curl for http and https only, redirects included: no `file://`.
 - Temp files come from `private_temp_file` (created exclusively, 0600): a shared Linux /tmp
   can hold another user's link under a predictable name.
+- Releases: `install.sh` (and so `speedrun update`) checks the package against the SHA-256
+  published next to it. The new-release check (`update.odin`) is one request a day to
+  GitHub's API, in the background.
 
 ## Setup
 

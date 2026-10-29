@@ -199,6 +199,7 @@ session_start :: proc(args: []string) -> int {
 // Starts the session process and waits until it serves (or says why it did not start).
 start_session :: proc(app, platform, device: string, env: []string) -> (code: int, text: string) {
 	if app == "" do return 2, "A session needs the app's id (--app): the app its commands are for (launchApp's)."
+	update_check_start()
 	if info, ok := session_running(); ok {
 		if info.app == app && (device == "" || device == info.device_id) {
 			return 0, fmt.tprintf("A session is running already: %s, app %s.", info.device, info.app)
@@ -239,7 +240,9 @@ start_session :: proc(app, platform, device: string, env: []string) -> (code: in
 	start := time.tick_now()
 	for time.tick_since(start) < SESSION_START_TIMEOUT {
 		if info, ok := session_running(); ok && info.pid == p.pid {
-			return 0, fmt.tprintf("Session on %s (%s), app %s. Next: look at the screen, then run commands.", info.device, info.platform, info.app)
+			text = fmt.tprintf("Session on %s (%s), app %s. Next: look at the screen, then run commands.", info.device, info.platform, info.app)
+			if notice := update_notice(); notice != "" do text = fmt.tprintf("%s\n%s", text, notice)
+			return 0, text
 		}
 		if state, werr := os.process_wait(p, 0); werr == nil && state.exited {
 			data, _ := os.read_entire_file(log, context.temp_allocator)

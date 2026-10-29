@@ -893,7 +893,12 @@ run_cli :: proc(args: []string) -> int {
 			value := inline if eq != "" else (args[i + 1] if i + 1 < len(args) else "")
 			switch name {
 			case "test":
-				return run_test_cli(args[i + 1:], platform, device)
+				// Not in a shard's process: the run that started it says it once.
+				worker := slice.contains(args[i + 1:], "--shard-worker")
+				if !worker do update_check_start()
+				code := run_test_cli(args[i + 1:], platform, device)
+				if notice := update_notice(); notice != "" && !worker do fmt.eprintf("\n%s\n", notice)
+				return code
 			case "-p", "--platform":
 				platform = value
 				if eq == "" do i += 1
@@ -938,6 +943,8 @@ run_cli :: proc(args: []string) -> int {
 			return 0
 		case a == "--version":
 			fmt.printfln("speedrun %s", VERSION)
+			update_check_start()
+			if notice := update_notice(); notice != "" do fmt.println(notice)
 			return 0
 		case a == "--plain":
 			plain = true

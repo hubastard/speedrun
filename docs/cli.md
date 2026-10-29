@@ -46,8 +46,13 @@ speedrun --help
 ```
 
 `speedrun update` downloads the release with the installer (`install.sh`) into the folder the
-running `speedrun` is in, leaving your PATH and shell profile alone. A speedrun built from
-source refuses: update it with `git pull` and `./build.sh`.
+running `speedrun` is in, leaving your PATH and shell profile alone, after checking the
+download against the SHA-256 published with it. A speedrun built from source refuses: update
+it with `git pull` and `./build.sh`.
+
+`speedrun test`, `speedrun session start` and `speedrun --version` end with a line when a newer
+release is out. They ask GitHub at most once a day, in the background (a command never waits
+for the answer), and not on CI (`CI` set) or with `SPEEDRUN_NO_UPDATE_CHECK=1`.
 
 A session keeps a device connected between commands ([Sessions](sessions.md)):
 
@@ -70,6 +75,7 @@ speedrun mcp                    # the session's verbs as an MCP server, on stdin
 |---|---|
 | `SPEEDRUN_IDLE_S` | iOS: seconds of inactivity before the agent stops (default 600). |
 | `SPEEDRUN_DEBUG=1` | Print every screen read and shell command with its time. |
+| `SPEEDRUN_NO_UPDATE_CHECK=1` | Do not ask GitHub whether a newer release is out. |
 | `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
 | `SPEEDRUN_REDUCE_MOTION=1` | iOS: turn the simulator's Reduce Motion on for the run (then back as it was). React Native's animations end at once: a suite ran ~10% faster. Some apps lay themselves out differently with it. |

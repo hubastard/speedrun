@@ -62,7 +62,7 @@ appId: com.example.app
    (`SPEEDRUN_VERSION=v0.1.7` picks a release). Or download the archive from the
    [releases](https://github.com/hubastard/speedrun/releases) and keep its `agent/` folder next
    to the binary. To build it yourself, see [Building from source](#building-from-source).
-   Later, `speedrun update` installs the newest release in its place.
+   Speedrun says when a newer release is out; `speedrun update` installs it in its place.
 
 2. **Write a flow** ([how](docs/flows.md)), or use the ones you have:
 
