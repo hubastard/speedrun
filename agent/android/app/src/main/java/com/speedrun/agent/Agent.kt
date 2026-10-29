@@ -127,7 +127,8 @@ internal object AgentLog {
  *                                               u32 events
  *        status: 0 = UI changed then went quiet, 1 = nothing changed, 2 = timeout
  *        method: 0 = window switches, frame stats and the active window's accessibility
- *                events, plus the idle probe; 1 = accessibility-event fallback
+ *                events, plus the idle probe; 1 = accessibility-event fallback; 3 = either,
+ *                then the tree with an endless animation left out (Restless)
  *        frames/events = change signals seen of each kind
  *        times are measured from the last action (TAP, KEY, SWIPE, TYPE, ERASE, PRESS, MARK).
  *
@@ -138,6 +139,11 @@ internal object AgentLog {
  *      (no window switch) last seen as an event, and
  *   3. an accessibility round trip to the app (served on its main thread) returns fast,
  *      which means the main thread is idle and not about to produce more frames.
+ * An animation that never ends (an Animated loop, a ticker, a counter) draws frames forever:
+ * once changes have gone on for RESTLESS_START_MS, the tree is read too, and the UI is settled
+ * (method 3) when it holds still but for a few elements that change on every read (Restless),
+ * the main thread idle. Before, such a screen settled only in the loop's rare pauses, else at
+ * the timeout: 10 s per tap.
  */
 private object Op {
     const val PING = 1
@@ -171,6 +177,16 @@ private const val SWIPE_LIFT_GAP_MS = 25L
 // Quiet time needed after a UI-change accessibility event: apps send content-change and
 // scroll events at most every ~100 ms, so a shorter gap does not prove the UI stopped.
 private const val EVENT_QUIET_MS = 120
+
+// Endless animations (see Settle): the tree is read every RESTLESS_READ_MS once changes have
+// gone on for RESTLESS_START_MS since the action (or the last window switch). An element whose
+// frame or text changed on every read for RESTLESS_MS, while most of the tree holds still, is
+// restless; a pause of up to RESTLESS_PAUSE_MS does not end its moving (a loop turning
+// around). The iOS agent's values (Screen.swift).
+private const val RESTLESS_START_NS = 500_000_000L
+private const val RESTLESS_READ_NS = 100_000_000L
+private const val RESTLESS_NS = 500_000_000L
+private const val RESTLESS_PAUSE_NS = 600_000_000L
 
 private const val SHELL_UID = 2000 // android.os.Process.SHELL_UID
 
@@ -739,6 +755,105 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     /**
+     * The active window's tree as SETTLE reads it while something keeps changing: a signature
+     * of its visible nodes (what each is, where, what it says), restless nodes' frames and texts
+     * left out (RESTLESS_NS), as the iOS agent's Screen.digest. Nodes are told apart by kind,
+     * id and depth, and by their order when alike, so a counter whose text changes stays one
+     * node. The reads go through UiAutomation's node cache, which accessibility events refresh:
+     * a change the app reports is seen.
+     */
+    private inner class Restless {
+        private val rect = Rect()
+        private var lastState = HashMap<Long, Long>()
+        private var movingSince = HashMap<Long, Long>()
+        private var movedAt = HashMap<Long, Long>()
+        private var lastSignature: Long? = null
+        private val ids = ArrayList<Long>(256)
+        private val states = ArrayList<Long>(256)
+
+        fun reset() {
+            lastState.clear()
+            movingSince.clear()
+            movedAt.clear()
+            lastSignature = null
+        }
+
+        /** Reads the tree: whether its signature is the previous read's. */
+        fun steady(now: Long): Boolean {
+            val root = ua.rootInActiveWindow
+            if (root == null) {
+                lastSignature = null
+                return false
+            }
+            ids.clear()
+            states.clear()
+            val alike = HashMap<Long, Int>()
+            val nodes = ArrayDeque<AccessibilityNodeInfo>()
+            val depths = ArrayDeque<Int>()
+            nodes.addLast(root)
+            depths.addLast(0)
+            while (nodes.isNotEmpty()) {
+                val n = nodes.removeLast()
+                val depth = depths.removeLast()
+                var id = (n.className?.toString()?.hashCode() ?: 0).toLong()
+                id = id * 31 + (n.viewIdResourceName?.hashCode() ?: 0)
+                id = id * 31 + depth
+                val k = alike.getOrDefault(id, 0)
+                alike[id] = k + 1
+                if (k > 0) id = id * -7046029254386353131L + k
+                n.getBoundsInScreen(rect)
+                var st = rect.left.toLong()
+                st = st * 31 + rect.top
+                st = st * 31 + rect.right
+                st = st * 31 + rect.bottom
+                st = st * 31 + (n.text?.toString()?.hashCode() ?: 0)
+                st = st * 31 + (n.contentDescription?.toString()?.hashCode() ?: 0)
+                st = st * 31 + (if (n.isChecked) 1 else 0) + (if (n.isSelected) 2 else 0)
+                ids.add(id)
+                states.add(st)
+                for (i in n.childCount - 1 downTo 0) {
+                    val c = n.getChild(i) ?: continue
+                    if (!c.isVisibleToUser) continue
+                    nodes.addLast(c)
+                    depths.addLast(depth + 1)
+                }
+            }
+            val state = HashMap<Long, Long>(ids.size * 2)
+            val moving = HashMap<Long, Long>()
+            val moved = HashMap<Long, Long>()
+            for (k in ids.indices) {
+                val id = ids[k]
+                state[id] = states[k]
+                val was = lastState[id]
+                if (was != null && was != states[k]) {
+                    moving[id] = movingSince[id] ?: now
+                    moved[id] = now
+                } else {
+                    val since = movingSince[id]
+                    val at = movedAt[id]
+                    if (since != null && at != null && now - at < RESTLESS_PAUSE_NS) { // paused: still moving
+                        moving[id] = since
+                        moved[id] = at
+                    }
+                }
+            }
+            lastState = state
+            movingSince = moving
+            movedAt = moved
+            val few = moving.size * 3 <= ids.size
+            var sig = ids.size.toLong()
+            for (k in ids.indices) {
+                sig = sig * 31 + ids[k]
+                val since = moving[ids[k]]
+                if (!(few && since != null && now - since >= RESTLESS_NS)) sig = sig * 31 + states[k]
+            }
+            val same = sig == lastSignature
+            lastSignature = sig
+            return same
+        }
+    }
+
+    /**
      * Decided per call. The window we acted on may already be gone (BACK closes it), which is
      * a change in itself: settleFrames() then follows the new active window.
      */
@@ -771,6 +886,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         var events = 0
         var lastWasEvent = false    // the last change seen was an event
         var switched = false        // the active window changed since the action
+        var method = 0
+
+        val restless = Restless()
+        var restlessFrom = start    // changes since: the action, or the last window switch
+        var nextTreeRead = 0L
+        var steadyReads = 0         // tree reads in a row that agreed with the one before
 
         fun poll(): Boolean { // returns true if something changed
             val w = activeWindowId()
@@ -779,6 +900,9 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 seen = Long.MIN_VALUE
                 lastWasEvent = false
                 switched = true
+                restlessFrom = SystemClock.elapsedRealtimeNanos()
+                restless.reset()
+                steadyReads = 0
                 if (w >= 0) try { ua.clearWindowContentFrameStats(w) } catch (e: Exception) { }
                 return true
             }
@@ -827,6 +951,23 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                     status = if (changed) 0 else 1
                     break
                 }
+            } else if (changed && now - restlessFrom >= RESTLESS_START_NS && now >= nextTreeRead) {
+                // Still changing: maybe an animation that never ends (see Settle).
+                steadyReads = if (restless.steady(now)) steadyReads + 1 else 0
+                nextTreeRead = SystemClock.elapsedRealtimeNanos() + RESTLESS_READ_NS
+                if (steadyReads >= 2) {
+                    val p = probeMainThread()
+                    probes++
+                    probeMaxUs = maxOf(probeMaxUs, p)
+                    now = SystemClock.elapsedRealtimeNanos()
+                    if (p <= busyUs && activeWindowId() == window) {
+                        status = 0
+                        method = 3
+                        last = now
+                        break
+                    }
+                    steadyReads = 0
+                }
             }
             if (now - start >= timeout) { status = 2; break }
             Thread.sleep(5)
@@ -835,7 +976,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeByte(status)
         body.writeInt(if (changed) ((last - start) / 1000).toInt() else 0)
         body.writeInt(((now - start) / 1000).toInt())
-        body.writeByte(0)
+        body.writeByte(method)
         body.writeInt(frames)
         body.writeInt(probes)
         body.writeInt(minOf(probeMaxUs, Int.MAX_VALUE.toLong()).toInt())
@@ -850,22 +991,40 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         val timeout = timeoutMs * 1_000_000L
         var status = 2
         var now = start
+        var method = 1
+        val restless = Restless()
+        var nextTreeRead = 0L
+        var steadyReads = 0
         while (true) {
             now = SystemClock.elapsedRealtimeNanos()
             val last = lastChange.get()
             if (last > start) {
                 if (now - last >= quiet) { status = 0; break }
+                if (now - start >= RESTLESS_START_NS && now >= nextTreeRead) {
+                    // Still changing: maybe an animation that never ends (see Settle).
+                    steadyReads = if (restless.steady(now)) steadyReads + 1 else 0
+                    nextTreeRead = SystemClock.elapsedRealtimeNanos() + RESTLESS_READ_NS
+                    if (steadyReads >= 2) {
+                        if (probeMainThread() <= 10_000L) { // an idle main thread answers in ~1 ms
+                            now = SystemClock.elapsedRealtimeNanos()
+                            status = 0
+                            method = 3
+                            break
+                        }
+                        steadyReads = 0
+                    }
+                }
             } else if (now - start >= noChange) {
                 status = 1; break
             }
             if (now - start >= timeout) { status = 2; break }
             Thread.sleep(1)
         }
-        val last = lastChange.get()
+        val last = if (method == 3) now else lastChange.get()
         body.writeByte(status)
         body.writeInt(if (last > start) ((last - start) / 1000).toInt() else 0)
         body.writeInt(((now - start) / 1000).toInt())
-        body.writeByte(1)
+        body.writeByte(method)
         body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)

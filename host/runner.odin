@@ -1920,7 +1920,7 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
 	if !ok do return .Timeout, AGENT_LOST
-	if r.debug do fmt.printf("      [settle %v: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
+	if r.debug do fmt.printf("      [settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
 	return res.status, nil
 }
 

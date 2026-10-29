@@ -689,6 +689,18 @@ Known differences in how, not what:
   of it, and with one of Speedrun Bench's three skeleton highlights paused for a read the
   settle after "Continue as guest" waited for the feed and its promo (2.3–3.9 s) instead
   of 1.1 s, in 4 runs of 6 (found through sessions: `speedrun do` per step).
+- Android screens with an endless animation: an Animated loop (native or JS driver) or a
+  counter draws a frame every ~18 ms forever, and the settle needs 34 ms with none. It ended
+  only when a read fell in the loop's turnaround, at random (1-7 s), else at its 10 s
+  timeout: the animations flow took 81-148 s, three of its scenes timing out on most taps.
+  Now, once changes have gone on for 500 ms, the agent also reads the active window's tree
+  every 100 ms (`Restless` in Agent.kt), with the iOS rules: a node whose frame or text
+  changed on every read for 500 ms, at most a third of them changing, is left out of the
+  signature (a pause under 600 ms does not end its moving), and three reads that agree, the
+  main thread idle, settle the screen (method 3, "an endless animation left out" in
+  SPEEDRUN_DEBUG). Nodes are told apart by kind, id and depth (and order), not their text,
+  so a counter stays one node. Each of those taps 1.4 s; the flow 35 s; the other scenes,
+  and screens whose changes end within 500 ms, settle as before.
 - `SPEEDRUN_CONDITION_TIMEOUT_MS` replaces the 7 s of a `when:` check (not of an
   assertion or a lookup): flows that dismiss popups "if they show" after every action
   otherwise wait 7 s after each. A condition's own `timeout` (a field Maestro does not

@@ -99,6 +99,7 @@ Settle_Method :: enum u8 {
 	Frames,     // window switches, frame stats and accessibility events + main-thread idle probe
 	Events,     // accessibility-event fallback
 	Quiescence, // iOS: XCTest's quiescence, checked against the screen's signature
+	Restless,   // Android: still changing, then the tree held still but for an endless animation
 }
 
 Settle_Result :: struct {
