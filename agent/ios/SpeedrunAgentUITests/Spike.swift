@@ -87,6 +87,24 @@ final class Spike {
                     _ = self.app.descendants(matching: .any).matching(identifier: "speedrun-none").firstMatch.frame
                 }
             }
+        case 53: // HIT_INFO
+            let x = try conn.readI32(), y = try conn.readI32()
+            out.str(onMain { () -> String in
+                let t = DispatchTime.now().uptimeNanoseconds
+                guard let e = self.screen.hitElement(x: x, y: y) else { return "no hit" }
+                let t2 = DispatchTime.now().uptimeNanoseconds
+                let names = ["XC_kAXXCAttributeFrame", "XC_kAXXCAttributeElementType", "XC_kAXXCAttributeIdentifier",
+                             "XC_kAXXCAttributeLabel", "XC_kAXXCAttributeTraits", "XC_kAXXCAttributeIsUserInteractionEnabled"]
+                let keys = names.compactMap { Private.axAttribute($0) }
+                var lines = ["index \(self.screen.index(of: e)); hit \((t2 - t) / 1000) us", "element: \(e)",
+                             "keys: " + keys.map { "\($0) (\(type(of: $0)))" }.joined(separator: ", ")]
+                let t3 = DispatchTime.now().uptimeNanoseconds
+                let attrs = Private.attributes(of: e, keys)
+                lines.append("attributes \((DispatchTime.now().uptimeNanoseconds - t3) / 1000) us")
+                for (k, v) in attrs ?? [:] { lines.append("  \(k): \(v) (\(type(of: v)))") }
+                if attrs == nil { lines.append("  (nil)") }
+                return lines.joined(separator: "\n")
+            })
         default:
             throw AgentError(message: "unknown op \(op)")
         }

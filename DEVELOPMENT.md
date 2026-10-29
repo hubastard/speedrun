@@ -579,10 +579,18 @@ Known differences in how, not what:
   loads, see-through and fading in and out, with a spinner: the element shows through and
   stays in the hierarchy, but the overlay takes the tap, the settle does not wait for the
   spinner (an endless animation), and the fade shows nowhere (the hierarchy has no opacity;
-  iOS drops a view once it is fully transparent). On iOS, while a spinner or progress bar
-  shows outside the element, the agent asks what a touch at the element's center reaches
-  (HIT: the accessibility hit test XCTest's isHittable uses, ~30 ms), and the overlay takes
-  the tap when that is neither the element, inside it, nor one of its containers. The tree
+  iOS drops a view once it is fully transparent). On iOS, before every tap, the agent asks
+  what a touch at the element's center reaches (HIT: the accessibility hit test XCTest's
+  isHittable uses, ~6 ms; it follows UIKit's touch routing, so a view from 1% opacity up
+  counts), and the overlay takes the tap when that is neither the element, inside it, nor one
+  of its containers. An overlay fading in takes touches before the tree lists it, spinner and
+  all (CI lost a digit of Speedrun Bench's PIN to one): the hit then reaches an element the
+  last read lacks, and HIT returns its frame, asked of the app (XCAXClient_iOS
+  `attributesForElement:attributes:error:` with XCTest's `XC_kAXXCAttributeFrame`, ~2 ms).
+  Within the element's frame, it is a part the tree leaves out (most of these: a React Native
+  button's text); anything else is a cover, waited for up to 1.5 s when no spinner shows.
+  Something the tree lists over the element (a toast, a sticky header) is left to
+  uncovered_point, which taps the part that shows. The tree
   cannot tell: iOS orders siblings by their place on screen, not as drawn (an overlay from a
   screen's top edge comes before content below a padding), and reports a spinner at its own
   size whatever its view's (`flex: 1`). Android orders its tree by place on screen too, but

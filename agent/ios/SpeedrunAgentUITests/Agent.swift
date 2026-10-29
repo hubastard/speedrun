@@ -20,9 +20,10 @@
 //  13 PRESS  i32 x, i32 y, i32 hold_ms      -> same
 //  23 TAPS   i32 x, i32 y, i32 count, i32 interval_ms -> same
 //        count taps, interval_ms apart, as one gesture (doubleTapOn)
-//  24 HIT    i32 x, i32 y                   -> i32 index
+//  24 HIT    i32 x, i32 y                   -> i32 index, i32 l, i32 t, i32 r, i32 b
 //        the node of the last SCREEN response that a touch at the point reaches (the
-//        accessibility hit test, as XCUIElement.isHittable), -1 for none
+//        accessibility hit test, as XCUIElement.isHittable), -1 for none; then, for -1, the
+//        frame of the element it reaches (all 0 when unknown)
 //   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same
 //        flags & 1 (fling): a swipe gliding over duration_ms; otherwise a drag that stops when
 //        the touch lifts (Input.drag; duration_ms unused)
@@ -66,6 +67,8 @@
 //        XCUIElement.isHittable of the first element with that identifier
 //  52 ISSUE      i32 kind                   -> (empty)
 //        makes XCTest record an issue: 0 an XCTFail, 1 an automation failure
+//  53 HIT_INFO   i32 x, i32 y               -> str report
+//        the element a touch at the point reaches: its node, and attributes asked of the app
 import XCTest
 import Darwin
 

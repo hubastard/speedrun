@@ -37,15 +37,52 @@ enum Private {
     /// accessibilityInterface (XCAXClient_iOS), hitTestElement:withPoint:error:. Nil when the hit
     /// test fails or this Xcode lacks it. Main thread.
     static func elementAt(_ point: CGPoint, in app: NSObject) -> NSObject? {
-        let interface = NSSelectorFromString("accessibilityInterface")
-        let device = XCUIDevice.shared as NSObject
-        guard device.responds(to: interface),
-              let client = device.perform(interface)?.takeUnretainedValue() as? NSObject else { return nil }
+        guard let client = axClient() else { return nil }
         let sel = NSSelectorFromString("hitTestElement:withPoint:error:")
         guard client.responds(to: sel) else { return nil }
         typealias Hit = @convention(c) (NSObject, Selector, NSObject, CGPoint, UnsafeMutablePointer<NSError?>?) -> Unmanaged<NSObject>?
         var error: NSError?
         return unsafeBitCast(client.method(for: sel), to: Hit.self)(client, sel, app, hardwarePoint(point), &error)?.takeUnretainedValue()
+    }
+
+    /// XCUIDevice's accessibilityInterface (XCAXClient_iOS), nil when this Xcode lacks it.
+    private static func axClient() -> NSObject? {
+        let interface = NSSelectorFromString("accessibilityInterface")
+        let device = XCUIDevice.shared as NSObject
+        guard device.responds(to: interface) else { return nil }
+        return device.perform(interface)?.takeUnretainedValue() as? NSObject
+    }
+
+    /// The key XCTest's accessibility client takes for an attribute: the value of its
+    /// XC_kAXXCAttribute... symbol (XCTAutomationSupport). Nil when this Xcode lacks it.
+    static func axAttribute(_ symbol: String) -> NSObject? {
+        guard let p = dlsym(UnsafeMutableRawPointer(bitPattern: -2), symbol) else { return nil } // RTLD_DEFAULT
+        return p.load(as: Unmanaged<NSObject>?.self)?.takeUnretainedValue()
+    }
+
+    /// Attributes of an accessibility element (an XCAccessibilityElement, as elementAt
+    /// returns), asked of the app: XCAXClient_iOS attributesForElement:attributes:error:, keyed
+    /// as asked (axAttribute). Nil when it fails or this Xcode lacks it. Main thread.
+    static func attributes(of element: NSObject, _ keys: [NSObject]) -> NSDictionary? {
+        guard let client = axClient() else { return nil }
+        let sel = NSSelectorFromString("attributesForElement:attributes:error:")
+        guard client.responds(to: sel) else { return nil }
+        typealias Attributes = @convention(c) (NSObject, Selector, NSObject, NSArray, UnsafeMutablePointer<NSError?>?) -> Unmanaged<NSDictionary>?
+        var error: NSError?
+        return unsafeBitCast(client.method(for: sel), to: Attributes.self)(client, sel, element, keys as NSArray, &error)?.takeUnretainedValue()
+    }
+
+    private static let frameKey = axAttribute("XC_kAXXCAttributeFrame")
+
+    /// An accessibility element's frame (screen points), asked of the app (attributes): nil
+    /// when that fails. Main thread.
+    static func frame(of element: NSObject) -> CGRect? {
+        guard let key = frameKey, let d = attributes(of: element, [key])?[key] as? [String: Any] else { return nil }
+        func number(_ name: String) -> Double? {
+            (d[name] as? NSNumber)?.doubleValue ?? (d[name] as? String).flatMap(Double.init)
+        }
+        guard let x = number("X"), let y = number("Y"), let w = number("Width"), let h = number("Height") else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
     }
 
     /// XCTest's accessibility timeout: how long a snapshot may wait for the app (~15 s by

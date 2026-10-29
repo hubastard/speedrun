@@ -394,18 +394,20 @@ op_tap :: proc(c: ^Conn, x, y: i32) -> (res: Action_Result, ok: bool) {
 	return read_action(body)
 }
 
-// The index of the node (in the last screen read) that a touch at x, y reaches, -1 for none.
-op_hit :: proc(c: ^Conn, x, y: i32) -> (idx: int, ok: bool) {
+// The index of the node (in the last screen read) that a touch at x, y reaches, -1 for none;
+// then the frame (left, top, right, bottom) of what it reaches instead, all 0 when unknown.
+op_hit :: proc(c: ^Conn, x, y: i32) -> (idx: int, frame: [4]i32, ok: bool) {
 	req: [9]byte
 	req[0] = u8(Op.Hit)
 	put_i32(req[1:5], x)
 	put_i32(req[5:9], y)
 	body: []byte
 	body, _, ok = call(c, req[:])
-	if !ok do return -1, false
+	if !ok do return -1, {}, false
 	r := Reader{b = body, ok = true}
 	idx = int(rd_i32(&r))
-	return idx, r.ok
+	for &v in frame do v = rd_i32(&r)
+	return idx, frame, r.ok
 }
 
 op_key :: proc(c: ^Conn, code: i32) -> (res: Action_Result, ok: bool) {

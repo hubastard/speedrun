@@ -1135,10 +1135,12 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 
 // Whether a loading overlay would take a tap on the element (see loading_cover). iOS orders its
 // tree by place on screen, not as drawn, and reports a spinner at its own size whatever its
-// view's: there, while a spinner shows outside the element, the agent asks what a touch at the
-// element's center reaches (the accessibility hit test, as XCTest's isHittable), and the
-// overlay takes the tap when it is neither the element nor one of its containers. Android's
-// tree keeps the views' parents (loading_cover).
+// view's: there the agent asks what a touch at the element's center reaches (the accessibility
+// hit test, as XCTest's isHittable: it follows UIKit's touch routing, so a view from 1% opacity
+// up counts), and something else takes the tap when it does not reach the element (reaches).
+// Asked before every tap: an overlay fading in takes touches before the tree lists it, spinner
+// and all. listed: a spinner shows (without one, the wait is short: UNLISTED_COVER_WAIT_MS).
+// Android's tree keeps the views' parents (loading_cover).
 @(private = "file")
 under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) {
 	if r.dev.platform != .IOS do return loading_cover(r, el) >= 0, true, nil
@@ -1150,32 +1152,42 @@ under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) 
 		spinner = true
 		break
 	}
-	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+	hit, frame, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
 	if !ok do return false, false, AGENT_LOST
 	if r.debug {
-		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{}
+		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{class = "(not listed)", left = frame[0], top = frame[1], right = frame[2], bottom = frame[3]}
 		fmt.printf("      [%s; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", "a spinner shows" if spinner else "no spinner listed", hit, h.class, h.left, h.top, h.right, h.bottom, el)
 	}
 	// Without a spinner, something the tree lists over the element (a toast, a sticky
 	// header) is left to uncovered_point, which taps the part that shows: only a cover the
 	// tree does not show is waited for.
 	if !spinner && covered_by(r, el) >= 0 do return false, false, nil
-	return !reaches(r, el, hit), spinner, nil
+	return !reaches(r, el, hit, frame), spinner, nil
 }
 
 // Whether a touch the hit test took to node `hit` reaches element `el`: the element, a node in
 // it, one of its containers, or a node within its frame (React Native lists a button twice on
-// iOS, siblings with one frame: the hit test may answer the other). An unknown node (-1, or
-// past the last read's) counts as the element: nothing is known to be in the way.
+// iOS, siblings with one frame: the hit test may answer the other). A hit the last read does
+// not list (-1) is judged by the frame of what it reaches (`frame`): within the element's, a
+// part of it the tree leaves out (a React Native button's text); anything else, a view drawn
+// over it since the read, such as an overlay fading in, which takes touches before the tree
+// lists it. Unknown (no frame, or a node past the last read's) counts as the element: nothing
+// is known to be in the way.
 @(private = "file")
-reaches :: proc(r: ^Runner, el, hit: int) -> bool {
-	if hit < 0 || hit >= len(r.h.nodes) do return true
+reaches :: proc(r: ^Runner, el, hit: int, frame: [4]i32) -> bool {
+	e := r.h.nodes[el]
+	within :: proc(f: [4]i32, e: H_Node) -> bool {
+		// a point of slack: frames are rounded
+		return f[0] >= e.left - 1 && f[1] >= e.top - 1 && f[2] <= e.right + 1 && f[3] <= e.bottom + 1
+	}
+	if hit < 0 do return frame == {} || within(frame, e)
+	if hit >= len(r.h.nodes) do return true
 	end := el + 1
-	for end < len(r.h.nodes) && r.h.nodes[end].depth > r.h.nodes[el].depth do end += 1
+	for end < len(r.h.nodes) && r.h.nodes[end].depth > e.depth do end += 1
 	if hit >= el && hit < end do return true
-	for p := r.h.nodes[el].parent; p >= 0; p = r.h.nodes[p].parent do if p == hit do return true
-	e, h := r.h.nodes[el], r.h.nodes[hit]
-	return h.left >= e.left && h.top >= e.top && h.right <= e.right && h.bottom <= e.bottom
+	for p := e.parent; p >= 0; p = r.h.nodes[p].parent do if p == hit do return true
+	h := r.h.nodes[hit]
+	return within({h.left, h.top, h.right, h.bottom}, e)
 }
 
 // What would take a tap at the element's center in its place (covered_by's rules): a sticky
@@ -1186,9 +1198,9 @@ tap_cover :: proc(r: ^Runner, el: int) -> (int, Err) {
 	cover := covered_by(r, el)
 	if cover < 0 || r.dev.platform != .IOS do return cover, nil
 	n := r.h.nodes[el]
-	hit, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+	hit, frame, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
 	if !ok do return -1, AGENT_LOST
-	if reaches(r, el, hit) do return -1, nil
+	if reaches(r, el, hit, frame) do return -1, nil
 	return cover, nil
 }
 

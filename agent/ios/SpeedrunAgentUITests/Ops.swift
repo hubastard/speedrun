@@ -85,8 +85,13 @@ final class Ops {
             out.str(env["SPEEDRUN_BUILD"] ?? "")
         case 24: // HIT
             let x = try conn.readI32(), y = try conn.readI32()
-            out.i32(onMain { screen.hit(x: x, y: y) })
-        case 40...52:
+            let (index, frame) = onMain { screen.hit(x: x, y: y) }
+            out.i32(index)
+            let ok = frame.origin.x.isFinite && frame.origin.y.isFinite && frame.width.isFinite && frame.height.isFinite
+            let r = ok ? frame : .zero
+            out.i32(Int32(clamping: Int(r.minX.rounded()))); out.i32(Int32(clamping: Int(r.minY.rounded())))
+            out.i32(Int32(clamping: Int(r.maxX.rounded()))); out.i32(Int32(clamping: Int(r.maxY.rounded())))
+        case 40...53:
             try spike.handle(op: op, conn: conn, out: &out)
         default:
             throw AgentError(message: "unknown op \(op)")

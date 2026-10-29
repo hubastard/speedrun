@@ -279,11 +279,25 @@ final class Screen {
     }
 
     /// HIT: the node of the last SCREEN response that a touch at the point reaches, as XCTest's
-    /// isHittable finds out (the accessibility hit test): -1 when none of them (or the hit test
-    /// failed). Main thread.
-    func hit(x: Int32, y: Int32) -> Int32 {
-        guard let app = lastElements.first ?? nil,
-              let element = Private.elementAt(CGPoint(x: Int(x), y: Int(y)), in: app) else { return -1 }
+    /// isHittable finds out (the accessibility hit test): -1 when none of them, with the frame
+    /// of the element it reaches instead (one the read does not list: a view drawn since, or
+    /// one inside a node, such as a React Native button's text); zero when the hit test
+    /// failed. Main thread.
+    func hit(x: Int32, y: Int32) -> (index: Int32, frame: CGRect) {
+        guard let element = hitElement(x: x, y: y) else { return (-1, .zero) }
+        let k = index(of: element)
+        return (k, k >= 0 ? .zero : Private.frame(of: element) ?? .zero)
+    }
+
+    /// The accessibility element a touch at the point reaches in the foreground app (the
+    /// last SCREEN response's), nil when the hit test fails. Main thread.
+    func hitElement(x: Int32, y: Int32) -> NSObject? {
+        guard let app = lastElements.first ?? nil else { return nil }
+        return Private.elementAt(CGPoint(x: Int(x), y: Int(y)), in: app)
+    }
+
+    /// An accessibility element's node in the last SCREEN response, -1 when it is not there.
+    func index(of element: NSObject) -> Int32 {
         for (k, e) in lastElements.enumerated() where e?.isEqual(element) == true { return Int32(k) }
         return -1
     }
