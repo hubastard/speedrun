@@ -52,24 +52,27 @@ appId: com.example.app
 
 ## Quick start
 
-1. **Install:**
+1. **Install** with Homebrew (macOS on Apple silicon, Linux x86_64):
 
    ```sh
    brew install hubastard/tap/speedrun
    ```
 
-   Or without Homebrew:
+   Or with the install script:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/hubastard/speedrun/main/install.sh | bash
    ```
 
-   Speedrun is a single binary, its Android and iOS agents inside. The script installs the
-   latest release in `~/.speedrun` and adds it to your PATH (`SPEEDRUN_DIR=<folder>` puts it
-   elsewhere, `SPEEDRUN_VERSION=v0.2.0` picks a release). Or download the archive from the
-   [releases](https://github.com/hubastard/speedrun/releases) and put `speedrun` anywhere on
-   your PATH. To build it yourself, see [Building from source](#building-from-source).
-   Speedrun says when a newer release is out: `brew upgrade speedrun`, or `speedrun update`.
+   - The script installs into `~/.speedrun` and adds it to your PATH. For another folder or a
+     specific release, put `SPEEDRUN_DIR=/usr/local/bin` or `SPEEDRUN_VERSION=v0.2.0` in
+     front of `bash`.
+   - Speedrun is one file, with its Android and iOS agents built in. You can also download it
+     from the [releases](https://github.com/hubastard/speedrun/releases) and put it anywhere
+     on your PATH.
+   - Speedrun tells you when a new release is out. Update with `brew upgrade speedrun`, or
+     `speedrun update` if you used the script.
+   - To build it yourself, see [Building from source](#building-from-source).
 
 2. **Write a flow** ([how](docs/flows.md)), or use the ones you have:
 
