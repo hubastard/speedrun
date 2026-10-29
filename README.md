@@ -212,16 +212,18 @@ warm-up; the time is the median of its passing runs, its start-up included.
 
 | Tool | Android emulator | iOS simulator |
 |---|---:|---:|
-| **Speedrun** | **20.4 s**, 3/3 passed | **28.4 s**, 3/3 passed |
+| **Speedrun** | **20.9 s**, 3/3 passed | **25.5 s**, 3/3 passed |
 | Appium 3.9 | 59.4 s, 3/3 passed | 94.1 s, 3/3 passed |
 | [maestro-runner](https://github.com/devicelab-dev/maestro-runner) 1.1.29 | 65.9 s, 2/3 passed | 49.6 s, 3/3 passed |
+| [Argent](https://github.com/software-mansion/argent) 0.31 (`argent e2e`) | 81.5 s, 3/3 passed | 72.2 s, 3/3 passed |
 | XCUITest | | 81.2 s, 3/3 passed |
 | Maestro 2.11 | 126.5 s, 2/3 passed | 113.1 s, 2/3 passed |
 
-Speedrun runs the journey 2.9x faster than Appium on Android and 3.3x on iOS, 3.2x (Android)
-and 1.7x (iOS) faster than maestro-runner, 2.9x faster than XCUITest, and 6.2x (Android) and
-4.0x (iOS) faster than Maestro. Speedrun and maestro-runner ran on 2026-10-28, the others on
-2026-10-27, on the same machine; Speedrun on iOS with `SPEEDRUN_REDUCE_MOTION=1` (29.7 s
+Speedrun runs the journey 2.8x faster than Appium on Android and 3.7x on iOS, 3.2x (Android)
+and 1.9x (iOS) faster than maestro-runner, 3.9x (Android) and 2.8x (iOS) faster than Argent's
+e2e runner, 3.2x faster than XCUITest, and 6.1x (Android) and 4.4x (iOS) faster than Maestro.
+Speedrun and Argent ran on 2026-10-29, maestro-runner on 2026-10-28, the others on
+2026-10-27, on the same machine; Speedrun on iOS with `SPEEDRUN_REDUCE_MOTION=1` (26.6 s
 without) and the app's animations 10x faster, as always.
 
 It also passed every run, as it passes all 19 flows of the app's test suite on both

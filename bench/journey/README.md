@@ -17,6 +17,7 @@ About 40 steps: taps, typing, a keyboard search, assertions, scrolls, back navig
 | [Maestro](https://maestro.dev) | 2.11 | Android, iOS | the same [`journey.yaml`](journey.yaml) |
 | [Appium](https://appium.io) | 3.9, UiAutomator2 driver 8.7, XCUITest driver 12.22, WebdriverIO 10.1 | Android, iOS | [`appium/journey.mjs`](appium/journey.mjs) |
 | [maestro-runner](https://github.com/devicelab-dev/maestro-runner) | 1.1.29, its default DeviceLab driver | Android, iOS | [`maestro-runner/journey.yaml`](maestro-runner/journey.yaml) (Maestro flow format) |
+| [Argent](https://github.com/software-mansion/argent) | 0.31.0, its e2e runner (`argent e2e run`, no model in the loop) | Android, iOS | [`argent/journey.yaml`](argent/journey.yaml) (Argent's e2e format) |
 | [XCUITest](https://developer.apple.com/documentation/xctest/user_interface_tests) | Xcode 27 | iOS | [`xcuitest/JourneyUITests/Journey.swift`](xcuitest/JourneyUITests/Journey.swift) |
 
 All of them test the app from outside, through the platform's accessibility layer, with
@@ -26,14 +27,15 @@ built into the app's Android project.
 ## Results
 
 Apple M1 Pro (16 GB), an Android 17 emulator and an iPhone 17 Pro simulator (iOS 26.2):
-Speedrun (its current code) and maestro-runner on 2026-10-28, the others on 2026-10-27. The median of
-the passing runs, the pass count, and each run's time in seconds:
+Speedrun (its current code) and Argent on 2026-10-29, maestro-runner on 2026-10-28, the others on
+2026-10-27. The median of the passing runs, the pass count, and each run's time in seconds:
 
 | Tool | Android emulator | iOS simulator |
 |---|---|---|
-| **Speedrun** | **20.4 s**, 3/3 passed (20.2, 20.4, 21.0) | **28.4 s**, 3/3 passed (28.7, 28.4, 27.5) |
+| **Speedrun** | **20.9 s**, 3/3 passed (20.9, 21.2, 20.3) | **25.5 s**, 3/3 passed (25.5, 25.4, 25.6) |
 | Appium | 59.4 s, 3/3 passed (59.4, 69.0, 59.1) | 94.1 s, 3/3 passed (94.1, 96.9, 92.7) |
 | maestro-runner | 65.9 s, 2/3 passed (50.7, 81.1, 89.4 ✗) | 49.6 s, 3/3 passed (49.6, 49.9, 49.2) |
+| Argent | 81.5 s, 3/3 passed (80.9, 84.1, 81.5) | 72.2 s, 3/3 passed (72.2, 72.3, 69.0) |
 | XCUITest | | 81.2 s, 3/3 passed (80.5, 81.4, 81.2) |
 | Maestro | 126.5 s, 2/3 passed (135.0, 184.9 ✗, 118.1) | 113.1 s, 2/3 passed (113.6, 86.7 ✗, 112.6) |
 
@@ -43,8 +45,8 @@ during a touch cancels the press); on Android its scroll to row 60 ran out of it
 maestro-runner's failed run: its scroll to row 60 ran out of its 60 s too (it took 21 and 45 s
 in the other two; 13 s on iOS). On iOS, the simulator's Reduce Motion was on for maestro-runner
 (it turns it on by default and leaves it on; `run.sh` turns it off before each tool) and for
-Speedrun (`SPEEDRUN_REDUCE_MOTION=1`; 29.7 s without it): the app's animations end at once.
-Speedrun also runs UIKit's animations 10x faster. Maestro, Appium and XCUITest ran with
+Speedrun (`SPEEDRUN_REDUCE_MOTION=1`; 26.6 s without it): the app's animations end at once.
+Speedrun also runs UIKit's animations 10x faster. Maestro, Appium, Argent and XCUITest ran with
 animations at their normal speed.
 
 Each tool runs the journey once to warm up (not counted), then three times, each after the
@@ -71,6 +73,14 @@ The ports follow each tool's usual style. What the app asked of each, beyond tha
   whose check has a 300 ms timeout: with Maestro's 7 s, the check waited that out once the
   dots showed the key.
 
+- **Argent:** written as its guide says for e2e tests: after each screen change, an `await`
+  for an element of the new screen, then `await: { idle: true }` (the tree and the pixels hold
+  still for 250 ms). Its taps landed on Android; on iOS the first PIN key's tap went to the
+  loading overlay in its first run, and its YAML has no loop to tap until the dots show it and
+  nothing to await (the overlay has no id, and its spinner stays mounted), so on iOS a 1 s
+  `wait` comes before the keypad. Two of its idle waits, over the home screen with its
+  ticker, run to their 7.5 s timeout on iOS (it then goes on, with a warning).
+
 Every version checks the quantity after each `+` tap ("Qty 2", then "Qty 3"): a second tap
 right after the first was lost on Appium for iOS.
 
@@ -85,12 +95,15 @@ suite's job ([`../app/flows`](../app/flows), Speedrun and Maestro).
 ```sh
 ../app/bench.sh install ios                # or android: Speedrun Bench, prebuilt, installed
 (cd appium && npm install && npm run setup) # Appium, its two drivers, WebdriverIO
+(cd ../agents && npm install)               # Argent, the version the agent benchmark pins
 ./run.sh ios                                # or: ./run.sh android speedrun appium
 ```
 
 maestro-runner installs with `curl -fsSL https://open.devicelab.dev/install/maestro-runner |
-bash` (in `~/.maestro-runner`); `run.sh` turns its usage stats off. On iOS each tool's UI
-test runner is stopped before the next tool runs (a simulator runs one at a time).
+bash` (in `~/.maestro-runner`); `run.sh` turns its usage stats off, and Argent's
+(`DO_NOT_TRACK=1`). On iOS each tool's UI test runner is stopped before the next tool runs (a
+simulator runs one at a time), and Argent's tool server and device services before each tool
+(on Android they hold its one UI automation client).
 
 `run.sh` takes the first adb device or the booted simulator (`DEVICE=<id>` picks one), runs
 each tool (`RUNS=3` by default, after one warm-up), and writes `results/<platform>.md`, with

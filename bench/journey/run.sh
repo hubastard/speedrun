@@ -4,10 +4,10 @@
 # reset (not timed). A run's time is the wall clock of the tool's command, its start-up
 # included. The table goes to results/<platform>.md: the median of the runs that passed (a
 # failed run stops early), the pass count, and each run's time (✗: failed).
-#   ./run.sh android|ios [tool...]     tools: speedrun maestro maestro-runner appium xcuitest (iOS only)
+#   ./run.sh android|ios [tool...]     tools: speedrun maestro maestro-runner appium argent xcuitest (iOS only)
 # Needs ../../speedrun (./build.sh), Speedrun Bench installed (../app/bench.sh install <platform>),
 # maestro, maestro-runner (~/.maestro-runner/bin, or MAESTRO_RUNNER=<path>), Node (cd appium &&
-# npm install && npm run setup), and Xcode for xcuitest.
+# npm install && npm run setup; Argent: cd ../agents && npm install), and Xcode for xcuitest.
 # The device: DEVICE=<serial or simulator UDID>, else the first adb device (Android) or the
 # booted simulator (iOS).
 set -euo pipefail
@@ -18,17 +18,18 @@ shift
 RUNS="${RUNS:-3}"
 APP_ID=dev.speedrun.bench
 SPEEDRUN="$(cd ../.. && pwd)/speedrun"
+ARGENT=../agents/node_modules/.bin/argent
 IOS_APP=../app/prebuilt/SpeedrunBench.app
 mkdir -p results
 
 case "$PLATFORM" in
   android)
     DEVICE="${DEVICE:-$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')}"
-    TOOLS=("${@:-speedrun maestro maestro-runner appium}")
+    TOOLS=("${@:-speedrun maestro maestro-runner appium argent}")
     ;;
   ios)
     DEVICE="${DEVICE:-$(xcrun simctl list devices booted | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\)) (Booted).*/\1/p' | head -1)}"
-    TOOLS=("${@:-speedrun maestro maestro-runner appium xcuitest}")
+    TOOLS=("${@:-speedrun maestro maestro-runner appium argent xcuitest}")
     ;;
   *) echo "platform: android or ios"; exit 1 ;;
 esac
@@ -56,6 +57,8 @@ run_tool() {
                       --platform "$PLATFORM" --device "$DEVICE" test --output results/maestro-runner --flatten \
                       maestro-runner/journey.yaml ;;
     appium) node appium/journey.mjs "$PLATFORM" "$DEVICE" ;;
+    # Its e2e runner (no model in the loop), usage stats off; its own journey (argent/).
+    argent) DO_NOT_TRACK=1 "$ARGENT" e2e run argent/journey.yaml --platform "$PLATFORM" --device "$DEVICE" ;;
     xcuitest) xcodebuild test-without-building -xctestrun "$(ls xcuitest/build/Build/Products/*.xctestrun)" \
                 -destination "id=$DEVICE" ;;
   esac
@@ -65,7 +68,15 @@ APPIUM_PID=
 cleanup() { [ -n "$APPIUM_PID" ] && kill "$APPIUM_PID" 2> /dev/null || true; }
 trap cleanup EXIT
 
+stop_argent() {
+  DO_NOT_TRACK=1 "$ARGENT" run stop-all-simulator-servers --args "{\"devices\": [\"$DEVICE\"]}" > /dev/null 2>&1 || true
+  DO_NOT_TRACK=1 "$ARGENT" server stop > /dev/null 2>&1 || true
+}
+
 for tool in "${TOOLS[@]}"; do
+  # Argent's services hold the device's UI automation (Android's one UiAutomation client):
+  # gone before each tool, its own warm-up starting them again.
+  [ -x "$ARGENT" ] && stop_argent
   if [ "$PLATFORM" = ios ]; then
     # A simulator runs one UI test runner at a time: the previous tool's goes (the warm-up
     # starts this tool's).
@@ -117,6 +128,8 @@ for tool in "${TOOLS[@]}"; do
   fi
   echo "$tool|$median|$passed/$RUNS|${times[*]}" >> "results/$PLATFORM.txt.new"
   if [ "$tool" = appium ]; then kill "$APPIUM_PID"; wait "$APPIUM_PID" 2> /dev/null || true; APPIUM_PID=; fi
+  # Argent keeps a tool server and the device's services running: gone before the next tool.
+  if [ "$tool" = argent ]; then stop_argent; fi
 done
 
 {

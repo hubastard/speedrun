@@ -1,0 +1,84 @@
+# The journey (../journey.yaml) as an Argent e2e test (`argent e2e run`), written as its
+# guide says: after each screen change, the destination's element (identity), then
+# `await: { idle: true }` (readiness). `type` taps the field and types; it presses Enter
+# unless `submit: false`. The app starts fresh (run.sh resets its data before each run).
+steps:
+  # Sign in with a phone number and a code.
+  - launch: dev.speedrun.bench
+  - await: { visible: { id: onboarding-skip } }
+  - await: { idle: true }
+  - tap: { id: onboarding-skip }
+  - await: { visible: { id: phone-input } }
+  - await: { idle: true }
+  - type: { into: { id: phone-input }, text: "5550101234", submit: false }
+  - tap: { id: next }
+  - await: { visible: { id: code-input } }
+  - await: { idle: true }
+  - type: { into: { id: code-input }, text: "123456", submit: false }
+  - await: { visible: { id: notify-later } }
+  - await: { idle: true }
+  - tap: { id: notify-later }
+  - await: { visible: { text: "Hi, Alex" } }
+  - await: { idle: true }
+  # Search the shop, pick options, add to the cart.
+  - tap: { id: tab-shop }
+  - await: { visible: { id: search-input } }
+  - await: { idle: true }
+  - type: { into: { id: search-input }, text: sneaker }
+  - await: { visible: { text: "6 products" } }
+  - await: { idle: true }
+  - tap: { text: City Sneaker }
+  - await: { visible: { id: size-M } }
+  - await: { idle: true }
+  - tap: { id: size-M }
+  - tap: { id: color-Blue }
+  - tap: { id: qty-plus }
+  - await: { visible: { text: "Qty 2" } }
+  - tap: { id: qty-plus }
+  - await: { visible: { text: "Qty 3" } }
+  - tap: { id: add-to-cart }
+  - await: { visible: { text: "Cart (3)" } }
+  - tap: { id: go-to-cart }
+  - await: { visible: { text: "Size M · Blue" } }
+  - await: { idle: true }
+  - tap: { id: header-back }
+  - await: { visible: { id: add-to-cart } }
+  - await: { idle: true }
+  - tap: { id: header-back }
+  - await: { visible: { text: "6 products" } }
+  - await: { idle: true }
+  # Set a PIN on a keypad that a loading overlay covers for its first 1.5 s.
+  - tap: { id: tab-profile }
+  - await: { visible: { id: security } }
+  - await: { idle: true }
+  - tap: { id: security }
+  - await: { visible: { id: key-1 } }
+  - await: { idle: true }
+  # The overlay has no id and its spinner stays mounted, so there is nothing to await: on iOS
+  # the first key's tap went to it (Confirm your PIN never came). Android passed without this.
+  - when: { platform: ios }
+    steps:
+      - wait: 1000
+  - tap: { id: key-1 }
+  - tap: { id: key-2 }
+  - tap: { id: key-3 }
+  - tap: { id: key-4 }
+  - await: { visible: { text: "Confirm your PIN" } }
+  - tap: { id: key-1 }
+  - tap: { id: key-2 }
+  - tap: { id: key-3 }
+  - tap: { id: key-4 }
+  - await: { visible: { text: "PIN set" } }
+  # Scroll a long list to a row and pick it.
+  - tap: { id: tab-lab }
+  - await: { visible: { id: lab-drag } }
+  - await: { idle: true }
+  - tap: { id: lab-drag }
+  - await: { visible: { id: open-long-list } }
+  - await: { idle: true }
+  - tap: { id: open-long-list }
+  - await: { visible: { id: long-list } }
+  - await: { idle: true }
+  - scroll-to: { target: { id: row-60 } }
+  - tap: { id: row-60 }
+  - await: { visible: { text: "Picked row 60" } }
