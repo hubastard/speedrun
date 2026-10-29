@@ -93,8 +93,8 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   Maestro counts an element as visible when its frame is on screen, even if the list hides it.
 - **Not in the screen hierarchy:** Android toasts, and iOS Safari web views.
 - **A tap waits for a disabled element to turn on** (a button enabled once a form is filled
-  or a request ends), up to the usual lookup time, then taps anyway. Maestro taps it at once,
-  and the tap does nothing. A selector that names the state (`enabled: false`) taps at once.
+  or a request ends), up to 3 s, then taps anyway. Maestro taps it at once, and the tap
+  does nothing. A selector that names the state (`enabled: false`) taps at once.
 - **A tap waits while a loading overlay covers its target**: a layer drawn over the screen
   with a spinner, often see-through, that takes the touches while the app loads. Speedrun
   does not wait for spinners elsewhere (they may never stop), but it does not tap through

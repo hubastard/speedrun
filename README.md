@@ -185,23 +185,23 @@ Speedrun Bench's 19 flows, run by Speedrun and Maestro from the same files:
 
 | | Speedrun | Maestro 2.11 | Speedrun is |
 |---|---|---|---|
-| **Android emulator**, whole suite | **7 min 9 s**, 19/19 passed | 46 min 56 s, 16/19 passed | |
-| on the 16 flows both pass | 6 min 17 s | 43 min 58 s | **7.0x faster** |
+| **Android emulator**, whole suite | **5 min 55 s**, 19/19 passed | 46 min 56 s, 16/19 passed | |
+| on the 16 flows both pass | 5 min 4 s | 43 min 58 s | **8.7x faster** |
 | **iOS simulator**, whole suite | **9 min 59 s**, 19/19 passed | 40 min 19 s, 8/19 passed | |
 | on the 8 flows both pass | 2 min 35 s | 7 min 42 s | **3.0x faster** |
 
 Maestro's time for a flow it fails stops at the failure. Estimating the whole suite as if it
-had finished those flows, Speedrun is about 6.7x faster on Android and 4.5x on iOS. On native
+had finished those flows, Speedrun is about 8.0x faster on Android and 4.5x on iOS. On native
 screens, the system Settings app ([`bench/settings`](bench/settings)), Speedrun is 10.7x
 faster on Android and 2.9x on iOS.
 
 Measured on an Apple M1 Pro (16 GB), with an Android 17 emulator and an iPhone 17 Pro
-simulator (iOS 26.2): Speedrun's current code on 2026-10-28, the other tools on 2026-10-27
-(they have not changed since). Speedrun's iOS numbers are with `SPEEDRUN_REDUCE_MOTION=1`
-(the simulator's Reduce Motion on during the run; without it this suite runs about 10%
-slower) and, as Speedrun always runs iOS apps, their animations 10x faster (UIKit's animation
-speed setting). Per-flow results, why Maestro failed, and how to rerun it all:
-[bench/app](bench/app/README.md).
+simulator (iOS 26.2): Speedrun's current code on 2026-10-29 (Android) and 2026-10-28 (iOS),
+the other tools on 2026-10-27 (they have not changed since). Speedrun's iOS numbers are with
+`SPEEDRUN_REDUCE_MOTION=1` (the simulator's Reduce Motion on during the run; without it this
+suite runs about 10% slower) and, as Speedrun always runs iOS apps, their animations 10x
+faster (UIKit's animation speed setting). Per-flow results, why Maestro failed, and how to
+rerun it all: [bench/app](bench/app/README.md).
 
 ### Against other black-box tools
 

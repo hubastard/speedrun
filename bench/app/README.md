@@ -53,8 +53,9 @@ Android numbers, shut the iOS simulator down first (`../../speedrun --stop-agent
 
 `./bench.sh compare android` and `./bench.sh compare ios`, Apple M1 Pro 16 GB, an Android 17
 emulator and an iPhone 17 Pro simulator (iOS 26.2): Maestro 2.11 on 2026-10-27, Speedrun's
-current code on 2026-10-28 (`./bench.sh test`, against Maestro's same results; on iOS with
-`SPEEDRUN_REDUCE_MOTION=1`, without which the suite took 684 s instead of 599 s). A failed flow's
+current code on 2026-10-29 on Android and 2026-10-28 on iOS (`./bench.sh test`, against
+Maestro's same results; on iOS with `SPEEDRUN_REDUCE_MOTION=1`, without which the suite took
+684 s instead of 599 s). A failed flow's
 time stops at its failure; ~: what it would have taken had it finished the flow, estimated as
 Maestro's time up to the failing step, then speedrun's time for the rest of the flow at
 Maestro's pace on that flow so far (`bench.sh` computes it from both tools' per-command
@@ -64,29 +65,29 @@ the totals take them in.
 
 | Flow (android) | Speedrun | Maestro | Speedup |
 |---|---:|---:|---:|
-| A remembered account survives clearState on iOS, but not clearKeychain | 9 s | 34 s | 3.9x |
-| Buy twice, with search, options, a promo code that fails once and the popups after | 64 s | 232 s | 3.6x |
-| Cart lines, steppers and swipe to remove | 14 s | 75 s | 5.2x |
-| Chat with the bot, long press and double tap a message, paste, quick replies | 17 s | 76 s | 4.5x |
-| Confetti, a button that turns on late, a layout shift, a busy JavaScript thread | 12 s | 66 s | 5.5x |
-| Dark mode, screenshots and a recording | 6 s | 48 s | 7.8x |
+| A remembered account survives clearState on iOS, but not clearKeychain | 8 s | 34 s | 4.2x |
+| Buy twice, with search, options, a promo code that fails once and the popups after | 52 s | 232 s | 4.4x |
+| Cart lines, steppers and swipe to remove | 15 s | 75 s | 5.1x |
+| Chat with the bot, long press and double tap a message, paste, quick replies | 17 s | 76 s | 4.6x |
+| Confetti, a button that turns on late, a layout shift, a busy JavaScript thread | 12 s | 66 s | 5.7x |
+| Dark mode, screenshots and a recording | 6 s | 48 s | 7.7x |
 | Deep links to a product, a lab screen and the cart | 24 s | 36 s | 1.5x |
 | Drag a slider and a card, scroll sideways, a long list with sticky headers | 16 s | 50 s ✗ (~60 s) | ~3.8x |
-| Edit the profile, change settings, set a PIN, sign out | 21 s | 150 s | 7.1x |
-| Elements told apart by place (index, relative, parent, child) and by state | 16 s | 62 s | 3.8x |
-| Feed with a ticker, stories, likes, a double tap, more posts and pull to refresh | 30 s | 82 s ✗ (~125 s) | ~4.1x |
-| Launch arguments, location, permissions, photos, orientation, app lifecycle, airplane mode | 22 s | 73 s | 3.3x |
-| Onboarding pages, and no onboarding on the next launch | 5 s | 28 s ✗ (~24 s) | ~4.9x |
-| Popups that come one after another (native modals, a sheet) | 21 s | 56 s | 2.6x |
+| Edit the profile, change settings, set a PIN, sign out | 21 s | 150 s | 7.0x |
+| Elements told apart by place (index, relative, parent, child) and by state | 20 s | 62 s | 3.1x |
+| Feed with a ticker, stories, likes, a double tap, more posts and pull to refresh | 29 s | 82 s ✗ (~125 s) | ~4.2x |
+| Launch arguments, location, permissions, photos, orientation, app lifecycle, airplane mode | 22 s | 73 s | 3.4x |
+| Onboarding pages, and no onboarding on the next launch | 5 s | 28 s ✗ (~24 s) | ~5.2x |
+| Popups that come one after another (native modals, a sheet) | 21 s | 56 s | 2.7x |
 | Scripts, env, conditions, repeat and retry | 11 s | 37 s | 3.3x |
-| Sign in with a phone number and a code, a wrong one first | 9 s | 40 s | 4.4x |
-| Swipes in four directions, taps at a point, single, double and long press | 7 s | 44 s | 6.3x |
-| Taps on screens that never stop moving | 96 s | 1450 s | 15.1x |
-| Typing, keys, erasing, copy and paste, random text, a draft kept across restarts | 26 s | 159 s | 6.0x |
-| **All flows** | **428 s** | **2798 s** | **6.5x** |
-| **Flows both passed (16)** | **377 s** | **2638 s** | **7.0x** |
-| **All flows, Maestro's failures estimated** | **428 s** | **~2847 s** | **~6.7x** |
-| **Wall clock** | **429 s** | **2816 s** | **6.6x** |
+| Sign in with a phone number and a code, a wrong one first | 9 s | 40 s | 4.6x |
+| Swipes in four directions, taps at a point, single, double and long press | 7 s | 44 s | 6.2x |
+| Taps on screens that never stop moving | 35 s | 1450 s | 41.6x |
+| Typing, keys, erasing, copy and paste, random text, a draft kept across restarts | 25 s | 159 s | 6.4x |
+| **All flows** | **354 s** | **2798 s** | **7.9x** |
+| **Flows both passed (16)** | **304 s** | **2638 s** | **8.7x** |
+| **All flows, Maestro's failures estimated** | **354 s** | **~2847 s** | **~8.0x** |
+| **Wall clock** | **355 s** | **2816 s** | **7.9x** |
 
 Passed: speedrun 19/19, Maestro 16/19. ✗: failed; ~: estimated.
 

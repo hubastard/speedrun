@@ -26,6 +26,7 @@ MAX_RETRIES_ALLOWED        :: 3
 // A flow does not say how long; the 3 s `input swipe x y x y 3000` holds are mostly waiting.
 SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a change ~1 s
 DISABLED_POLL_MS           :: 100 // tap: a disabled element read again this often until it turns on
+DISABLED_WAIT_MS           :: 3_000 // tap: how long at most, then it taps anyway
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
@@ -871,11 +872,12 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
 		// Disabled (a button that turns on once a form is filled or a request ends): a tap on
-		// it does nothing, so wait for it to turn on, as a user would (up to the lookup's time;
-		// then tap anyway). Not when the selector names the state (`enabled: false`).
+		// it does nothing, so wait for it to turn on, as a user would (up to DISABLED_WAIT_MS,
+		// within the lookup's time; then tap anyway: a flow can tap a button that stays off, to
+		// check that nothing happens). Not when the selector names the state (`enabled: false`).
 		if _, named := d.sel.enabled.?; !named && .Enabled not_in r.h.nodes[el].flags {
 			t := time.tick_now()
-			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
+			limit := time.Duration(min(DISABLED_WAIT_MS, adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS))) * time.Millisecond
 			for time.tick_since(t) < limit {
 				time.sleep(DISABLED_POLL_MS * time.Millisecond) // iOS reads take the app's main thread
 				if !read_screen(r) do return AGENT_LOST
