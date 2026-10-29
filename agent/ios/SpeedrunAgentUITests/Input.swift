@@ -200,10 +200,12 @@ final class Input {
     }
 
     /// React Native: a field whose value the app sets from its own state (a controlled
-    /// TextInput) can take keys out of order when the app's JavaScript falls behind them
-    /// ("sneaker" came out "sakerne" on CI's simulator). Typed into an empty field, the text is
-    /// watched until the field shows it. The same characters in another order: deleted, then
-    /// typed again a key at a time, each once the last one shows. A field that changes what it
+    /// TextInput) can take keys out of order, or lose some, when the app's JavaScript falls
+    /// behind them ("sneaker" came out "sakerne", and "saker", on CI's simulator). Typed into
+    /// an empty field, the text is watched until the field shows it. The same characters in
+    /// another order, or some of them once the field holds still: deleted, then typed again a
+    /// key at a time, each once the last one shows. The text's start alone is left as it is
+    /// (a field with a maximum length keeps no more). A field that changes what it
     /// is given (a phone number's format, capitals) stops the watch at once: a character the
     /// text does not have. So does one that still reads empty once the keys are confirmed: it
     /// shows its placeholder (Speedrun Bench's phone number, formatted, is its placeholder).
@@ -213,7 +215,7 @@ final class Input {
         var left = [Character: Int]()
         for c in text { left[c, default: 0] += 1 }
         let deadline = now() + UInt64(Self.scrambleWaitMs + text.count * 1000 / max(rate, 1)) * 1_000_000
-        var value = "", since = now()
+        var value = "", since = now(), still = false
         while now() < deadline {
             let v = shown()
             if v == text { return }
@@ -225,11 +227,14 @@ final class Input {
                 value = v
                 since = now()
             } else if now() - since > UInt64(Self.scrambleStillMs) * 1_000_000 {
+                still = true
                 break
             }
             Thread.sleep(forTimeInterval: 0.02)
         }
-        guard value.count == text.count, value != text else { return }
+        let reordered = value.count == text.count
+        let dropped = still && value.count < text.count && !text.hasPrefix(value)
+        guard value != text, reordered || dropped else { return }
         NSLog("speedrun: typed \"\(text)\", the field shows \"\(value)\": typing it again a key at a time")
         func waitFor(_ shows: String) {
             let keyDeadline = now() + UInt64(Self.keyWaitMs) * 1_000_000
