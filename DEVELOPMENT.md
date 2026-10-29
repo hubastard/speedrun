@@ -112,7 +112,9 @@ for flows whose scripts make HTTP requests.
   upload: an install in between would find no checksum and refuse), then
   `gh workflow run update.yml -R hubastard/homebrew-tap`: the tap's formula follows the latest
   release once both packages and their checksums are on it (the workflow also runs every 6
-  hours). Run it by hand (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
+  hours). The workflow creates the release with a placeholder for its notes: write them
+  (`gh release edit <tag> --notes-file <file>`, what changed for users, as the earlier
+  releases). Run it by hand (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
 - `.github/workflows/journey.yml`: after every push to `main`, builds speedrun, downloads
   the prebuilt Speedrun Bench for these sources (builds it, with Node, when the release has
   none: setup-node alone took 3-4 minutes on the macOS runner) and runs the benchmark
