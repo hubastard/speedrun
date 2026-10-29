@@ -128,8 +128,9 @@ Action_Result :: struct {
 }
 
 Conn :: struct {
-	sock: net.TCP_Socket,
-	buf:  [dynamic]byte, // reused for every response: zero steady-state allocation
+	sock:  net.TCP_Socket,
+	buf:   [dynamic]byte, // reused for every response: zero steady-state allocation
+	calls: int, // requests made (screen_current)
 }
 
 // ---- transport ------------------------------------------------------------------------
@@ -156,6 +157,7 @@ recv_all :: proc(sock: net.TCP_Socket, buf: []byte) -> bool {
 
 // One request/response. The returned body aliases c.buf and is valid until the next call.
 call :: proc(c: ^Conn, req: []byte) -> (body: []byte, agent_us: u32, ok: bool) {
+	c.calls += 1
 	send_all(c.sock, req) or_return
 	hdr: [4]byte
 	recv_all(c.sock, hdr[:]) or_return

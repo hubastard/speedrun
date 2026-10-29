@@ -587,7 +587,9 @@ session_do :: proc(s: ^Session, cwd, payload: string) -> (code: u8, out: string)
 	}
 	before := make(map[int]string, len(s.shown), context.temp_allocator)
 	for ref, line in s.shown do before[ref] = line
-	if !read_content(s) do return 1, strings.concatenate({strings.to_string(b), AGENT_LOST}, context.temp_allocator)
+	if !screen_current(r) || len(screen_elements(s)) == 0 {
+		if !read_content(s) do return 1, strings.concatenate({strings.to_string(b), AGENT_LOST}, context.temp_allocator)
+	}
 	els := screen_elements(s)
 	clear(&s.after_do)
 	for e in els do s.after_do[e.ref] = true

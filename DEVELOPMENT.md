@@ -541,6 +541,19 @@ Known differences in how, not what:
 - A lookup that had to wait for its element settles once it shows, then finds it again: an
   element enters the hierarchy at its final place while it may still slide in (Stripe's
   payment sheet, presented once its SDK has loaded), and a tap then hits what is behind.
+- On iOS, an element found at once on a screen that changed after the last settle (the
+  agent's `unsettled` byte: a popup coming up just after it) is settled first, unless nothing
+  on the element is new since the read before (`untouched`: no node over it with another
+  frame, kind or text). A popup over it, a screen sliding in, the element moving: all are on
+  it. A change elsewhere is not waited for: Speedrun Bench's feed grows a banner 2.7 s after
+  it opens, and a tap on the tab bar then waited 1.2 s for it (the agent benchmark,
+  bench/agents).
+- The next lookup, and a session's answer after a command, take the last read when nothing
+  was asked of the agent since and it is under 300 ms old (`screen_current`): after a tap,
+  the step's own read is the screen it settled on, and a second one costs ~200 ms on a busy
+  iOS screen (the settle's last snapshot is served once). Together with the above: the agent
+  benchmark's iOS run at normal animation speed 13.2 s -> 11.3 s, the iOS suite 684 s ->
+  588 s (Reduce Motion off).
 - A tap waits for a disabled element to turn on (`.Enabled` not in its flags), up to the
   lookup's time, then taps anyway: a tap on Speedrun Bench's delayed button (enabled 1.5 s
   after its screen opens) did nothing, and "Taps: 3" became "Taps: 2" whenever the steps

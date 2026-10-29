@@ -87,6 +87,10 @@ Runner :: struct {
 	debug:                bool, // SPEEDRUN_DEBUG: print every hierarchy read and shell command
 	view:                 View, // console output (console.odin)
 	reads, read_ms_total: f64,
+	read_call:            int, // c.calls after the last read_screen (screen_current)
+	read_at:              time.Tick,
+	marks:                [dynamic]u64, // per node of the latest read: what it is, says, and its frame (untouched)
+	prev_marks:           [dynamic]u64, // the read before's, sorted
 	// JavaScript (js.odin)
 	js:                   ^Js, // started on the first script
 	env_gen, js_env_gen:  int, // env changes; the last one the engine has
@@ -1942,8 +1946,8 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 	}
 	limit := timeout if timeout >= 0 else condition_timeout(r)
 	if cond.visible != nil {
-		_, found := try_find(r, cond.visible, 0) or_return
-		if found && r.h.unsettled {
+		i, found := try_find(r, cond.visible, 0) or_return
+		if found && r.h.unsettled && !untouched(r, i) {
 			settle(r, no_change_ms = 0) or_return // as find_element
 			_, found = try_find(r, cond.visible, 0) or_return
 		}
@@ -1990,8 +1994,9 @@ find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
 	i, found := try_find(r, sel, 0) or_return
 	// Found at once on a screen that changed after the last settle (a popup that came up just
-	// after it, still sliding in, takes no tap yet): settle, then find it again.
-	if found && r.h.unsettled {
+	// after it, still sliding in, takes no tap yet): settle, then find it again; unless the
+	// change is away from the element (untouched).
+	if found && r.h.unsettled && !untouched(r, i) {
 		settle(r, no_change_ms = 0) or_return
 		i, found = try_find(r, sel, 0) or_return
 	}
@@ -2017,8 +2022,10 @@ find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -
 // One read at least, then re-reads until found or `timeout_ms` passes.
 try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, found: bool, err: Err) {
 	end := time.tick_now()._nsec + timeout_ms * 1_000_000
+	current := screen_current(r)
 	for {
-		if !read_screen(r) do return -1, false, AGENT_LOST
+		if !current && !read_screen(r) do return -1, false, AGENT_LOST
+		current = false
 		i := select(r, sel) or_return
 		if i >= 0 do return i, true, nil
 		if time.tick_now()._nsec >= end do return -1, false, nil
@@ -2619,6 +2626,7 @@ read_screen :: proc(r: ^Runner) -> bool {
 			if !read_screen_once(r) do return false
 		}
 	}
+	r.read_call, r.read_at = r.c.calls, time.tick_now() // answer_error_dialog's calls tapped nothing
 	return true
 }
 
@@ -2640,6 +2648,10 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	r.h.order = make([dynamic]int, 0, count, alloc)
 	stack := make([dynamic]int, 0, 64, alloc) // ancestors by depth
 	hash: u64 = 14695981039346656037
+	r.marks, r.prev_marks = r.prev_marks, r.marks
+	slice.sort(r.prev_marks[:])
+	if r.marks.allocator.procedure == nil do r.marks.allocator = r.alloc
+	clear(&r.marks)
 	for k in 0 ..< count {
 		n: H_Node
 		n.depth = rd_u16(&rd)
@@ -2657,6 +2669,13 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		append(&stack, k)
 		if .Restless not_in n.flags do for v in ([]i32{n.left, n.top, n.right, n.bottom}) do hash = (hash ~ u64(u32(v))) * 1099511628211
 		for c in transmute([]u8)n.text do hash = (hash ~ u64(c)) * 1099511628211
+		mark: u64 = 14695981039346656037
+		for v in ([]i32{n.left, n.top, n.right, n.bottom, i32(n.depth)}) do mark = (mark ~ u64(u32(v))) * 1099511628211
+		for s in ([]string{n.class, n.text, n.desc, n.id}) {
+			for c in transmute([]u8)s do mark = (mark ~ u64(c)) * 1099511628211
+			mark = (mark ~ 0xff) * 1099511628211
+		}
+		append(&r.marks, mark)
 	}
 	r.h.hash = hash
 	// iOS: a byte after the nodes, 1 when the screen differs from where the last settle ended.
@@ -2689,6 +2708,33 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		first := ""
 		for i in r.h.order do if r.h.nodes[i].text != "" { first = r.h.nodes[i].text; break }
 		fmt.printf("      [read %.0f ms: %d nodes, %d roots, root0=%v first text %q]\n", us(t) / 1000, len(r.h.nodes), len(r.h.roots), r.h.nodes[r.h.roots[0]].class if len(r.h.roots) > 0 else "-", first)
+	}
+	r.read_call, r.read_at = r.c.calls, time.tick_now()
+	return true
+}
+
+// The screen as last read is still current: nothing asked of the agent since (no action, no
+// settle) and read under SCREEN_CURRENT_MS ago, as after a tap's read of the screen it settled
+// on. The next lookup and the session's answer take it instead of reading again: on iOS a
+// read that is not the settle's last snapshot costs ~200 ms on a busy screen.
+SCREEN_CURRENT_MS :: 300
+
+screen_current :: proc(r: ^Runner) -> bool {
+	return r.read_call == r.c.calls && time.tick_since(r.read_at) < SCREEN_CURRENT_MS * time.Millisecond
+}
+
+// On a screen that changed after the last settle (Hierarchy.unsettled), whether element `el`
+// takes a tap at once: nothing on it is new since the read before (no node there with another
+// frame, kind or text). A popup coming up over it, a screen sliding in, the element itself
+// moving or changing: all are on it, and settled first. A change elsewhere is not waited for
+// (a banner growing in a feed while the tab bar is tapped: 1.2 s).
+untouched :: proc(r: ^Runner, el: int) -> bool {
+	if len(r.prev_marks) == 0 || len(r.marks) != len(r.h.nodes) do return false
+	t := r.h.nodes[el]
+	for k in r.h.order {
+		if _, old := slice.binary_search(r.prev_marks[:], r.marks[k]); old do continue
+		n := r.h.nodes[k]
+		if n.left < t.right && n.right > t.left && n.top < t.bottom && n.bottom > t.top do return false
 	}
 	return true
 }
