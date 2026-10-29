@@ -13,7 +13,6 @@ import "base:runtime"
 import "core:crypto"
 import "core:encoding/hex"
 import "core:fmt"
-import "core:hash"
 import "core:net"
 import "core:os"
 import "core:strconv"
@@ -30,6 +29,15 @@ when ANDROID_AGENT {
 } else {
 	AGENT_APK :: []u8{}
 	AGENT_APK_CRC :: 0
+}
+// build.sh embeds the iOS agent when Xcode is installed, with its content's hash
+// (-define:IOS_AGENT_ID=...): the test run file and the runner app, packed (tar.gz), which
+// ios_products unpacks on first use.
+IOS_AGENT_ID :: #config(IOS_AGENT_ID, "")
+when IOS_AGENT_ID != "" {
+	IOS_AGENT_ARCHIVE :: #load("../agent/ios/build/agent.tar.gz")
+} else {
+	IOS_AGENT_ARCHIVE :: []u8{}
 }
 AGENT_PACKAGE :: "com.speedrun.agent"
 AGENT_NAME :: "speedrun-agent" // the shell agent's process name (app_process --nice-name)
@@ -54,9 +62,10 @@ Platform :: enum {
 IOS_PORT :: 7778 // default: Android's 7777 is often forwarded to an emulator already
 IOS_RUNNER_APP :: "com.speedrun.agent.uitests.xctrunner"
 AGENT_PING_TIMEOUT :: 5 * time.Second // device_restart: an agent that does not answer by then is started again
-IOS_PRODUCTS :: "agent/ios/build/Build/Products" // next to the speedrun binary
-// The built test bundle: its hash is the build id a running runner must match.
-IOS_TEST_BINARY :: "Release-iphonesimulator/SpeedrunAgentUITests-Runner.app/PlugIns/SpeedrunAgentUITests.xctest/SpeedrunAgentUITests"
+// In the test run file's name (SpeedrunAgent_iphonesimulator<SDK>-<archs>.xctestrun), on a
+// runner's xcodebuild command line.
+IOS_XCTESTRUN_MARK :: "SpeedrunAgent_iphonesimulator"
+IOS_AGENT_FOLDER :: "ios-agent-" // + IOS_AGENT_ID, in the user's cache
 // A just-booted CI simulator took 37-78 s to start the runner, and over 90 s in 4 of 5 runs
 // on a busy day.
 IOS_START_TIMEOUT :: 4 * time.Minute
@@ -406,12 +415,13 @@ write_local_apk :: proc(d: ^Device) -> string {
 @(private = "file")
 ios_start :: proc(d: ^Device) -> string {
 	if d.warm do return ""
-	products := ios_products()
+	products, perr := ios_products()
+	if perr != "" do return perr
 	xctestrun := ""
 	if entries, err := os.read_all_directory_by_path(products, context.temp_allocator); err == nil {
 		for e in entries do if strings.has_suffix(e.name, ".xctestrun") do xctestrun = e.fullpath
 	}
-	if xctestrun == "" do return fmt.tprintf("The iOS agent is not built (%s): run ./build.sh (it needs Xcode).", products)
+	if xctestrun == "" do return fmt.tprintf("The iOS agent in %s has no test run file: delete the folder, then run again.", products)
 	ios_end_runners(d.udid)
 
 	log := ios_runner_log(d.port)
@@ -503,7 +513,7 @@ ios_runner_pids :: proc(udid: string) -> []int {
 	dest := fmt.tprintf("id=%s", udid)
 	for line in strings.split_lines(string(out), context.temp_allocator) {
 		l := strings.trim_space(line)
-		if !strings.contains(l, "xcodebuild test-without-building") || !strings.contains(l, IOS_PRODUCTS) || !strings.contains(l, dest) do continue
+		if !strings.contains(l, "xcodebuild test-without-building") || !strings.contains(l, IOS_XCTESTRUN_MARK) || !strings.contains(l, dest) do continue
 		sp := strings.index_byte(l, ' ')
 		if sp < 0 do continue
 		if pid, ok := strconv.parse_int(l[:sp]); ok do append(&pids, pid)
@@ -599,20 +609,51 @@ ios_info :: proc(port: int) -> (udid, name, build: string, ok: bool) {
 	return op_info(&c, context.temp_allocator)
 }
 
-// The hash of the built test bundle, "" when it is not built.
+// The build id a running runner must match: the embedded agent's content hash.
 @(private = "file")
 ios_build_id :: proc() -> string {
-	data, err := os.read_entire_file(strings.concatenate({ios_products(), "/", IOS_TEST_BINARY}, context.temp_allocator), context.temp_allocator)
-	if err != nil do return ""
-	return fmt.tprintf("%016x", hash.fnv64a(data))
+	return IOS_AGENT_ID
 }
 
-// Where build.sh puts the runner: agent/ios/build next to the speedrun binary.
+// The iOS agent, unpacked from this binary into the user's cache on first use, a folder per
+// build (~/Library/Caches/speedrun/ios-agent-<id>), so the binary needs nothing next to it.
+// Unpacking one deletes the other builds' folders, except one a runner was started from.
 @(private = "file")
-ios_products :: proc() -> string {
-	dir, err := os.get_executable_directory(context.temp_allocator)
-	if err != nil do dir = "."
-	return strings.concatenate({dir, "/", IOS_PRODUCTS}, context.temp_allocator)
+ios_products :: proc() -> (dir: string, err: string) {
+	if IOS_AGENT_ID == "" do return "", "This speedrun was built without its iOS agent (Xcode was not installed): build it on a Mac with Xcode (./build.sh)."
+	cache := fmt.tprintf("%s/Library/Caches/speedrun", os.get_env("HOME", context.temp_allocator))
+	dir = fmt.tprintf("%s/%s%s", cache, IOS_AGENT_FOLDER, IOS_AGENT_ID)
+	if os.exists(dir) do return dir, ""
+	if e := os.make_directory_all(cache, {.Read_User, .Write_User, .Execute_User}); e != nil && e != .Exist {
+		return "", fmt.tprintf("could not create %s: %v", cache, e)
+	}
+	// Unpacked next to it, then renamed: the folder is there whole or not at all.
+	tmp, terr := os.make_directory_temp(cache, "unpacking-*", context.temp_allocator)
+	if terr != nil do return "", fmt.tprintf("could not create a folder in %s: %v", cache, terr)
+	archive := strings.concatenate({tmp, ".tar.gz"}, context.temp_allocator)
+	defer os.remove(archive)
+	if e := os.write_entire_file(archive, IOS_AGENT_ARCHIVE); e != nil {
+		os.remove_all(tmp)
+		return "", fmt.tprintf("could not write %s: %v", archive, e)
+	}
+	state, _, stderr, xerr := os.process_exec({command = {"tar", "-xzf", archive, "-C", tmp}}, context.temp_allocator)
+	if xerr != nil || !state.success {
+		os.remove_all(tmp)
+		return "", fmt.tprintf("could not unpack the iOS agent into %s: %s", cache, strings.trim_space(string(stderr)))
+	}
+	if e := os.rename(tmp, dir); e != nil {
+		os.remove_all(tmp)
+		// Another speedrun unpacked it first.
+		if !os.exists(dir) do return "", fmt.tprintf("could not move the iOS agent to %s: %v", dir, e)
+	}
+	entries, _ := os.read_all_directory_by_path(cache, context.temp_allocator)
+	_, running, _, _ := os.process_exec({command = {"pgrep", "-lf", "xcodebuild test-without-building"}}, context.temp_allocator)
+	for e in entries {
+		if !strings.has_prefix(e.name, IOS_AGENT_FOLDER) || e.name == fmt.tprintf("%s%s", IOS_AGENT_FOLDER, IOS_AGENT_ID) do continue
+		if strings.contains(string(running), e.fullpath) do continue
+		os.remove_all(e.fullpath)
+	}
+	return dir, ""
 }
 
 // An agent serving on 127.0.0.1:port (it answers PING). With a timeout, an agent busy with

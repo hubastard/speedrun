@@ -24,6 +24,10 @@ run_update_cli :: proc(args: []string) -> int {
 		return 1
 	}
 	dir := os.dir(exe)
+	if homebrew_install() {
+		fmt.eprintln("This speedrun was installed with Homebrew: brew upgrade speedrun")
+		return 1
+	}
 	// A build from source: its folder holds the sources, whose agent/ install.sh would
 	// replace.
 	if os.exists(fmt.tprintf("%s/build.sh", dir)) || os.exists(fmt.tprintf("%s/host", dir)) {
@@ -133,7 +137,15 @@ update_notice :: proc() -> string {
 	latest, lok := release_version(tag)
 	current, _ := release_version(VERSION)
 	if !lok || !(latest[0] > current[0] || (latest[0] == current[0] && (latest[1] > current[1] || (latest[1] == current[1] && latest[2] > current[2])))) do return ""
-	return fmt.tprintf("speedrun %s is out (this is %s): speedrun update", tag, VERSION)
+	return fmt.tprintf("speedrun %s is out (this is %s): %s", tag, VERSION, "brew upgrade speedrun" if homebrew_install() else "speedrun update")
+}
+
+// Installed by Homebrew: the binary (its real path, links resolved) is in a Cellar, which
+// Homebrew alone changes.
+@(private = "file")
+homebrew_install :: proc() -> bool {
+	exe, err := os.get_executable_path(context.temp_allocator)
+	return err == nil && strings.contains(exe, "/Cellar/speedrun/")
 }
 
 // v<major>.<minor>.<patch> and nothing else: a build from source names its commit after it.

@@ -3,8 +3,8 @@ Copyright 2026 Hubert Gendron
 
 This product is licensed under the Apache License, Version 2.0 (LICENSE).
 
-It includes third-party software, each under its own license (in a release archive, their
-texts are in licenses/):
+It includes third-party software, each under its own license (their texts: `speedrun
+--licenses`, and licenses/ in a release archive):
 
 - QuickJS-ng (host/js/quickjs-ng), MIT License: host/js/quickjs-ng/LICENSE.
   https://github.com/quickjs-ng/quickjs

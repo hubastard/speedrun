@@ -68,16 +68,23 @@ fi
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 [ -x "$tmp/$name/speedrun" ] || fail "the package has no speedrun binary"
 
-# Replaces a previous install: the binary, its iOS agent and its README, nothing else.
+# The binary alone (the iOS agent is inside it; `speedrun --licenses` prints the licenses),
+# moved into place whole: a running speedrun (speedrun update) keeps its own. An earlier
+# release's iOS agent folder and README next to it go, once checked to be speedrun's: $DIR
+# can be a folder shared with other programs (/usr/local/bin).
 mkdir -p "$DIR"
-rm -rf "$DIR/speedrun" "$DIR/agent" "$DIR/README.txt"
-cp -R "$tmp/$name/." "$DIR/"
+if [ -d "$DIR/agent/ios/build/Build/Products" ]; then rm -rf "$DIR/agent"; fi
+if [ -f "$DIR/README.txt" ] && head -1 "$DIR/README.txt" | grep -q '^speedrun '; then rm -f "$DIR/README.txt"; fi
+cp "$tmp/$name/speedrun" "$DIR/.speedrun-installing"
+mv -f "$DIR/.speedrun-installing" "$DIR/speedrun"
+# Releases before v0.2.0 start their iOS agent from next to the binary.
+if [ -d "$tmp/$name/agent" ]; then cp -R "$tmp/$name/agent" "$DIR/"; fi
 installed=$("$DIR/speedrun" --version) || fail "the installed binary does not run ($DIR/speedrun)"
 echo "Installed $installed in $DIR"
 
 if [ -n "${GITHUB_PATH:-}" ]; then
   echo "$DIR" >> "$GITHUB_PATH"
-elif [ "${SPEEDRUN_NO_MODIFY_PATH:-}" != 1 ]; then
+elif [ "${SPEEDRUN_NO_MODIFY_PATH:-}" != 1 ] && [[ ":$PATH:" != *":$DIR:"* ]]; then
   case "${SHELL:-}" in
     */zsh) profile="$HOME/.zshrc" ;;
     */bash) profile="$HOME/.bashrc"; [ "$os" = macos ] && profile="$HOME/.bash_profile" ;;

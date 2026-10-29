@@ -2,8 +2,9 @@
 
 An XCUITest runner whose single test serves the Android agent's protocol (same ops, same
 responses) over TCP on `127.0.0.1:7778`: a simulator shares the Mac's loopback, so there is no
-forwarding. `./build.sh` builds it into `agent/ios/build`; `./speedrun --platform ios` starts it
-with `xcodebuild test-without-building` (3–6 s: ~2 s of xcodebuild itself, then installing and
+forwarding. `./build.sh` builds it into `agent/ios/build` and packs it into the binary, which
+unpacks it into `~/Library/Caches/speedrun/ios-agent-<hash>` on first use;
+`./speedrun --platform ios` starts it from there with `xcodebuild test-without-building` (3–6 s: ~2 s of xcodebuild itself, then installing and
 launching the runner and XCTest's session handshake). It then stays up for the next run, in
 its own session: a run that finds it serving this build on the chosen simulator (op INFO)
 starts in ~0.2 s. It stops on QUIT (`./speedrun --stop-agent`) or after SPEEDRUN_IDLE_S
@@ -40,7 +41,8 @@ How it does each part:
 To time the building blocks by hand:
 
 ```
-TEST_RUNNER_SPEEDRUN_PORT=7778 xcodebuild test-without-building \
+export SPEEDRUN_TOKEN=$(openssl rand -hex 16)   # a connection starts with it
+TEST_RUNNER_SPEEDRUN_PORT=7778 TEST_RUNNER_SPEEDRUN_TOKEN=$SPEEDRUN_TOKEN xcodebuild test-without-building \
   -xctestrun agent/ios/build/Build/Products/*.xctestrun -destination 'id=<udid>' &
 python3 agent/ios/spike/measure.py        # Settings open on its home screen
 ```

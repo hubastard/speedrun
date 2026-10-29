@@ -43,6 +43,15 @@ Op :: enum u8 {
 
 KEYCODE_BACK :: 4
 
+// speedrun --licenses: its license and those of the third-party code built into it, which a
+// binary on its own carries no file for.
+LICENSES ::
+	#load("../NOTICE", string) +
+	"\n==== speedrun: Apache License 2.0\n\n" + #load("../LICENSE", string) +
+	"\n==== QuickJS-ng: MIT License\n\n" + #load("js/quickjs-ng/LICENSE", string) +
+	"\n==== Datafaker: Apache License 2.0\n\n" + #load("js/datafaker/LICENSE", string) +
+	"\n==== stb_image, stb_image_write\n\n" + #load("image/build/LICENSE.txt", string)
+
 // The release: build.sh passes it (-define:SPEEDRUN_VERSION=...), from SPEEDRUN_VERSION or git.
 VERSION :: #config(SPEEDRUN_VERSION, "dev")
 
@@ -858,6 +867,7 @@ USAGE :: `usage:
   speedrun --bench ["<on-screen text>" [iterations]]
   speedrun --stop-agent        stop the iOS agent kept running between runs
   speedrun --version
+  speedrun --licenses
 options:
   --device <id>       the device: an Android serial ("adb devices") or a booted iOS
                       simulator's UDID ("xcrun simctl list devices booted")
@@ -940,6 +950,9 @@ run_cli :: proc(args: []string) -> int {
 			mode = .Stop_Agent
 		case a == "-h" || a == "--help":
 			fmt.println(USAGE)
+			return 0
+		case a == "--licenses":
+			fmt.print(LICENSES)
 			return 0
 		case a == "--version":
 			fmt.printfln("speedrun %s", VERSION)

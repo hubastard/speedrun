@@ -1,9 +1,14 @@
 # Client for the iOS agent (agent/ios/SpeedrunAgentUITests/Agent.swift): framing as the Android agent (u8 op + fields; u32 len, u32 agent_us, body).
+import os
 import socket, struct, time
 class Agent:
     def __init__(self, port=7778, timeout=60):
         self.s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # A connection starts with the agent's token: the one speedrun started it with, or
+        # SPEEDRUN_TOKEN for a runner started by hand.
+        token = os.environ.get("SPEEDRUN_TOKEN") or open(os.path.expanduser(f"~/.speedrun/agents/ios-{port}.token")).read()
+        self.s.sendall(token.strip().encode())
     def _recv(self, n):
         b = b""
         while len(b) < n:

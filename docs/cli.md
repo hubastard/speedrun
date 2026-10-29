@@ -42,11 +42,12 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 speedrun --stop-agent      # stop the iOS agent kept running between runs
 speedrun update [version]  # install the latest release (or the one named) where this one is
 speedrun --version
+speedrun --licenses        # its license and those of the code built into it
 speedrun --help
 ```
 
 `speedrun update` downloads the release with the installer (`install.sh`) into the folder the
-running `speedrun` is in, leaving your PATH and shell profile alone, after checking the
+running `speedrun` is in (installed with Homebrew: `brew upgrade speedrun`), leaving your PATH and shell profile alone, after checking the
 download against the SHA-256 published with it. A speedrun built from source refuses: update
 it with `git pull` and `./build.sh`.
 

@@ -21,7 +21,10 @@ what is still slow: `TO_IMPROVE.md`.
   - `AgentInstrumentation` (fallback, `--instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
 - `agent/ios/` — the iOS agent: an XCUITest runner serving the same protocol, for simulators
-  (see `agent/ios/README.md`).
+  (see `agent/ios/README.md`). `build.sh` packs its test run file and runner app
+  (`agent/ios/build/agent.tar.gz`) into the binary, named by a hash of their contents; the
+  first iOS run unpacks it into `~/Library/Caches/speedrun/ios-agent-<hash>` (deleting other
+  builds' folders but one a runner was started from), so a release is one file.
 - `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
   `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
   - `main.odin`: command line and the latency benchmark. Its steps locate their target with
@@ -106,8 +109,10 @@ for flows whose scripts make HTTP requests.
   none yet, with its SHA-256 (`<package>.tar.gz.sha256`, which `install.sh` checks). The
   macOS package is still built and attached by hand: `./package.sh`, then
   `gh release upload <tag> dist/<package>.tar.gz dist/<package>.tar.gz.sha256` (both in one
-  upload: an install in between would find no checksum and refuse). Run it by hand
-  (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
+  upload: an install in between would find no checksum and refuse), then
+  `gh workflow run update.yml -R hubastard/homebrew-tap`: the tap's formula follows the latest
+  release once both packages and their checksums are on it (the workflow also runs every 6
+  hours). Run it by hand (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
 - `.github/workflows/journey.yml`: after every push to `main`, builds speedrun, downloads
   the prebuilt Speedrun Bench for these sources (builds it, with Node, when the release has
   none: setup-node alone took 3-4 minutes on the macOS runner) and runs the benchmark

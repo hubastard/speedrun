@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Builds speedrun and packs what it needs at run time into
-# dist/speedrun-<version>-<os>-<arch>.tar.gz: the binary (the Android agent, the JavaScript
-# engine and the image codecs are inside it) and, when Xcode is installed, the iOS agent next
-# to it, where speedrun looks for it (agent/ios/build/Build/Products). The machine running it
-# then needs only adb (Android) or Xcode (iOS): no Odin, C compiler or JDK.
+# Builds speedrun and packs it into dist/speedrun-<version>-<os>-<arch>.tar.gz: the binary
+# (the Android agent, the iOS agent when Xcode is installed, the JavaScript engine and the
+# image codecs are inside it) and its licenses. The machine running it then needs only adb
+# (Android) or Xcode (iOS): no Odin, C compiler or JDK.
 #   ./package.sh                       # version from git: the tag, else the commit
 #   SPEEDRUN_VERSION=0.1.0 ./package.sh
 set -euo pipefail
@@ -28,13 +27,8 @@ cp LICENSE NOTICE "$stage/"
 mkdir -p "$stage/licenses"
 cp host/js/quickjs-ng/LICENSE "$stage/licenses/quickjs-ng.txt"
 cp host/js/datafaker/LICENSE "$stage/licenses/datafaker.txt"
-sed -n '/This software is available under 2 licenses/,$p' host/image/stb_image.h > "$stage/licenses/stb.txt"
-products=agent/ios/build/Build/Products
-if [ -d "$products" ]; then
-  # The test run file and the runner app; the Swift module is a build product only.
-  mkdir -p "$stage/$products/Release-iphonesimulator"
-  cp "$products"/*.xctestrun "$stage/$products/"
-  cp -R "$products/Release-iphonesimulator/SpeedrunAgentUITests-Runner.app" "$stage/$products/Release-iphonesimulator/"
+cp host/image/build/LICENSE.txt "$stage/licenses/stb.txt"
+if command -v xcodebuild > /dev/null; then
   ios="Android and iOS simulators (the iOS agent was built with $(xcodebuild -version | head -1))"
 else
   ios="Android only (built without Xcode: no iOS agent)"
@@ -43,12 +37,11 @@ fi
 cat > "$stage/README.txt" <<EOF
 speedrun $SPEEDRUN_VERSION ($os $arch): $ios.
 
-Run it from this folder, or put the folder on your PATH (a symlink to the binary works too):
-  ./speedrun test flows/            # takes maestro test's options
-  ./speedrun --help
+The binary is all it needs: put it anywhere on your PATH (/usr/local/bin, ~/.local/bin...).
+  speedrun test flows/            # takes maestro test's options
+  speedrun --help
 
 Android needs adb on PATH and an emulator or device; iOS needs Xcode and a booted simulator.
-Keep agent/ next to the binary: speedrun starts its iOS agent from there.
 
 Licensed under the Apache License 2.0 (LICENSE); third-party code: NOTICE and licenses/.
 EOF
