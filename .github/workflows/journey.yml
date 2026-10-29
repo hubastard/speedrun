@@ -8,12 +8,19 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      platform:
+        description: The platform to run the journey on
+        type: choice
+        options: [both, android, ios]
+        default: both
 
 env:
   ODIN_VERSION: dev-2026-09
 
 jobs:
   android:
+    if: inputs.platform != 'ios'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -118,6 +125,7 @@ jobs:
           if-no-files-found: ignore
 
   ios:
+    if: inputs.platform != 'android'
     runs-on: macos-26
     timeout-minutes: 75
     steps:
