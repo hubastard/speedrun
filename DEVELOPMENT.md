@@ -13,6 +13,14 @@ what is still slow: `TO_IMPROVE.md`.
   (`TAP`, `KEY`, `SWIPE`, `TYPE`, `ERASE`, `PRESS`), wait (`SETTLE`, `MARK`), plus `SHELL` and
   `SCREENSHOT`. Settle detection watches window switches, the active
   window's frames and accessibility events, then confirms with a main-thread idle probe.
+  Reads go through the connection's node cache, which accessibility events keep current:
+  a read refreshes the root and the ~50 nodes fetched with it, and serves the others from
+  the cache. Compose sends no events to a UiAutomation client (only while an accessibility
+  service is enabled), so a Compose node removed stayed matched (issue #2): while the last
+  read showed Compose content (a `androidx.compose.ui.platform.` host view), each read
+  empties the cache first (`clearCache`, API 34+; setting the service info below). That
+  costs the app building every node again, ~0.5 ms each (a 134-node screen: ~100 ms a
+  read against ~10 ms cached; no prefetch strategy did better); View-based apps keep it.
   Two entry points share that logic (`Agent.kt`) and differ in how input is injected
   (`Injectors.kt`):
   - `ShellMain` (default): started with `app_process` as the shell user, which holds

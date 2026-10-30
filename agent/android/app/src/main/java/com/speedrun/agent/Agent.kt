@@ -216,8 +216,20 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private val bounds = Rect()
     private val mockLocation = MockLocation()
 
+    private val serviceInfo: AccessibilityServiceInfo = ua.serviceInfo
+
+    /**
+     * The last read showed Compose content (its host view, ComposeView or AndroidComposeView).
+     * Compose sends accessibility events only while an accessibility service is enabled, and a
+     * UiAutomation client is none: nothing evicts its nodes from this client's node cache, and
+     * a read refreshes only the root and the ~50 nodes fetched with it, serving the others as
+     * they were (a node removed stays, as long as the views' sizes hold). While it shows, each
+     * read starts from an empty cache (freshNodes); View-based apps send events, and keep it.
+     */
+    private var composeShown = false
+
     init {
-        val info = ua.serviceInfo
+        val info = serviceInfo
         info.flags = info.flags or
             AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
             AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
@@ -323,6 +335,16 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     // ---- tree -------------------------------------------------------------------------
 
+    /** Empties the node cache before a read while Compose shows (composeShown). */
+    private fun freshNodes() {
+        if (!composeShown) return
+        if (android.os.Build.VERSION.SDK_INT >= 34) ua.clearCache()
+        else ua.serviceInfo = serviceInfo // setting it clears the cache
+    }
+
+    private fun isCompose(n: AccessibilityNodeInfo): Boolean =
+        n.className?.startsWith("androidx.compose.ui.platform.") == true
+
     /** Root of the active window, waiting up to ~100 ms for one to appear. */
     private fun activeRoot(): AccessibilityNodeInfo? {
         for (i in 0 until 20) {
@@ -333,6 +355,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     private fun writeTree() {
+        freshNodes()
         val root = activeRoot()
         if (root == null) {
             body.writeInt(0)
@@ -341,6 +364,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
         treeBuf.reset()
         var count = 0
+        var compose = false
         val nodes = ArrayDeque<AccessibilityNodeInfo>()
         val depths = ArrayDeque<Int>()
         nodes.addLast(root)
@@ -350,6 +374,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val depth = depths.removeLast()
             writeNode(n, depth)
             count++
+            if (!compose && isCompose(n)) compose = true
             // Push children in reverse so they pop in document order (pre-order DFS).
             for (i in n.childCount - 1 downTo 0) {
                 val c = n.getChild(i) ?: continue
@@ -357,6 +382,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 depths.addLast(depth + 1)
             }
         }
+        composeShown = compose
         tree.flush()
         body.writeInt(count)
         treeBuf.writeTo(body)
@@ -364,6 +390,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     /** One round trip: the app searches its own view hierarchy (see FIND in the protocol). */
     private fun writeFind(text: String) {
+        freshNodes()
         val hits = activeRoot()?.findAccessibilityNodeInfosByText(text).orEmpty()
         treeBuf.reset()
         for (n in hits) writeNode(n, 0)
@@ -398,8 +425,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     /** All windows, as flows see them (see SCREEN in the protocol). */
     private fun writeScreen() {
+        freshNodes()
         treeBuf.reset()
         var count = 0
+        walkCompose = false
         val seen = HashSet<Int>()
         val active = ua.rootInActiveWindow
         if (active != null) {
@@ -412,10 +441,14 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val root = w.root ?: continue
             count += walkVisible(root)
         }
+        composeShown = walkCompose
         tree.flush()
         body.writeInt(count)
         treeBuf.writeTo(body)
     }
+
+    /** walkVisible met Compose content (composeShown). */
+    private var walkCompose = false
 
     /** Pre-order from a window root, skipping subtrees not visible to the user. */
     private fun walkVisible(root: AccessibilityNodeInfo): Int {
@@ -433,6 +466,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val web = inWebView.removeLast() || n.className?.contains("WebView") == true
             writeNode(n, depth)
             count++
+            if (!walkCompose && isCompose(n)) walkCompose = true
             for (i in n.childCount - 1 downTo 0) {
                 val c = n.getChild(i) ?: continue
                 if (!web && !c.isVisibleToUser) continue
@@ -780,6 +814,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
         /** Reads the tree: whether its signature is the previous read's. */
         fun steady(now: Long): Boolean {
+            freshNodes()
             val root = ua.rootInActiveWindow
             if (root == null) {
                 lastSignature = null
