@@ -635,17 +635,21 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             sync,
         )
         injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x1, y1, 0))
-        // First MOVE just past touch slop, handled by the app before the rest (about one
-        // frame): a scrolling parent intercepts the gesture on it. Sent together, all MOVEs
-        // reach the app as one batched MOVE, which the parent spends on intercepting, so
-        // nothing would scroll.
+        // Two MOVEs just past touch slop, each handled by the app before the next (about a
+        // frame each): a scrolling parent intercepts the gesture on the first, or on the
+        // second when the view under the finger keeps it from intercepting until the finger
+        // moves (React Native's TextInput does, and gives the gesture back on its first MOVE:
+        // issue #6, a form's field at the drag's start). Sent together, MOVEs reach the app as
+        // one batched MOVE, which the parent spends on intercepting, so nothing would scroll.
         val dist = hypot(dx, dy)
         val first = if (dist > 0f) minOf(1f, swipeFirstMovePx / dist) else 1f
+        val second = if (dist > 0f) minOf(1f, (swipeFirstMovePx + swipeSecondMovePx) / dist) else 1f
         move(first, sync = true)
+        if (second > first) move(second, sync = true)
         val steps = maxOf(1, duration / SWIPE_STEP_MS)
         for (i in 1..steps) {
             val f = i.toFloat() / steps
-            if (f > first) move(f)
+            if (f > second) move(f)
         }
         if (!fling) {
             // A second sample at the end leaves zero motion for touch resampling to
@@ -674,6 +678,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     // 2x the 8 dp touch slop.
     private val swipeFirstMovePx = 16 * Resources.getSystem().displayMetrics.density
+    // The second MOVE, past the first: the scroll a gesture held by the view under it loses.
+    private val swipeSecondMovePx = 4 * Resources.getSystem().displayMetrics.density
 
     private fun key(code: Int) = timedAction { pressKey(code) }
 

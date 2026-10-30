@@ -775,8 +775,14 @@ Known differences in how, not what:
   debug library that hooks `Choreographer` (the Espresso/Detox approach).
 - **`SWIPE` timestamps are synthetic for drags:** scrollUntilVisible's drag is injected at
   once with the timing of a real drag, so the app sees the right speed without the tool
-  waiting it out. Only the first MOVE waits about one frame for the app (a scroll container
-  must intercept it), and the lift ~25 ms after the moves, a frame later. The flow's `swipe`
+  waiting it out. Only the first two MOVEs wait about one frame each for the app (a scroll
+  container must intercept one of them before the rest, which come as one batched MOVE: an
+  intercepting parent spends that MOVE on intercepting, so nothing would scroll), and the
+  lift ~25 ms after the moves, a frame later. Two, because the view under the finger may keep
+  its parent from intercepting until the first MOVE: React Native's TextInput does on DOWN,
+  and gives the gesture back on its first MOVE when it cannot scroll itself. With one, a drag
+  that started on a form's field did not scroll (issue #6: on a CI emulator, unless the batch
+  happened to span two frames). The flow's `swipe`
   and `scroll` (the fling flag) play out in real time instead, as a finger's: sent at once, a
   React Native Gesture Handler pan sometimes ended with no movement (1 run in 3 of the
   benchmark app's gestures flow). Flows fling like `adb shell input swipe`, as Maestro does;
