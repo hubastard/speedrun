@@ -298,8 +298,8 @@ cd speedrun
 
 For iOS only, without a JDK: `SPEEDRUN_NO_ANDROID=1 ./build.sh`.
 
-How Speedrun works inside: [DEVELOPMENT.md](DEVELOPMENT.md). What is still slow:
-[TO_IMPROVE.md](TO_IMPROVE.md).
+How Speedrun works inside: [dev/DEVELOPMENT.md](dev/DEVELOPMENT.md). What is still slow:
+[dev/TO_IMPROVE.md](dev/TO_IMPROVE.md).
 
 ## Status
 

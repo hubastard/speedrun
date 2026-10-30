@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds NotifTest (an app asking for notification permission at launch, then showing
 # "Granted" or "Denied") for the simulator and installs it on the booted one, or DEVICE.
-# Needs Xcode. Then: ./speedrun test -p ios flows/notifications
+# Needs Xcode. Then: ./speedrun test -p ios dev/flows/notifications
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT="$(mktemp -d -t notiftest.XXXXXX)"

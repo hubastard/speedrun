@@ -1,5 +1,5 @@
 # The notification-permission alert, answered "Don't Allow" (an explicit notifications value
-# wins over all). NotifTest: ./flows/notifications/install.sh
+# wins over all). NotifTest: dev/flows/notifications/install.sh
 appId: com.speedrun.notiftest
 ---
 - launchApp:

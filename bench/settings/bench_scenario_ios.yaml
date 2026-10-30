@@ -1,7 +1,7 @@
 # iOS version of bench_scenario_android.yaml, for the Settings app on a simulator set to
 # English.
 # Iterations come from TIMES (1 when not given):
-#   ./compare.sh bench/settings/bench_scenario_ios.yaml -e TIMES=3        (both tools)
+#   dev/compare.sh bench/settings/bench_scenario_ios.yaml -e TIMES=3        (both tools)
 #   ./speedrun test -p ios bench/settings/bench_scenario_ios.yaml -e TIMES=3
 #   maestro --device <udid> test -e TIMES=3 bench/settings/bench_scenario_ios.yaml
 appId: com.apple.Preferences

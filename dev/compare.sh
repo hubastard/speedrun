@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...
+# Usage: dev/compare.sh <flow.yaml> [-e KEY=VALUE]...
 # Runs the same Maestro flow file with speedrun (./speedrun test) and with Maestro, each
 # after a fresh start of the flow's app, then lines the two runs up command by command and
 # prints the median time per command (repeat iterations grouped), then the totals: the flow,
@@ -7,12 +7,12 @@
 # every run too), and the wall clock. Needs ./speedrun (./build.sh), maestro and python3.
 # The device: DEVICE (an Android serial or a booted iOS simulator's UDID), else ANDROID_SERIAL,
 # else the first Android device, else the booted simulator.
-#   ./compare.sh bench/app/flows/gestures.yaml
-#   DEVICE=<simulator udid> ./compare.sh bench/app/flows/chat.yaml
+#   dev/compare.sh bench/app/flows/gestures.yaml
+#   DEVICE=<simulator udid> dev/compare.sh bench/app/flows/chat.yaml
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.." # the repository
 
-FLOW="${1:?usage: ./compare.sh <flow.yaml> [-e KEY=VALUE]...}"
+FLOW="${1:?usage: dev/compare.sh <flow.yaml> [-e KEY=VALUE]...}"
 shift
 OUT="$(mktemp -d -t speedrun_compare.XXXXXX)"
 trap 'rm -rf "$OUT"' EXIT

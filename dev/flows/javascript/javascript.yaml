@@ -1,7 +1,7 @@
 # Coverage of JavaScript in flows: env defaults, output, conditions, runScript scopes, the
 # clipboard, console.log and escapes. Each check is an assertTrue; it passes with Maestro
 # too. It touches no app, so it runs on any device:
-#   ./speedrun test flows/javascript/javascript.yaml
+#   ./speedrun test dev/flows/javascript/javascript.yaml
 appId: com.android.settings
 env:
   NAME: ${NAME || 'world'}

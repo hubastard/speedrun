@@ -2,7 +2,7 @@
 
 How speedrun is built and how it behaves in detail, for working on it. Using it:
 `README.md` and `docs/` (command line, Maestro compatibility, troubleshooting). Benchmarks and
-what is still slow: `TO_IMPROVE.md`.
+what is still slow: `dev/TO_IMPROVE.md`.
 
 ## Pieces
 
@@ -65,14 +65,14 @@ what is still slow: `TO_IMPROVE.md`.
 - `bench/settings` — the Settings benchmark, `bench_scenario_android.yaml` and
   `bench_scenario_ios.yaml`: 14 commands per lap on Android's and iOS's Settings app
   (navigation two levels deep, scrolling both ways, text input), `-e TIMES=3` for three laps;
-  `./compare.sh bench/settings/bench_scenario_android.yaml -e TIMES=3`.
-- `flows/features.yaml` — coverage of the supported commands on Android's Settings, each tap
-  checked by an assertion; `flows/javascript` (no app needed) and
-  `flows/device/settings.yaml` (Android) cover scripts and the device commands;
-  `flows/notifications` the iOS notification alert (its test app:
-  `flows/notifications/install.sh`).
-- `compare.sh` — one flow with speedrun, then Maestro, side by side per command (see
-  `TO_IMPROVE.md`).
+  `dev/compare.sh bench/settings/bench_scenario_android.yaml -e TIMES=3`.
+- `dev/flows/features.yaml` — coverage of the supported commands on Android's Settings, each tap
+  checked by an assertion; `dev/flows/javascript` (no app needed) and
+  `dev/flows/device/settings.yaml` (Android) cover scripts and the device commands;
+  `dev/flows/notifications` the iOS notification alert (its test app:
+  `dev/flows/notifications/install.sh`).
+- `dev/compare.sh` — one flow with speedrun, then Maestro, side by side per command (see
+  `dev/TO_IMPROVE.md`).
 
 ## Who can connect to what
 
@@ -157,7 +157,7 @@ Both pin Odin (`ODIN_VERSION`) to the version speedrun is developed with.
 Maestro flow files run as they are:
 
 ```
-./speedrun test flows/features.yaml
+./speedrun test dev/flows/features.yaml
 ./speedrun test -p ios bench/app/flows/        # the benchmark app's suite, on a simulator
 ```
 

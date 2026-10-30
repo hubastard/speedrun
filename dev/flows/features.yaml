@@ -1,5 +1,5 @@
 # Feature coverage for the flow runner, checked against Maestro with
-#   ./compare.sh flows/features.yaml
+#   dev/compare.sh dev/flows/features.yaml
 # Every tap is followed by an assertion on where it should lead, so both tools passing
 # means both picked the same elements. Settings app, any starting screen.
 appId: com.android.settings

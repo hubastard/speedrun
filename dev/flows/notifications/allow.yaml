@@ -1,5 +1,5 @@
 # The notification-permission alert, answered on a hierarchy read (launchApp's
-# default permissions, all: allow). NotifTest: ./flows/notifications/install.sh
+# default permissions, all: allow). NotifTest: dev/flows/notifications/install.sh
 appId: com.speedrun.notiftest
 ---
 - launchApp:

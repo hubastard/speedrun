@@ -43,9 +43,9 @@ the commands where speedrun is still closest to Maestro, with what is known abou
 cd bench/app
 ./bench.sh compare ios             # the suite with speedrun, then Maestro: results/ios.md
 ./bench.sh compare android
-cd ../.. && ./compare.sh bench/app/flows/gestures.yaml    # one flow, per command
-./compare.sh bench/settings/bench_scenario_android.yaml -e TIMES=3   # the Settings benchmark
-./compare.sh bench/settings/bench_scenario_ios.yaml -e TIMES=3       # and on iOS (in English)
+cd ../.. && dev/compare.sh bench/app/flows/gestures.yaml    # one flow, per command
+dev/compare.sh bench/settings/bench_scenario_android.yaml -e TIMES=3   # the Settings benchmark
+dev/compare.sh bench/settings/bench_scenario_ios.yaml -e TIMES=3       # and on iOS (in English)
 ```
 
 `bench.sh compare` runs the benchmark app's suite (`bench/app/flows`, 19 flows) with each

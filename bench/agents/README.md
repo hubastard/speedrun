@@ -44,7 +44,7 @@ Each tool runs the app the way it comes, unless said otherwise:
 2026-10-29, Apple M1 Pro (16 GB), an Android 17 emulator and an iPhone 17 Pro simulator
 (iOS 26.2), one at a time. The median of 3 runs after a warm-up (each run's time in seconds);
 every run passed. Speedrun with two lookup fixes that came out of this benchmark (see
-DEVELOPMENT.md); before them, at normal speed on iOS, Speedrun Bench took 13.2 s.
+dev/DEVELOPMENT.md); before them, at normal speed on iOS, Speedrun Bench took 13.2 s.
 
 **Speedrun Bench**
 

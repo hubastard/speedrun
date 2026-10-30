@@ -1,6 +1,6 @@
 # Device commands (permissions, launch arguments, dark mode, orientation, random input,
 # screenshots, recording, media, location) on Android's Settings app. Runs as is in Maestro
-# too: ./compare.sh flows/device/settings.yaml
+# too: dev/compare.sh dev/flows/device/settings.yaml
 appId: com.android.settings
 ---
 - stopApp: com.google.android.settings.intelligence # its search screen outlives Settings
