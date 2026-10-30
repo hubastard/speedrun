@@ -163,16 +163,74 @@ final class Screen {
     static let snapshotBudgetSeconds = 20.0
 
     private func snapshotForeground() throws -> XCUIElementSnapshot {
-        if let s = try? foregroundApp().snapshot() { return s }
+        let first = foregroundApp()
+        if let s = try? first.snapshot() { return notEmpty(s, of: first) }
         foreground = nil
         foregroundID = ""
         let deadline = Date().addingTimeInterval(Self.snapshotBudgetSeconds)
         repeat {
             let app = foregroundApp()
-            if let s = try? app.snapshot() { return s }
+            if let s = try? app.snapshot() { return notEmpty(s, of: app) }
             if app == springboard || app.state != .runningForeground { break }
         } while Date() < deadline
         return try springboard.snapshot()
+    }
+
+    /// When an empty read was last logged: a screen that stays empty logs every 5 s, not on
+    /// every read (the host reads every ~50 ms while it waits).
+    private var emptyLoggedAt: UInt64 = 0
+    private static let emptyLogIntervalNs: UInt64 = 5_000_000_000
+
+    /// An app's snapshot with nothing under the application. On a user's CI, with iOS 26's
+    /// "Save Password?" sheet up over a busy React Native screen, every read for a minute was
+    /// the bare application (its name, a full-screen frame) and XCTest's log had no "Requesting
+    /// snapshot of accessibility hierarchy" line: XCTest answered without asking the app. Not
+    /// reproduced (Safari's sheet, a main thread blocked 6 s). This logs what XCTest sees then,
+    /// and reads the app again through a new XCUIApplication, used from then on if it has the
+    /// tree.
+    private func notEmpty(_ snapshot: XCUIElementSnapshot, of app: XCUIApplication) -> XCUIElementSnapshot {
+        guard snapshot.children.isEmpty, app != springboard, !foregroundID.isEmpty else { return snapshot }
+        let now = DispatchTime.now().uptimeNanoseconds
+        let log = now - emptyLoggedAt >= Self.emptyLogIntervalNs
+        if log {
+            emptyLoggedAt = now
+            NSLog("speedrun: empty read of \(foregroundID): \(emptyReport(app))")
+        }
+        let fresh = XCUIApplication(bundleIdentifier: foregroundID)
+        guard let again = try? fresh.snapshot(), !again.children.isEmpty else {
+            if log { NSLog("speedrun: a new XCUIApplication reads \(foregroundID) empty too") }
+            return snapshot
+        }
+        NSLog("speedrun: a new XCUIApplication reads \(foregroundID): \(Self.summary(again)); using it from now on")
+        foreground = fresh
+        return again
+    }
+
+    /// What XCTest sees when the app reads empty: the app's state, the process id XCTest has
+    /// for it, the apps it lists as active (pids, bundle ids), and what SpringBoard and the
+    /// other active apps hold.
+    private func emptyReport(_ app: XCUIApplication) -> String {
+        var parts = ["state \(app.state.rawValue) (4 = running in the foreground)",
+                     "XCTest's pid \(Private.processID(app).map { String($0) } ?? "unknown")",
+                     Private.foregroundReport().replacingOccurrences(of: "\n", with: "; ")]
+        parts.append("SpringBoard: " + ((try? springboard.snapshot()).map(Self.summary) ?? "no snapshot"))
+        for id in Private.activeBundleIDs() where id != foregroundID && id != "com.apple.springboard" {
+            parts.append("\(id): " + ((try? XCUIApplication(bundleIdentifier: id).snapshot()).map(Self.summary) ?? "no snapshot"))
+        }
+        return parts.joined(separator: "; ")
+    }
+
+    /// A snapshot's size and its first labels, for a log line.
+    private static func summary(_ snapshot: XCUIElementSnapshot) -> String {
+        var count = 0
+        var labels: [String] = []
+        var stack = [snapshot]
+        while let n = stack.popLast() {
+            count += 1
+            if labels.count < 8 && !n.label.isEmpty { labels.append(n.label) }
+            stack.append(contentsOf: n.children.reversed())
+        }
+        return "\(count) elements \(labels)"
     }
 
     /// After `simctl launch`: waits until the app runs in the foreground, then snapshots it once

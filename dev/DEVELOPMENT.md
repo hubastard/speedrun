@@ -638,6 +638,15 @@ Known differences in how, not what:
   before SpringBoard's (the fallback for an app being relaunched): with three tries at most,
   an app whose main thread was blocked ~2 s at a time on CI failed them all, the read threw,
   and the agent closed the connection ("agent connection lost").
+- iOS: a snapshot of the app with nothing under the application is read again through a new
+  `XCUIApplication`, used from then on if it has the tree, and logged (`speedrun: empty
+  read of …` in the agent's log, every 5 s while it lasts): the app's state, the pid XCTest
+  has for it, the apps XCTest lists as active with their pids, and what SpringBoard and the
+  other active apps hold. A user's CI read only the bare application (its name, a
+  full-screen frame) for a minute, with iOS 26's "Save Password?" sheet over a busy React
+  Native screen, and XCTest's log had no "Requesting snapshot of accessibility hierarchy"
+  line in that time. Not reproduced: Safari's sheet, dismissed early or late, and an app
+  blocking its main thread for 6 s all read whole. Speedrun Bench never reads empty.
 - A lost connection to the agent (it crashed, was killed, or closed the connection when an
   operation threw) is made again, and the command that saw it runs again, twice per flow at
   most (`run_list`, `reconnect`). `device_restart` connects again when the agent answers a

@@ -385,7 +385,16 @@ enum Private {
         }
     }
 
-    /// Diagnostics (spike op FOREGROUND): what each way of listing apps returns.
+    /// The process id XCTest has for an app (XCUIApplication's processID), nil when this Xcode
+    /// has none.
+    static func processID(_ app: XCUIApplication) -> Int32? {
+        let sel = NSSelectorFromString("processID")
+        guard app.responds(to: sel) else { return nil }
+        typealias Pid = @convention(c) (NSObject, Selector) -> Int32
+        return unsafeBitCast(app.method(for: sel), to: Pid.self)(app, sel)
+    }
+
+    /// Diagnostics (spike op FOREGROUND, and empty reads): what each way of listing apps returns.
     static func foregroundReport() -> String {
         let interface = NSSelectorFromString("accessibilityInterface")
         guard XCUIDevice.shared.responds(to: interface),
