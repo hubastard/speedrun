@@ -798,6 +798,17 @@ Known differences in how, not what:
   60 ms per key on the emulator. The last
   key of `TYPE` and `ERASE` waits until the app has handled it: the IME applies DELs
   asynchronously, and spare DELs once deleted the first characters typed next.
+- **Keys go in chunks, stamped as they are sent:** the input dispatcher hands an app one key
+  at a time, once it has handled the one before, and drops a key event 10 s past its event
+  time as stale (`Dropped event because it is stale` in logcat). A text mapped to key
+  events at once, stamped then and sent in one burst, lost its end with no error whenever
+  the app took longer than 10 s to handle it all (issue #7: a starved CI emulator, an app
+  just installed; reproduced on API 36 with a field that takes 150 ms a key: 29 of 52
+  characters arrived; API 37 kept them all). Each chunk is sized to take ~500 ms at the
+  pace of the one before, 16 keys at most (the first is two keys), and its last key waits
+  for the app: to lose a key, the app would have to slow down past 600 ms a key within a
+  chunk. Waiting for every key works too but costs ~12 ms a key (52 characters: 1.5 s
+  instead of 0.9 s); the chunks cost about 12 ms each.
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

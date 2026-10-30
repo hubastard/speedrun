@@ -30,6 +30,11 @@ import kotlin.math.hypot
 
 internal const val TAG = "SpeedrunAgent"
 
+/** How long a chunk of typed keys should take the app, at its last pace (see injectKeys). */
+private const val KEY_CHUNK_MS = 500L
+/** The most key presses in a chunk: a sudden slowdown has to pass 600 ms a key to lose one. */
+private const val KEY_CHUNK_MAX = 16
+
 /**
  * Logcat, tag SpeedrunAgent. The shell entry point also echoes to stdout: that is what
  * `adb shell` shows, and speedrun watches it to know when the agent is up.
@@ -672,10 +677,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun key(code: Int) = timedAction { pressKey(code) }
 
-    private fun pressKey(code: Int, sync: Boolean = false) {
+    private fun pressKey(code: Int) {
         val t = SystemClock.uptimeMillis()
         injector.inject(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0))
-        injector.inject(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0), sync)
+        injector.inject(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0))
     }
 
     private val keyMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
@@ -683,26 +688,54 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private fun type(text: String) {
         var skipped = 0
         timedAction {
-            val keys = ArrayList<KeyEvent>()
+            val keys = ArrayList<Array<KeyEvent>>()
             for (ch in text) {
                 val events = keyMap.getEvents(charArrayOf(ch))
                 if (events == null) {
                     skipped++
                     continue
                 }
-                for (e in events) {
-                    e.source = InputDevice.SOURCE_KEYBOARD
-                    keys += e
-                }
+                for (e in events) e.source = InputDevice.SOURCE_KEYBOARD
+                keys += events
             }
             if (skipped > 0 && insertText(text)) {
                 skipped = 0
                 return@timedAction
             }
-            // Keys reach the app in order, so once the last one is handled, all are.
-            keys.forEachIndexed { i, e -> injector.inject(e, sync = i == keys.lastIndex) }
+            injectKeys(keys)
         }
         body.writeInt(skipped)
+    }
+
+    /**
+     * Key events, a group per key press, sent in chunks: each event stamped as it is sent, and
+     * the last of a chunk waited for (keys reach the app in order, so all are handled when this
+     * returns). The input dispatcher hands an app one key at a time, once it has handled the
+     * one before, and drops a key event 10 s past its event time as stale: a text stamped and
+     * queued at once lost its end, with no error, whenever the app took longer than that to
+     * handle it all (issue #7: a starved emulator, a cold app). A chunk is sized to take
+     * [KEY_CHUNK_MS] at the pace of the one before, [KEY_CHUNK_MAX] presses at most. Waiting
+     * for every key would make sure of it too, but costs ~12 ms a key on the emulator (52
+     * characters: 1.5 s instead of 0.9 s).
+     */
+    private fun injectKeys(presses: List<Array<KeyEvent>>) {
+        var next = 0
+        var msPerPress = 0L // unknown: the first chunk is two presses, to measure it
+        while (next < presses.size) {
+            val n = if (msPerPress == 0L) 2 else (KEY_CHUNK_MS / msPerPress).toInt().coerceIn(1, KEY_CHUNK_MAX)
+            val end = minOf(next + n, presses.size)
+            val start = SystemClock.uptimeMillis()
+            for (k in next until end) {
+                val down = SystemClock.uptimeMillis()
+                presses[k].forEachIndexed { j, e ->
+                    val sent = KeyEvent(down, SystemClock.uptimeMillis(), e.action, e.keyCode, e.repeatCount,
+                        e.metaState, e.deviceId, e.scanCode, e.flags, e.source)
+                    injector.inject(sent, sync = k == end - 1 && j == presses[k].lastIndex)
+                }
+            }
+            msPerPress = maxOf(1L, (SystemClock.uptimeMillis() - start) / (end - next))
+            next = end
+        }
     }
 
     /**
@@ -739,8 +772,11 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // applies DELs asynchronously; without the wait, spare DELs (erasing more characters than
     // the field holds) could land after the next command's first typed characters.
     private fun erase(count: Int) = timedAction {
-        val n = count.coerceIn(0, 10_000)
-        repeat(n) { pressKey(KeyEvent.KEYCODE_DEL, sync = it == n - 1) }
+        val del = arrayOf(
+            KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0),
+            KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0),
+        )
+        injectKeys(List(count.coerceIn(0, 10_000)) { del })
     }
 
     // ---- settle -----------------------------------------------------------------------
