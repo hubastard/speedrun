@@ -446,6 +446,16 @@ Known differences in how, not what:
   now (an app laying out after it looked settled). A screen the tap opened can repeat the
   tapped text elsewhere, as iOS titles a pushed screen with the row that opened it: that is
   no miss.
+- Android: a tap after which the screen holds the same elements saying the same (class,
+  text, description, id and flags, not where they are: a ticker moves on every read) waits
+  for a change until 1 s after the tap, then settles again. React Native runs a press on its
+  JavaScript thread, and a busy one (a screen that just came in) runs it later, the main
+  thread idle: anything drawn right after the tap ended the settle in ~50-130 ms, before
+  the press ran, and the next tap landed on the screen the press was about to change (on CI:
+  a second Back on the closing cart screen, which React Navigation ignores, or a tab under a
+  closing modal). In 8 CI runs it waited 3 times, the screen
+  changing 0.2-1.2 s after the tap; Speedrun Bench's suite never triggers it. Taps on fields
+  are left out (focusing needs no JavaScript).
 - After `inputText` and `eraseText`, a screen that shows no change is taken as settled after
   300 ms (1 s after taps): the keys have been delivered by then (on iOS the settle concludes
   only once testmanagerd has confirmed them), and a field that does not expose its text

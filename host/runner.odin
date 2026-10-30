@@ -56,6 +56,7 @@ Hierarchy :: struct {
 	roots: [dynamic]int,
 	order:     [dynamic]int, // aggregate(): pre-order of kept nodes
 	hash:      u64, // for retryTapIfNoChange
+	content:   u64, // what the nodes are and say (class, text, description, id, flags), not where
 	unsettled: bool, // iOS: the screen changed since the last settle ended
 }
 
@@ -918,6 +919,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	}
 	frame := frame_hold(r, d.sel == nil || in_sheet, tapped.class)
 	before := r.h.hash
+	content_before := r.h.content
 	typing_before := typing(r)
 	// The screen was read since the last tap: the checks below share that read (one costs
 	// ~180 ms on iOS).
@@ -940,7 +942,9 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if left > 0 do time.sleep(time.Duration(left * f64(time.Millisecond)))
 			}
 		}
-		status := settle_status(r, d.settle_ms) or_return
+		tapped_at := time.tick_now()
+		res := settle_status(r, d.settle_ms) or_return
+		status := res.status
 		read_since_tap = false
 		// iOS presents a system sheet or alert (another process's view in the app, such as
 		// "Save Password?") a while before it takes touches, and in the meantime a tap on its
@@ -954,7 +958,33 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 			if r.debug do fmt.printf("      [a tap in a sheet changed nothing: tapping again]\n")
 			if !tap_at(r, x, y, frame) do return AGENT_LOST
-			status = settle_status(r, d.settle_ms) or_return
+			again := settle_status(r, d.settle_ms) or_return
+			status = again.status
+		}
+		// Android: React Native runs a press on its JavaScript thread, and a busy one (a screen
+		// that just came in, still rendering) runs it later, the main thread idle meanwhile.
+		// Anything drawn right after the tap then ended the settle before the press ran, and the
+		// next tap landed on the screen the press was about to change (Journey on CI: a second
+		// Back, on the closing screen, went nowhere; a tab, on a closing modal). So a tap after
+		// which the screen holds the same elements saying the same (where they are left out: a
+		// ticker moves on every read) waits for a change until SETTLE_NO_CHANGE_MS after it, as
+		// a tap that drew nothing does. A field the tap focuses needs no JavaScript: left out.
+		if r.dev.platform != .IOS && status == .Settled && d.repeat == 1 && !d.long_press &&
+		   !strings.has_suffix(tapped.class, "EditText") {
+			if !read_screen(r) do return AGENT_LOST
+			read_since_tap = true
+			if r.h.content == content_before {
+				if r.debug do fmt.printf("      [the tap changed nothing yet: waiting for the app]\n")
+				for r.h.content == content_before && time.duration_milliseconds(time.tick_since(tapped_at)) < SETTLE_NO_CHANGE_MS {
+					time.sleep(30 * time.Millisecond)
+					if !read_screen(r) do return AGENT_LOST
+				}
+				if r.h.content != content_before {
+					if r.debug do fmt.printf("      [the screen changed %.0f ms after the tap]\n", time.duration_milliseconds(time.tick_since(tapped_at)))
+					settle(r, d.settle_ms, no_change_ms = 0) or_return
+					read_since_tap = false
+				}
+			}
 		}
 		// The element moved between the lookup and the tap: an app that keeps laying out after
 		// it looked settled (Settings inserts a banner ~0.5 s after launch). If it is still
@@ -965,7 +995,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// tapping again typed a fifth). The screen a tap opened can repeat the tapped text
 		// elsewhere: iOS titles a pushed screen with the row that opened it.
 		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
-			if !read_screen(r) do return AGENT_LOST
+			if !read_since_tap && !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
 			if el := select(r, d.sel) or_return; el >= 0 {
 				n := r.h.nodes[el]
@@ -1946,13 +1976,13 @@ settle :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i32 = SET
 	return err
 }
 
-settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i32 = SETTLE_NO_CHANGE_MS) -> (Settle_Status, Err) {
+settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i32 = SETTLE_NO_CHANGE_MS) -> (Settle_Result, Err) {
 	timeout := i32(SETTLE_TIMEOUT_MS)
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
-	if !ok do return .Timeout, AGENT_LOST
+	if !ok do return {status = .Timeout}, AGENT_LOST
 	if r.debug do fmt.printf("      [settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
-	return res.status, nil
+	return res, nil
 }
 
 // ---- conditions and lookups -----------------------------------------------------------
@@ -2775,6 +2805,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	r.h.order = make([dynamic]int, 0, count, alloc)
 	stack := make([dynamic]int, 0, 64, alloc) // ancestors by depth
 	hash: u64 = 14695981039346656037
+	content: u64 = 14695981039346656037
 	r.marks, r.prev_marks = r.prev_marks, r.marks
 	slice.sort(r.prev_marks[:])
 	if r.marks.allocator.procedure == nil do r.marks.allocator = r.alloc
@@ -2799,12 +2830,18 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		mark: u64 = 14695981039346656037
 		for v in ([]i32{n.left, n.top, n.right, n.bottom, i32(n.depth)}) do mark = (mark ~ u64(u32(v))) * 1099511628211
 		for s in ([]string{n.class, n.text, n.desc, n.id}) {
-			for c in transmute([]u8)s do mark = (mark ~ u64(c)) * 1099511628211
+			for c in transmute([]u8)s {
+				mark = (mark ~ u64(c)) * 1099511628211
+				content = (content ~ u64(c)) * 1099511628211
+			}
 			mark = (mark ~ 0xff) * 1099511628211
+			content = (content ~ 0xff) * 1099511628211
 		}
+		content = (content ~ u64(transmute(u8)(n.flags - {.Restless}))) * 1099511628211
 		append(&r.marks, mark)
 	}
 	r.h.hash = hash
+	r.h.content = content
 	// iOS: a byte after the nodes, 1 when the screen differs from where the last settle ended.
 	r.h.unsettled = rd.off < len(rd.b) && rd_u8(&rd) == 1
 	// Display size: the extent of the window roots, in the current orientation (it changes
