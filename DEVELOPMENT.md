@@ -58,8 +58,9 @@ what is still slow: `TO_IMPROVE.md`.
 - `build.sh` — builds the agent APK, the JavaScript engine and the image codecs, then
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
-- `bench/app` — Speedrun Bench, a React Native app made to be tested, and its 19 flows: the
-  regression suite (every command and selector, on Android and iOS with the same files) and
+- `bench/app` — Speedrun Bench, a React Native app made to be tested, and its 20 flows: the
+  regression suite (every command and selector, on Android and iOS with the same files, but
+  for a Jetpack Compose screen on Android) and
   the benchmark against Maestro (`bench/app/bench.sh`; see its README).
 - `bench/settings` — the Settings benchmark, `bench_scenario_android.yaml` and
   `bench_scenario_ios.yaml`: 14 commands per lap on Android's and iOS's Settings app

@@ -1,0 +1,39 @@
+appId: dev.speedrun.bench
+name: "Jetpack Compose: a text that changes, a line shown and hidden, a progress bar that comes and goes"
+# Android only (bench.sh leaves it out on iOS). Compose sends a test tool's UiAutomation
+# connection no accessibility events: below 120 numbers (past the ~50 nodes a read refreshes),
+# in boxes of a fixed size, a cached node stayed as it was (speedrun issue #2).
+tags: [lab, android-only]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: compose
+# A text that changes in place.
+- tapOn: Add
+- tapOn: Add
+- tapOn:
+    id: compose-add
+- assertVisible: "Count: 3"
+# A line that comes and goes, its box unchanged.
+- tapOn: Details
+- assertVisible:
+    id: compose-details
+- tapOn: Details
+- assertNotVisible:
+    id: compose-details
+# A progress bar that shows for 2 s, twice: waited for, then waited out.
+- repeat:
+    times: 2
+    commands:
+      - tapOn: Load
+      - extendedWaitUntil:
+          visible:
+            id: compose-bar
+          timeout: 5000
+      - extendedWaitUntil:
+          notVisible:
+            id: compose-bar
+          timeout: 10000
+- assertVisible: "Loads finished: 2"

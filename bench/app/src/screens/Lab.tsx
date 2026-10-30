@@ -3,9 +3,10 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import LottieView from 'lottie-react-native';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated as RNAnimated, Easing as RNEasing, FlatList, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Animated as RNAnimated, Easing as RNEasing, FlatList, Platform, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
+import { ComposeLabView } from '../../modules/compose-lab';
 import { orderClosed, setState } from '../store';
 import { Body, Button, Confetti, Gap, Marquee, Row, s, Screen, Shimmer, useColors } from '../ui';
 
@@ -24,6 +25,17 @@ export function Lab() {
       {/* The popups an order brings, without the order. */}
       <Row testID="lab-popups-first" title="First order popups" onPress={() => { setState({ orders: 1 }); orderClosed(); }} />
       <Row testID="lab-popups-second" title="Second order popup" onPress={() => { setState({ orders: 2 }); orderClosed(); }} />
+      {Platform.OS === 'android' ? <Row testID="lab-compose" title="Jetpack Compose" onPress={() => nav.navigate('Compose')} /> : null}
+    </Screen>
+  );
+}
+
+// A Jetpack Compose screen (modules/compose-lab), Android only: Compose keeps its own
+// accessibility tree, which test tools read differently from views'.
+export function ComposeLab() {
+  return (
+    <Screen title="Jetpack Compose" scroll={false}>
+      <ComposeLabView style={{ flex: 1 }} />
     </Screen>
   );
 }

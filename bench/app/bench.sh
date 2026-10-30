@@ -149,9 +149,11 @@ publish() {
 run() {
   local tool="$1" report="$RESULTS/$PLATFORM-$1.xml" debug="$RESULTS/$PLATFORM-$1-debug"; shift
   rm -rf "$debug"
-  # The flows folder, unless a flow file or folder is given.
+  # The flows folder, unless a flow file or folder is given. Flows tagged android-only
+  # (Jetpack Compose) are left out on iOS.
   local flows=(flows) arg
   for arg in "$@"; do [ -e "$arg" ] && flows=(); done
+  [ "$PLATFORM" = ios ] && set -- --exclude-tags android-only "$@"
   # On iOS speedrun keeps its agent between runs: stop it, so both tools start cold.
   [ "$PLATFORM" = ios ] && "$SPEEDRUN" --stop-agent >/dev/null 2>&1 || true
   local t0 t1 status=0
@@ -265,8 +267,10 @@ PY
 
 case "$CMD" in
   hash) source_hash ;;
-  install) fetch && install_app ;;
-  build) compile && install_app ;;
+  # Not `a && b`: bash ignores set -e in a function on the left of &&, so a failed build went
+  # on to install the app it built before.
+  install) fetch; install_app ;;
+  build) compile; install_app ;;
   fetch) fetch ;;
   compile) compile ;;
   publish) publish ;;
