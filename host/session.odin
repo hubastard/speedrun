@@ -333,9 +333,9 @@ session_serve :: proc(args: []string) -> int {
 		return 1
 	}
 	defer device_stop(&dev)
-	c, ok := connect(dev.port)
+	c, ok := connect(agent_port(&dev))
 	if !ok {
-		fmt.eprintf("could not reach the agent on port %d\n", dev.port)
+		fmt.eprintf("could not reach the agent on port %d\n", agent_port(&dev))
 		return 1
 	}
 	defer net.close(c.sock)
@@ -487,7 +487,7 @@ agent_alive :: proc(s: ^Session) -> bool {
 		fmt.eprintln(err)
 		return false
 	}
-	c, ok := connect(s.r.dev.port)
+	c, ok := connect(agent_port(s.r.dev))
 	if !ok do return false
 	s.r.c^ = c
 	return true

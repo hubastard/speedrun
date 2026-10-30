@@ -876,7 +876,8 @@ options:
                       simulator's UDID ("xcrun simctl list devices booted")
   --platform <p>      android or ios (default: a connected Android device, else the one
                       booted simulator)
-  --port <n>          the agent's port (default 7777 on Android, 7778 on iOS)
+  --port <n>          the agent's port (default 7777 on Android, on the device: a free port
+                      of this machine is forwarded to it; 7778 on iOS)
   --instrument        Android: run the agent as an instrumentation (~60 ms slower per action)
 Starts the agent on the device, runs, then stops it; on iOS the agent stays up for the next
 run (starting it takes seconds) and stops after 10 idle minutes (SPEEDRUN_IDLE_S). On Android,
@@ -1069,9 +1070,9 @@ run_cli :: proc(args: []string) -> int {
 		return 1
 	}
 	defer device_stop(&dev)
-	c, ok := connect(dev.port)
+	c, ok := connect(agent_port(&dev))
 	if !ok {
-		fmt.eprintln("could not reach the agent on port", dev.port, "(logs: adb logcat -s SpeedrunAgent)")
+		fmt.eprintln("could not reach the agent on port", agent_port(&dev), "(logs: adb logcat -s SpeedrunAgent)")
 		return 1
 	}
 	defer net.close(c.sock)

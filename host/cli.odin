@@ -252,9 +252,9 @@ run_test :: proc(o: ^Test_Options) -> int {
 		return 1
 	}
 	defer device_stop(&dev)
-	c, ok := connect(dev.port)
+	c, ok := connect(agent_port(&dev))
 	if !ok {
-		cli_error(fmt.tprintf("could not reach the agent on port %d", dev.port))
+		cli_error(fmt.tprintf("could not reach the agent on port %d", agent_port(&dev)))
 		return 1
 	}
 	defer net.close(c.sock)

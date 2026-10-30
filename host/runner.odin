@@ -469,7 +469,7 @@ reconnect :: proc(r: ^Runner) -> bool {
 		if r.debug do fmt.printf("      [agent restart failed: %s]\n", err)
 		return false
 	}
-	c, ok := connect(r.dev.port)
+	c, ok := connect(agent_port(r.dev))
 	debug_step(r, "reconnect", &t)
 	if !ok do return false
 	r.c^ = c

@@ -31,8 +31,10 @@ what is still slow: `TO_IMPROVE.md`.
     `FIND` (the app searches its own hierarchy, one round trip) and read the full `TREE` only
     when that finds no visible exact match.
   - `device.odin`: the agent's lifecycle. The agent APK is embedded in the binary; each run
-    pushes it if the device does not have this build yet, starts it, forwards its port and
-    stops it at exit (Ctrl-C too). On iOS the runner stays up for the next run; Ctrl-C ends
+    pushes it if the device does not have this build yet, starts it, forwards a free port of
+    this machine (adb picks it: `adb forward tcp:0`) to the agent's and stops it at exit
+    (Ctrl-C too): runs on several devices at once each have their own forward (one port for
+    all moved it from run to run, and the first to exit removed the others', issue #3). On iOS the runner stays up for the next run; Ctrl-C ends
     only one that never answered, without asking it: it serves one client at a time, and
     the run's own connection is still open (a ping there waited forever, and Ctrl-C did
     nothing). A second Ctrl-C exits at once, whatever the cleanup is doing.

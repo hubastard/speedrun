@@ -79,6 +79,7 @@ Device :: struct {
 	adb:        os.Process, // the `adb shell` the agent runs under
 	running:    bool,
 	forwarded:  bool,
+	local_port: int, // Android: the port on this machine forwarded to the agent's (agent_port)
 	local_apk:  string, // the embedded APK written to a temp file, for `adb push`/`install`
 	runner:     os.Process, // iOS: the xcodebuild running the agent's UI test
 	started:    bool, // iOS: this run is starting the runner (else it reuses one already serving)
@@ -330,10 +331,21 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 		if err != nil do return fmt.tprintf("could not run adb: %v", err)
 		d.adb, d.running = p, true
 	}
-	port := fmt.tprintf("tcp:%d", d.port)
-	if out, ok := adb("forward", port, port); !ok do return out
-	d.forwarded = true
+	// A free port on this machine, picked by adb: runs driving other devices in parallel each
+	// get their own forward, and removing it at exit leaves theirs alone.
+	out, ok := adb("forward", "tcp:0", fmt.tprintf("tcp:%d", d.port))
+	if !ok do return out
+	local, parsed := strconv.parse_int(strings.trim_space(out))
+	if !parsed || local <= 0 do return fmt.tprintf("adb forward named no port: %s", strings.trim_space(out))
+	d.local_port, d.forwarded = local, true
+	if token, known := agent_tokens[d.port]; known do agent_tokens[local] = token // agent_dial's key
 	return ""
+}
+
+// The port on this machine that reaches the agent: on Android, adb's forward to the device
+// (device_start); on iOS, the agent's own (it listens on the Mac's loopback).
+agent_port :: proc(d: ^Device) -> int {
+	return d.local_port if d.platform == .Android && d.local_port > 0 else d.port
 }
 
 // Stops the agent, removes the port forward and the temp APK. Safe to call twice.
@@ -346,8 +358,8 @@ device_stop :: proc(d: ^Device) {
 	}
 	stop_agent(d)
 	if d.forwarded {
-		adb("forward", "--remove", fmt.tprintf("tcp:%d", d.port))
-		d.forwarded = false
+		adb("forward", "--remove", fmt.tprintf("tcp:%d", d.local_port))
+		d.forwarded, d.local_port = false, 0
 	}
 	if d.local_apk != "" {
 		os.remove(d.local_apk)
@@ -488,7 +500,7 @@ ios_runner_prev_log :: proc(port: int) -> string {
 // closed the old one on an error), else the agent is started again (it crashed or was
 // killed). The caller connects again.
 device_restart :: proc(d: ^Device) -> string {
-	if answers_ping(d.port, AGENT_PING_TIMEOUT) do return ""
+	if answers_ping(agent_port(d), AGENT_PING_TIMEOUT) do return ""
 	if d.platform == .IOS {
 		simctl("terminate", d.udid, IOS_RUNNER_APP)
 		d.started, d.serving, d.warm = false, false, false
@@ -549,7 +561,7 @@ ios_stop :: proc(d: ^Device) {
 // other users' included, drive the iOS simulator. A new one each time an agent starts; the
 // iOS runner outlives a run, so its token is kept in a file only its user can read.
 AGENT_TOKEN_LENGTH :: 32 // the agents' TOKEN_LENGTH
-agent_tokens: map[int]string // by port
+agent_tokens: map[int]string // by the port this machine dials (Android: the forward's)
 
 new_agent_token :: proc(port: int) -> string {
 	key: [AGENT_TOKEN_LENGTH / 2]byte

@@ -32,7 +32,7 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 |---|---|
 | `--plain`, `--no-ansi` | Plain line-by-line output instead of the live view (the default when the output is not a terminal). |
 | `--timings <file.json>` | Write each command's timing to a JSON file. |
-| `--port <n>` | The agent's port (default 7777 on Android, 7778 on iOS). |
+| `--port <n>` | The agent's port (default 7777 on Android, on the device: speedrun forwards a free port of this machine to it, so runs on several devices at once never share one; 7778 on iOS). |
 | `--instrument` | Android: run the agent as an instrumentation (a fallback; ~60 ms slower per action). |
 
 ## Other commands
