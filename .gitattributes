@@ -1,0 +1,3 @@
+# Third-party code, left out of GitHub's language statistics.
+host/js/quickjs-ng/** linguist-vendored
+host/image/stb_image*.h linguist-vendored
