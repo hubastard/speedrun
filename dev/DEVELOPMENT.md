@@ -750,9 +750,16 @@ Known differences in how, not what:
   this took a scroll from 0.8 s to 0.33 s.
 - Android `setLocation`/`travel` set the providers from the agent (one binder call each);
   `cmd location` is the fallback when the agent runs as the instrumentation.
-- Regexes use Odin's engine: Java-only syntax (lookaround, inline flags, `\p{...}`,
-  possessive quantifiers) is rejected; patterns invalid in both match as plain text, like
-  Maestro's fallback.
+- Regexes use Odin's engine: Java-only syntax (lookaround, inline flags, atomic groups,
+  `\p{...}`, possessive quantifiers) is rejected; patterns invalid in both match as plain
+  text, like Maestro's fallback (`SPEEDRUN_DEBUG` says so). Groups are made non-capturing
+  before compiling (the engine allows 10 capturing groups; Java has no limit). A program
+  holds at most 32767 instructions and 255 character classes: past that, a pattern is
+  compiled in parts, halves of its top-level alternatives, and matches when one part does
+  (issue #5: 120 generated alternatives); a part with no `|` left that is still too big is
+  an error naming the pattern, never text. Odin's matcher sizes its state to the program on
+  every match (~0.04 ms for a full one), so an empty value (most hints and descriptions)
+  uses the result computed at compile.
 - When a selector matches in several windows, the active window's elements come first.
   Maestro gathers windows in a hash set, so its order there is arbitrary. Toasts are not in
   the hierarchy.

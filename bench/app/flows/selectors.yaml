@@ -11,6 +11,10 @@ tags: [lab, selectors]
     text: Choose
     index: 1
 - assertVisible: "Chose Plus"
+# Patterns as a regex engine runs them: more than 10 groups, and 4000 alternatives, too
+# big for one program of speedrun's engine (compiled in parts: issue #5).
+- assertVisible: "(C)(h)(o)(s)(e) (P)(l)(u)(s)(.)?(.)?"
+- assertVisible: "${[...Array(4000).keys()].map(i => 'Plan ' + i).join('|') + '|Chose Plus'}"
 # Matches keep the text filter's order: the first "Choose" below Plus's price is Pro's (Plus's
 # own starts above it).
 - tapOn:

@@ -86,8 +86,12 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   gesture, 200 ms apart (Maestro's arrive too far apart for a 300 ms double-tap window).
 - **Several devices connected and no `--device`:** Maestro asks which one to use. Speedrun
   takes the first Android device, else the booted simulator.
-- **Regular expressions:** Java-only syntax (lookarounds, inline flags, `\p{...}`) is
-  rejected. A pattern that is invalid in both tools matches as plain text, as in Maestro.
+- **Regular expressions:** Java-only syntax (lookarounds, inline flags, atomic groups,
+  `\p{...}`) is rejected. A pattern that is invalid in both tools matches as plain text, as
+  in Maestro. Speedrun's engine has size limits: a pattern is split at its top-level `|`
+  when it is too big (a list of thousands of alternatives works), and a part without one
+  that compiles to more than 32,767 instructions or uses more than 255 character classes
+  is an error.
 - **iOS: what a list has scrolled out of view is not visible**, as on Android: an element's
   bounds are cut to the scrolling area around it, and taps aim at the part that shows.
   Maestro counts an element as visible when its frame is on screen, even if the list hides it.

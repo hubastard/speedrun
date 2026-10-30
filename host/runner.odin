@@ -16,6 +16,7 @@ import "core:strconv"
 import "core:strings"
 import "core:text/regex"
 import "core:time"
+import "core:unicode/utf8"
 
 LOOKUP_TIMEOUT_MS          :: 17_000
 OPTIONAL_LOOKUP_TIMEOUT_MS :: 7_000
@@ -117,8 +118,9 @@ Runner :: struct {
 
 Rx :: struct {
 	pattern: string,
-	re:      regex.Regular_Expression,
+	parts:   []regex.Regular_Expression, // one, or its top-level alternatives in groups when too big for one
 	literal: bool, // does not compile: matched as plain text
+	empty:   bool, // matches an empty text, as most hints and descriptions are
 }
 
 // A failure message; nil means success.
@@ -2186,9 +2188,8 @@ apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) 
 	out.allocator = context.temp_allocator
 	if has_basic {
 		// deepestMatchingElement: matches with no matching descendant, in pre-order.
-		memo := make([]i8, len(r.h.nodes), context.temp_allocator) // 0 unknown, 1 has match below
-		seen := make([]bool, len(r.h.nodes), context.temp_allocator)
-		for n in nodes do deepest(r, s, text_rx, id_rx, n, &out, seen, memo)
+		memo := make([]i8, len(r.h.nodes), context.temp_allocator) // 0 unknown, 1 a match in its subtree, 2 none
+		for n in nodes do deepest(r, s, text_rx, id_rx, n, &out, memo)
 	} else {
 		append(&out, ..nodes)
 	}
@@ -2348,18 +2349,18 @@ sort_by_position :: proc(r: ^Runner, list: []int) -> []int {
 }
 
 @(private = "file")
-deepest :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: int, out: ^[dynamic]int, seen: []bool, memo: []i8) -> bool {
+deepest :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: int, out: ^[dynamic]int, memo: []i8) -> bool {
+	// Each node once: the list holds whole subtrees, and a walk from each of their nodes went
+	// through the nodes below it again.
+	if memo[n] != 0 do return memo[n] == 1
 	found := false
-	for c in r.h.nodes[n].children do if deepest(r, s, text_rx, id_rx, c, out, seen, memo) do found = true
-	if found do return true
-	if basic_match(r, s, text_rx, id_rx, r.h.nodes[n]) {
-		if !seen[n] {
-			seen[n] = true
-			append(out, n)
-		}
-		return true
+	for c in r.h.nodes[n].children do if deepest(r, s, text_rx, id_rx, c, out, memo) do found = true
+	if !found && basic_match(r, s, text_rx, id_rx, r.h.nodes[n]) {
+		append(out, n)
+		found = true
 	}
-	return false
+	memo[n] = 1 if found else 2
+	return found
 }
 
 @(private = "file")
@@ -2421,32 +2422,129 @@ rx_scratch: virtual.Arena
 rx_full :: proc(rx: ^Rx, value: string) -> bool {
 	if rx.literal do return strings.equal_fold(rx.pattern, value)
 	if value == rx.pattern do return true
-	virtual.arena_free_all(&rx_scratch)
+	if value == "" do return rx.empty
+	return parts_match(rx.parts, value)
+}
+
+@(private = "file")
+parts_match :: proc(parts: []regex.Regular_Expression, value: string) -> bool {
 	scratch := virtual.arena_allocator(&rx_scratch)
-	_, ok := regex.match(rx.re, value, scratch, scratch)
-	return ok
+	for re in parts {
+		virtual.arena_free_all(&rx_scratch)
+		if _, ok := regex.match(re, value, scratch, scratch); ok do return true
+	}
+	return false
 }
 
 // Java patterns Odin's regex engine lacks: rejected rather than matched differently.
-JAVA_ONLY_REGEX :: []string{"(?=", "(?!", "(?<=", "(?<!", "(?<", "(?i", "(?s", "(?m", "(?u", "(?x", "\\p{", "\\P{", "\\Q", "\\k<", "++", "*+", "?+", "}+"}
+JAVA_ONLY_REGEX :: []string{"(?=", "(?!", "(?<=", "(?<!", "(?<", "(?>", "(?i", "(?s", "(?m", "(?u", "(?x", "(?-", "\\p{", "\\P{", "\\Q", "\\k<", "++", "*+", "?+", "}+"}
 
 compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	if cached, ok := &r.regexes[pattern]; ok do return cached, nil
 	for j in JAVA_ONLY_REGEX do if strings.contains(pattern, j) {
-		return nil, fmt.aprintf("regex `%s` uses `%s`, which this runner's regex engine does not support", pattern, j, allocator = r.alloc)
+		return nil, fmt.aprintf("regex `%s` uses `%s`, which this runner's regex engine does not support", shortened(pattern), j, allocator = r.alloc)
 	}
 	pattern := strings.clone(pattern, r.alloc) // the key outlives a caller's temporary string
 	entry := Rx {
 		pattern = pattern,
 	}
-	re, cerr := regex.create(fmt.tprintf("^(?:%s)$", pattern), {.Case_Insensitive, .Unicode}, r.alloc, context.temp_allocator)
-	if cerr != nil {
-		entry.literal = true // an invalid pattern matches as text
-	} else {
-		entry.re = re
+	parts := make([dynamic]regex.Regular_Expression, r.alloc)
+	switch e in compile_parts(top_alternatives(non_capturing(pattern)), &parts, r.alloc) {
+	case nil:
+		entry.parts = parts[:]
+		if r.debug && len(parts) > 1 do fmt.printf("      [regex `%s` (%d characters) compiled in %d parts]\n", shortened(pattern), len(pattern), len(parts))
+	case regex.Compiler_Error:
+		limit := "more than 32767 instructions" if e == .Program_Too_Big else "more than 255 character classes"
+		return nil, fmt.aprintf("regex `%s` (%d characters) is too big for this runner's regex engine: a part of it without a top-level `|` compiles to %s", shortened(pattern), len(pattern), limit, allocator = r.alloc)
+	case regex.Parser_Error, regex.Creation_Error:
+		// A pattern that does not parse is invalid in Java too (all but an empty group, `()`):
+		// it matches as text, as flows expect.
+		entry.literal = true
+		if r.debug do fmt.printf("      [regex `%s` does not compile (%v): matched as text]\n", shortened(pattern), e)
 	}
+	entry.empty = pattern == "" || parts_match(entry.parts, "")
 	r.regexes[pattern] = entry
 	return &r.regexes[pattern], nil
+}
+
+// Alternatives compiled as one program or, past the engine's limits (32767 instructions, 255
+// character classes), in halves: a list of thousands of alternatives is a valid pattern.
+@(private = "file")
+compile_parts :: proc(alts: []string, out: ^[dynamic]regex.Regular_Expression, alloc: mem.Allocator) -> regex.Error {
+	src := fmt.tprintf("^(?:%s)$", strings.join(alts, "|", context.temp_allocator))
+	re, err := regex.create(src, {.Case_Insensitive, .Unicode}, alloc, context.temp_allocator)
+	if err == nil {
+		append(out, re)
+		return nil
+	}
+	if _, limit := err.(regex.Compiler_Error); !limit || len(alts) == 1 do return err
+	compile_parts(alts[:len(alts) / 2], out, alloc) or_return
+	return compile_parts(alts[len(alts) / 2:], out, alloc)
+}
+
+// The pattern's groups made non-capturing: a match keeps no captures, and the engine allows
+// only 10 capturing groups. A class ends at its first unescaped `]` and a repetition at its
+// `}`, as the engine reads them.
+@(private = "file")
+non_capturing :: proc(pattern: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	closer := byte(0) // inside a class (`]`) or a repetition (`}`)
+	for i := 0; i < len(pattern); i += 1 {
+		c := pattern[i]
+		strings.write_byte(&b, c)
+		switch {
+		case c == '\\' && i + 1 < len(pattern):
+			i += 1
+			strings.write_byte(&b, pattern[i])
+		case closer != 0:
+			if c == closer do closer = 0
+		case c == '[':
+			closer = ']'
+		case c == '{':
+			closer = '}'
+		case c == '(' && (i + 1 == len(pattern) || pattern[i + 1] != '?'):
+			strings.write_string(&b, "?:")
+		}
+	}
+	return strings.to_string(b)
+}
+
+// The pattern split at its top-level `|`.
+@(private = "file")
+top_alternatives :: proc(pattern: string) -> []string {
+	alts := make([dynamic]string, context.temp_allocator)
+	depth, start := 0, 0
+	closer := byte(0)
+	for i := 0; i < len(pattern); i += 1 {
+		switch c := pattern[i]; {
+		case c == '\\':
+			i += 1
+		case closer != 0:
+			if c == closer do closer = 0
+		case c == '[':
+			closer = ']'
+		case c == '{':
+			closer = '}'
+		case c == '(':
+			depth += 1
+		case c == ')':
+			depth -= 1
+		case c == '|' && depth == 0:
+			append(&alts, pattern[start:i])
+			start = i + 1
+		}
+	}
+	append(&alts, pattern[start:])
+	return alts[:]
+}
+
+// A pattern as messages show it: its first 100 characters.
+@(private = "file")
+shortened :: proc(pattern: string) -> string {
+	if len(pattern) <= 100 do return pattern
+	cut := 100
+	for cut > 0 && !utf8.rune_start(pattern[cut]) do cut -= 1
+	return fmt.tprintf("%s…", pattern[:cut])
 }
 
 has_bounds :: proc(n: H_Node) -> bool {
