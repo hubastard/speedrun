@@ -164,41 +164,46 @@ final class Screen {
 
     private func snapshotForeground() throws -> XCUIElementSnapshot {
         let first = foregroundApp()
-        if let s = try? first.snapshot() { return notEmpty(s, of: first) }
+        if let s = try? first.snapshot() { return withText(s, of: first) }
         foreground = nil
         foregroundID = ""
         let deadline = Date().addingTimeInterval(Self.snapshotBudgetSeconds)
         repeat {
             let app = foregroundApp()
-            if let s = try? app.snapshot() { return notEmpty(s, of: app) }
+            if let s = try? app.snapshot() { return withText(s, of: app) }
             if app == springboard || app.state != .runningForeground { break }
         } while Date() < deadline
         return try springboard.snapshot()
     }
 
-    /// When an empty read was last logged: a screen that stays empty logs every 5 s, not on
-    /// every read (the host reads every ~50 ms while it waits).
+    /// Since when the app's reads have had no text (0: the last one had), and when that was last
+    /// looked into: once it has lasted 2 s (a launch screen, a transition, end before), then
+    /// every 5 s, not on every read (the host reads every ~50 ms while it waits).
+    private var emptySince: UInt64 = 0
     private var emptyLoggedAt: UInt64 = 0
+    private static let emptyWaitNs: UInt64 = 2_000_000_000
     private static let emptyLogIntervalNs: UInt64 = 5_000_000_000
 
-    /// An app's snapshot with nothing under the application. On a user's CI, with iOS 26's
-    /// "Save Password?" sheet up over a busy React Native screen, every read for a minute was
-    /// the bare application (its name, a full-screen frame) and XCTest's log had no "Requesting
-    /// snapshot of accessibility hierarchy" line: XCTest answered without asking the app. Not
-    /// reproduced (Safari's sheet, a main thread blocked 6 s). This logs what XCTest sees then,
-    /// and reads the app again through a new XCUIApplication, used from then on if it has the
-    /// tree.
-    private func notEmpty(_ snapshot: XCUIElementSnapshot, of app: XCUIApplication) -> XCUIElementSnapshot {
-        guard snapshot.children.isEmpty, app != springboard, !foregroundID.isEmpty else { return snapshot }
-        let now = DispatchTime.now().uptimeNanoseconds
-        let log = now - emptyLoggedAt >= Self.emptyLogIntervalNs
-        if log {
-            emptyLoggedAt = now
-            NSLog("speedrun: empty read of \(foregroundID): \(emptyReport(app))")
+    /// An app's snapshot with no text under the application: no label, title, value,
+    /// identifier or placeholder anywhere. On a user's CI, with iOS 26's "Save Password?" sheet
+    /// up over a busy React Native screen, every read for a minute was such a snapshot (neither
+    /// the sheet's texts nor the screen's behind it), twice. Not reproduced (Safari's sheet, a
+    /// main thread blocked 6 s). A launch screen is one too, briefly. Once it has lasted 2 s,
+    /// and every 5 s after, this logs what XCTest sees, and reads the app again through a new
+    /// XCUIApplication, used from then on if it has text.
+    private func withText(_ snapshot: XCUIElementSnapshot, of app: XCUIApplication) -> XCUIElementSnapshot {
+        guard app != springboard, !foregroundID.isEmpty, !Self.hasText(snapshot) else {
+            emptySince = 0
+            return snapshot
         }
+        let now = DispatchTime.now().uptimeNanoseconds
+        if emptySince == 0 { emptySince = now }
+        guard now - emptySince >= Self.emptyWaitNs, now - emptyLoggedAt >= Self.emptyLogIntervalNs else { return snapshot }
+        emptyLoggedAt = now
+        NSLog("speedrun: empty read of \(foregroundID) (no text under the app): \(emptyReport(app, snapshot))")
         let fresh = XCUIApplication(bundleIdentifier: foregroundID)
-        guard let again = try? fresh.snapshot(), !again.children.isEmpty else {
-            if log { NSLog("speedrun: a new XCUIApplication reads \(foregroundID) empty too") }
+        guard let again = try? fresh.snapshot(), Self.hasText(again) else {
+            NSLog("speedrun: a new XCUIApplication reads no text in \(foregroundID) either")
             return snapshot
         }
         NSLog("speedrun: a new XCUIApplication reads \(foregroundID): \(Self.summary(again)); using it from now on")
@@ -206,18 +211,73 @@ final class Screen {
         return again
     }
 
-    /// What XCTest sees when the app reads empty: the app's state, the process id XCTest has
-    /// for it, the apps it lists as active (pids, bundle ids), and what SpringBoard and the
-    /// other active apps hold.
-    private func emptyReport(_ app: XCUIApplication) -> String {
+    /// Whether a node under the snapshot's root says anything: a label, title, value,
+    /// identifier or placeholder. Stops at the first.
+    private static func hasText(_ root: XCUIElementSnapshot) -> Bool {
+        var stack = root.children
+        while let n = stack.popLast() {
+            if !n.label.isEmpty || !n.title.isEmpty || !n.identifier.isEmpty || !(n.placeholderValue ?? "").isEmpty { return true }
+            if let v = n.value as? String, !v.isEmpty { return true }
+            stack.append(contentsOf: n.children)
+        }
+        return false
+    }
+
+    /// What XCTest sees when the app reads without text: the app's state, the process id
+    /// XCTest has for it, what the snapshot holds (kinds and frames), what the accessibility
+    /// hit test finds at a few points (an element the snapshot leaves out, such as another
+    /// process's sheet), the apps it lists as active (pids, bundle ids), and what SpringBoard
+    /// and the other active apps hold.
+    private func emptyReport(_ app: XCUIApplication, _ snapshot: XCUIElementSnapshot) -> String {
         var parts = ["state \(app.state.rawValue) (4 = running in the foreground)",
                      "XCTest's pid \(Private.processID(app).map { String($0) } ?? "unknown")",
+                     "the snapshot: \(Self.structure(snapshot))",
+                     "hit tests: \(Self.hitReport(snapshot))",
                      Private.foregroundReport().replacingOccurrences(of: "\n", with: "; ")]
         parts.append("SpringBoard: " + ((try? springboard.snapshot()).map(Self.summary) ?? "no snapshot"))
         for id in Private.activeBundleIDs() where id != foregroundID && id != "com.apple.springboard" {
             parts.append("\(id): " + ((try? XCUIApplication(bundleIdentifier: id).snapshot()).map(Self.summary) ?? "no snapshot"))
         }
         return parts.joined(separator: "; ")
+    }
+
+    /// A snapshot's nodes in order, each as depth:Kind x,y wxh, the first 40.
+    private static func structure(_ root: XCUIElementSnapshot) -> String {
+        var out: [String] = []
+        var count = 0
+        var stack = [(root, 0)]
+        while let (n, depth) = stack.popLast() {
+            count += 1
+            if out.count < 40 {
+                let f = n.frame
+                out.append("\(depth):\(typeName(n.elementType)) \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))")
+            }
+            stack.append(contentsOf: n.children.reversed().map { ($0, depth + 1) })
+        }
+        return "\(count) nodes [\(out.joined(separator: ", "))]"
+    }
+
+    /// What the accessibility hit test reaches at the screen's center and lower down (where a
+    /// sheet's buttons are): kind, label, identifier and frame, asked of the app.
+    private static func hitReport(_ root: XCUIElementSnapshot) -> String {
+        guard let o = root as? NSObject, o.responds(to: accessibilityElementSel),
+              let app = o.perform(accessibilityElementSel)?.takeUnretainedValue() as? NSObject
+        else { return "no element for the app" }
+        let names = ["XC_kAXXCAttributeElementType", "XC_kAXXCAttributeLabel", "XC_kAXXCAttributeIdentifier", "XC_kAXXCAttributeFrame"]
+        let keys = names.map { Private.axAttribute($0) }
+        let w = root.frame.width, h = root.frame.height
+        var out: [String] = []
+        for (fx, fy) in [(0.5, 0.5), (0.3, 0.62), (0.7, 0.62), (0.5, 0.8)] {
+            let p = CGPoint(x: Int(w * fx), y: Int(h * fy))
+            guard let e = Private.elementAt(p, in: app) else { out.append("\(Int(p.x)),\(Int(p.y)) nothing"); continue }
+            let attrs = Private.attributes(of: e, keys.compactMap { $0 })
+            func value(_ k: Int) -> Any? { keys[k].flatMap { attrs?[$0] } }
+            let kind = (value(0) as? NSNumber).flatMap { XCUIElement.ElementType(rawValue: $0.uintValue) }.map(typeName)
+                ?? "kind \(value(0).map { "\($0) (\(type(of: $0)))" } ?? "not given")"
+            let frame = Private.frame(of: e).map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "?"
+            out.append("\(Int(p.x)),\(Int(p.y)) \(kind) \"\(value(1) as? String ?? "")\" id \"\(value(2) as? String ?? "")\" \(frame)")
+        }
+        return out.joined(separator: " | ")
     }
 
     /// A snapshot's size and its first labels, for a log line.

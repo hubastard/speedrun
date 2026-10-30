@@ -24,5 +24,7 @@
   notes name it). With a much different Xcode, build Speedrun from source. The
   agent's own log is `$TMPDIR/speedrun-ios-runner-7778.log`.
 - **More detail:** `SPEEDRUN_DEBUG=1 speedrun test …` prints every screen read and shell
-  command with its time, and for each tap what lies at its point. Agent logs on Android:
-  `adb logcat -s SpeedrunAgent`.
+  command with its time, and for each tap where it landed and what lies there. A failed
+  flow's debug output keeps the end of the same trace without it, in `logs/debug.log` (and on
+  iOS the agent's log, `logs/ios-agent.log`): zip the flow's folder to report a failure that
+  does not happen every time. Agent logs on Android: `adb logcat -s SpeedrunAgent`.

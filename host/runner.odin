@@ -4,6 +4,7 @@
 // driven by frames and events instead of fixed sleeps and screenshot diffs.
 package speedrun
 
+import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
@@ -89,6 +90,7 @@ Runner :: struct {
 	depth:                int,
 	path:                 string, // of the command being run
 	debug:                bool, // SPEEDRUN_DEBUG: print every hierarchy read and shell command
+	trace:                Trace, // what debug prints, kept for a failed flow's logs/debug.log
 	view:                 View, // console output (console.odin)
 	reads, read_ms_total: f64,
 	read_call:            int, // c.calls after the last read_screen (screen_current)
@@ -195,6 +197,7 @@ run_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options, alloc:
 	}
 	_ = virtual.arena_init_growing(&r.screen_arena)
 	defer virtual.arena_destroy(&r.screen_arena)
+	defer trace_free(&r)
 	defer js_stop(&r)
 	defer location_stop_updates(&r)
 	// A recording still running when the flow ends is stopped and kept.
@@ -346,6 +349,8 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 			make_dirs(fmt.tprintf("%s/screenshots", dir))
 			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
 		}
+		header := fmt.tprintf("speedrun %s, %s: the end of the flow's trace (what SPEEDRUN_DEBUG=1 prints), in local time.\n> and < mark each command's start and end; a read line, a change in what the screen says (in its texts alone: once a second at most).\n\n", VERSION, "iOS" if r.dev.platform == .IOS else "Android")
+		write_file(fmt.tprintf("%s/logs/debug.log", dir), transmute([]byte)strings.concatenate({header, trace_text(r)}, context.temp_allocator))
 		// iOS: the end of the agent's log (xcodebuild's output: the agent's lines, a crash),
 		// and after a lost agent, the end of the one before the restart: why it was lost.
 		if r.dev.platform == .IOS {
@@ -353,13 +358,40 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 			for l, k in logs {
 				if k == 1 && r.reconnects == 0 do continue
 				if data, err := os.read_entire_file(l[0], context.temp_allocator); err == nil {
-					lines := strings.split_lines(string(data), context.temp_allocator)
+					lines := collapse_repeats(strings.split_lines(string(data), context.temp_allocator))
 					end := strings.join(lines[max(len(lines) - IOS_AGENT_LOG_LINES, 0):], "\n", context.temp_allocator)
 					write_file(fmt.tprintf("%s/logs/%s", dir, l[1]), transmute([]byte)end)
 				}
 			}
 		}
 	}
+}
+
+// XCTest logs a line for each snapshot ("t =   418.06s Find the Application 'com.app'"), ~20
+// a second while a lookup waits: the last 400 lines of the agent's log covered 22 s. A run of
+// lines that differ only in their time is kept as its first, then a line saying how many more
+// came, until when. In the temp allocator.
+collapse_repeats :: proc(lines: []string) -> []string {
+	what :: proc(line: string) -> string {
+		t := strings.trim_left_space(line)
+		if !strings.has_prefix(t, "t =") do return line
+		_, _, rest := strings.partition(strings.trim_left_space(t[3:]), " ")
+		return rest
+	}
+	out := make([dynamic]string, 0, len(lines), context.temp_allocator)
+	for k := 0; k < len(lines); {
+		end := k + 1
+		w := what(lines[k])
+		if w != lines[k] do for end < len(lines) && what(lines[end]) == w do end += 1
+		append(&out, lines[k])
+		if end - k > 1 {
+			last := strings.trim_left_space(lines[end - 1])
+			at, _, _ := strings.partition(strings.trim_left_space(last[3:]), " ")
+			append(&out, fmt.tprintf("    (%d more until t = %s)", end - k - 1, at))
+		}
+		k = end
+	}
+	return out[:]
 }
 
 // A description with its ${...} evaluated, as messages show them (the live view shows them
@@ -411,6 +443,8 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 			start_ms = time.to_unix_nanoseconds(time.now()) / 1_000_000,
 		})
 		view_started(r, node)
+		trace_keep(r, fmt.tprintf("%s> %s", strings.repeat("  ", r.depth, context.temp_allocator), node.desc))
+		reads := r.reads
 		t := time.tick_now()
 		r.depth += 1
 		// A command's scripts are evaluated once, before it runs: its ${...} values are kept
@@ -451,6 +485,8 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 			rec.status, rec.error = "FAILED", msg
 		}
 		if mutating do r.last_interaction = time.tick_now()
+		first_line, _, _ := strings.partition(rec.error, "\n")
+		trace_keep(r, fmt.tprintf("%s< %s %s (%.0f ms, %.0f reads)%s%s", strings.repeat("  ", r.depth, context.temp_allocator), node.desc, rec.status, rec.duration_ms, r.reads - reads, ": " if first_line != "" else "", first_line))
 		node.ms, node.error = rec.duration_ms, rec.error
 		switch rec.status {
 		case "COMPLETED": node.status = .Completed
@@ -470,7 +506,7 @@ reconnect :: proc(r: ^Runner) -> bool {
 	net.close(r.c.sock)
 	t := time.tick_now()
 	if err := device_restart(r.dev); err != "" {
-		if r.debug do fmt.printf("      [agent restart failed: %s]\n", err)
+		note(r, "agent restart failed: %s", err)
 		return false
 	}
 	c, ok := connect(agent_port(r.dev))
@@ -867,7 +903,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// it to go (up to the lookup's time; then tap anyway), settle, and find the element
 		// again where it rests. speedrun's settle does not wait for a spinner (an endless
 		// animation), and an overlay's fade shows nowhere in the hierarchy.
-		if r.debug do debug_at(r, el)
+		debug_at(r, el)
 		if blocked, listed := under_loading(r, el) or_return; blocked {
 			t := time.tick_now()
 			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
@@ -880,7 +916,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if el < 0 do break
 				if still, _ := under_loading(r, el) or_return; !still do break
 			}
-			if r.debug do fmt.printf("      [under a loading overlay: waited %.0f ms]\n", us(t) / 1000)
+			note(r, "under a loading overlay: waited %.0f ms", us(t) / 1000)
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
@@ -897,7 +933,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				el = select(r, d.sel) or_return
 				if el < 0 || .Enabled in r.h.nodes[el].flags do break
 			}
-			if r.debug do fmt.printf("      [disabled: waited %.0f ms]\n", us(t) / 1000)
+			note(r, "disabled: waited %.0f ms", us(t) / 1000)
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
@@ -956,7 +992,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			if el < 0 do break
 			n := r.h.nodes[el]
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
-			if r.debug do fmt.printf("      [a tap in a sheet changed nothing: tapping again]\n")
+			note(r, "a tap in a sheet changed nothing: tapping again")
 			if !tap_at(r, x, y, frame) do return AGENT_LOST
 			again := settle_status(r, d.settle_ms) or_return
 			status = again.status
@@ -974,13 +1010,13 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			if !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
 			if r.h.content == content_before {
-				if r.debug do fmt.printf("      [the tap changed nothing yet: waiting for the app]\n")
+				note(r, "the tap changed nothing yet: waiting for the app")
 				for r.h.content == content_before && time.duration_milliseconds(time.tick_since(tapped_at)) < SETTLE_NO_CHANGE_MS {
 					time.sleep(30 * time.Millisecond)
 					if !read_screen(r) do return AGENT_LOST
 				}
 				if r.h.content != content_before {
-					if r.debug do fmt.printf("      [the screen changed %.0f ms after the tap]\n", time.duration_milliseconds(time.tick_since(tapped_at)))
+					note(r, "the screen changed %.0f ms after the tap", time.duration_milliseconds(time.tick_since(tapped_at)))
 					settle(r, d.settle_ms, no_change_ms = 0) or_return
 					read_since_tap = false
 				}
@@ -1008,7 +1044,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 					shared := 0
 					for t in tapped.window do if t in window do shared += 1
 					same = containers && shared == len(tapped.window)
-					if r.debug do fmt.printf("      [tapped %s moved by %d,%d; same containers %v, %d of %d texts still there]\n", tapped.class, nx - center.x, ny - center.y, containers, shared, len(tapped.window))
+					note(r, "tapped %s moved by %d,%d; same containers %v, %d of %d texts still there", tapped.class, nx - center.x, ny - center.y, containers, shared, len(tapped.window))
 				}
 				// A field the tap focused moves out of the keyboard's way (and the read can
 				// predate its focus flag): that is no miss.
@@ -1071,6 +1107,7 @@ frame_hold :: proc(r: ^Runner, unknown: bool, class: string) -> bool {
 
 @(private = "file")
 tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> bool {
+	note(r, "tap at %d,%d%s", x, y, fmt.tprintf(" (held %d ms)", IOS_FRAME_TAP_MS) if frame else "")
 	if frame {
 		_, ok := op_press(r.c, x, y, IOS_FRAME_TAP_MS)
 		return ok
@@ -1186,10 +1223,8 @@ under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) 
 	}
 	hit, frame, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
 	if !ok do return false, false, AGENT_LOST
-	if r.debug {
-		h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{class = "(not listed)", left = frame[0], top = frame[1], right = frame[2], bottom = frame[3]}
-		fmt.printf("      [%s; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)]\n", "a spinner shows" if spinner else "no spinner listed", hit, h.class, h.left, h.top, h.right, h.bottom, el)
-	}
+	h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{class = "(not listed)", left = frame[0], top = frame[1], right = frame[2], bottom = frame[3]}
+	note(r, "%s; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)", "a spinner shows" if spinner else "no spinner listed", hit, h.class, h.left, h.top, h.right, h.bottom, el)
 	// Without a spinner, something the tree lists over the element (a toast, a sticky
 	// header) is left to uncovered_point, which taps the part that shows: only a cover the
 	// tree does not show is waited for.
@@ -1293,7 +1328,7 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		} else {
 			tx = cx + clamp(i32(f64(tx - cx) / gain), lo - cx, hi - cx)
 		}
-		if r.debug do fmt.printf("      [%s covered by %s: drag %d,%d -> %d,%d]\n", n.class, c.class, cx, cy, tx, ty)
+		note(r, "%s covered by %s: drag %d,%d -> %d,%d", n.class, c.class, cx, cy, tx, ty)
 		frame := [4]i32{n.left, n.top, n.right, n.bottom}
 		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = vertical); !ok do return idx, x, y, AGENT_LOST
 		// Android injects the drag at once, stamped as if it had just ended (see scroll_until).
@@ -1302,7 +1337,7 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		idx = find_element(r, sel, optional, -1) or_return
 		n = r.h.nodes[idx]
 		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
-		if r.debug do fmt.printf("      [%s now at %d,%d-%d,%d]\n", n.class, n.left, n.top, n.right, n.bottom)
+		note(r, "%s now at %d,%d-%d,%d", n.class, n.left, n.top, n.right, n.bottom)
 		cover = tap_cover(r, idx) or_return
 		if cover < 0 do return
 		if frame == {n.left, n.top, n.right, n.bottom} do break // the list moves no further
@@ -1331,28 +1366,29 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 	p := parts[best]
 	px, py := p[0] + (p[2] - p[0]) / 2, p[1] + (p[3] - p[1]) / 2
 	if cover_at(r, idx, px, py) >= 0 do return
-	if r.debug do fmt.printf("      [%s covered by %s: tapping its part that shows, at %d,%d]\n", n.class, c.class, px, py)
+	note(r, "%s covered by %s: tapping its part that shows, at %d,%d", n.class, c.class, px, py)
 	return idx, px, py, nil
 }
 
-// SPEEDRUN_DEBUG: what the screen holds at the element's center, in tree order, the window-wide
-// containers left out: what a tap there may hit.
+// What the screen holds at the element's center, in tree order, the window-wide containers
+// left out: what a tap there may hit (note).
 @(private = "file")
 debug_at :: proc(r: ^Runner, el: int) {
 	n := r.h.nodes[el]
 	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
-	fmt.printf("      [at %d,%d:", x, y)
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, "at %d,%d:", x, y)
 	shown := 0
 	for c, k in r.h.nodes {
 		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
 		if c.left <= 0 && c.top <= 0 && c.right >= r.w && c.bottom >= r.h_px do continue
 		label := c.text if c.text != "" else c.desc
-		fmt.printf(" %s#%d %s%s%s%s %d,%d-%d,%d;", "*" if k == el else "", k, c.class, " id=" if c.id != "" else "", c.id,
+		fmt.sbprintf(&b, " %s#%d %s%s%s%s %d,%d-%d,%d;", "*" if k == el else "", k, c.class, " id=" if c.id != "" else "", c.id,
 			fmt.tprintf(" %q", label) if label != "" else "", c.left, c.top, c.right, c.bottom)
 		shown += 1
 		if shown == 12 do break
 	}
-	fmt.printf("]\n")
+	note(r, "%s", strings.to_string(b))
 }
 
 // What would cover the element at a point of the screen (covered_by's rules).
@@ -1375,7 +1411,7 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 			if !holds do continue nodes
 		}
 		if 2 * i64(c.right - c.left) * i64(c.bottom - c.top) < i64(r.w) * i64(r.h_px) {
-			if r.debug do fmt.printf("      [%s covered by %s %d,%d-%d,%d]\n", n.class, c.class, c.left, c.top, c.right, c.bottom)
+			note(r, "%s covered by %s %d,%d-%d,%d", n.class, c.class, c.left, c.top, c.right, c.bottom)
 			return k
 		}
 	}
@@ -1400,7 +1436,7 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 				c := r.h.nodes[j]
 				if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
 				if c.left > n.left || c.right < n.right do continue
-				if r.debug do fmt.printf("      [%s covered by %s %d,%d-%d,%d, a cell before it]\n", n.class, c.class, c.left, c.top, c.right, c.bottom)
+				note(r, "%s covered by %s %d,%d-%d,%d, a cell before it", n.class, c.class, c.left, c.top, c.right, c.bottom)
 				return j
 			}
 		}
@@ -1692,7 +1728,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		if moving {
 			if !read_screen(r) do return AGENT_LOST
 			sig, empty := watched(r, cx, cy, !sideways)
-			if r.debug do debug_list(r, cx, cy)
+			debug_list(r, cx, cy)
 			// Android: no wait for rest (see watched).
 			still, resting := sig == swiped_from, sig == last_sig && !empty || r.dev.platform != .IOS
 			last_sig = sig
@@ -1762,7 +1798,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				}
 				swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
 				last_sig = swiped_from
-				if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
+				note(r, "drag %d,%d -> %d,%d", cx, cy, tx, ty)
 				if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = !sideways); !ok do return AGENT_LOST
 				continue
 			}
@@ -1817,7 +1853,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 		}
 		swiped, swiped_from, _ = time.tick_now(), watched(r, cx, cy, !sideways)
 		last_sig = swiped_from
-		if r.debug do fmt.printf("      [drag %d,%d -> %d,%d]\n", cx, cy, tx, ty)
+		note(r, "drag %d,%d -> %d,%d", cx, cy, tx, ty)
 		// Android: an up or down drag ends with a CANCEL (a starved emulator flung a long list
 		// past its row on the lift); a sideways one lifts, for a paging list to snap.
 		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = !sideways); !ok do return AGENT_LOST
@@ -1862,7 +1898,7 @@ watched :: proc(r: ^Runner, x, y: i32, vertical: bool) -> (sig: u64, empty: bool
 	return scroll_signature(r, x, y, vertical)
 }
 
-// SPEEDRUN_DEBUG: the first and last texts of the list under (x, y): how far a drag went.
+// The first and last texts of the list under (x, y): how far a drag went (note).
 @(private = "file")
 debug_list :: proc(r: ^Runner, x, y: i32) {
 	sv := -1
@@ -1877,7 +1913,7 @@ debug_list :: proc(r: ^Runner, x, y: i32) {
 		if first == "" do first = t
 		last = t
 	}
-	fmt.printf("      [list: %q .. %q]\n", first, last)
+	note(r, "list: %q .. %q", first, last)
 }
 
 // What a drag along the line through (x, y) moves, hashed: the texts and positions along that
@@ -1981,7 +2017,7 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
 	if !ok do return {status = .Timeout}, AGENT_LOST
-	if r.debug do fmt.printf("      [settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events]\n", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
+	note(r, "settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
 	return res, nil
 }
 
@@ -2482,7 +2518,7 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	switch e in compile_parts(top_alternatives(non_capturing(pattern)), &parts, r.alloc) {
 	case nil:
 		entry.parts = parts[:]
-		if r.debug && len(parts) > 1 do fmt.printf("      [regex `%s` (%d characters) compiled in %d parts]\n", shortened(pattern), len(pattern), len(parts))
+		if len(parts) > 1 do note(r, "regex `%s` (%d characters) compiled in %d parts", shortened(pattern), len(pattern), len(parts))
 	case regex.Compiler_Error:
 		limit := "more than 32767 instructions" if e == .Program_Too_Big else "more than 255 character classes"
 		return nil, fmt.aprintf("regex `%s` (%d characters) is too big for this runner's regex engine: a part of it without a top-level `|` compiles to %s", shortened(pattern), len(pattern), limit, allocator = r.alloc)
@@ -2490,7 +2526,7 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 		// A pattern that does not parse is invalid in Java too (all but an empty group, `()`):
 		// it matches as text, as flows expect.
 		entry.literal = true
-		if r.debug do fmt.printf("      [regex `%s` does not compile (%v): matched as text]\n", shortened(pattern), e)
+		note(r, "regex `%s` does not compile (%v): matched as text", shortened(pattern), e)
 	}
 	entry.empty = pattern == "" || parts_match(entry.parts, "")
 	r.regexes[pattern] = entry
@@ -2873,6 +2909,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		for i in r.h.order do if r.h.nodes[i].text != "" { first = r.h.nodes[i].text; break }
 		fmt.printf("      [read %.0f ms: %d nodes, %d roots, root0=%v first text %q]\n", us(t) / 1000, len(r.h.nodes), len(r.h.roots), r.h.nodes[r.h.roots[0]].class if len(r.h.roots) > 0 else "-", first)
 	}
+	trace_read(r, us(t) / 1000)
 	r.read_call, r.read_at = r.c.calls, time.tick_now()
 	return true
 }
@@ -2903,16 +2940,121 @@ untouched :: proc(r: ^Runner, el: int) -> bool {
 	return true
 }
 
-// SPEEDRUN_DEBUG: how long a step of a command took (since `t`, which moves to now).
+// ---- trace ----------------------------------------------------------------------------
+
+// What SPEEDRUN_DEBUG prints, kept without it for a failed flow's logs/debug.log (a zip of the
+// debug output is what a user sends): each command as it starts and ends, where each tap
+// lands and what is there, settles, and the screen whenever what it says changes. The last
+// TRACE_LINES lines, each stamped with the local time, as the agent's NSLog lines are.
+TRACE_LINES :: 1500
+TRACE_LINE_MAX :: 2000 // bytes
+
+Trace :: struct {
+	lines:        [dynamic]string, // on the heap; a ring once full
+	next:         int, // once full, the oldest line
+	same_reads:   int, // reads since the last read line, not in it
+	read_content: u64, // Hierarchy.content of the last read line
+	read_shape:   u64, // and its shape (trace_read)
+	read_at:      time.Tick, // when it was written
+}
+
+// A line of SPEEDRUN_DEBUG's output: printed with it, and kept in the trace.
+note :: proc(r: ^Runner, format: string, args: ..any) {
+	line := fmt.tprintf(format, ..args)
+	if r.debug do fmt.printf("      [%s]\n", line)
+	trace_keep(r, line)
+}
+
+// Keeps a line in the trace, not printed.
+trace_keep :: proc(r: ^Runner, line: string) {
+	heap := runtime.heap_allocator()
+	ms := time.to_unix_nanoseconds(time.now()) / 1_000_000
+	_, _, _, hh, mm, ss := local_time(ms)
+	stamped := fmt.aprintf("%02d:%02d:%02d.%03d %s", hh, mm, ss, ms % 1000, clipped(line, TRACE_LINE_MAX), allocator = heap)
+	t := &r.trace
+	if t.lines.allocator.procedure == nil do t.lines.allocator = heap
+	if len(t.lines) < TRACE_LINES {
+		append(&t.lines, stamped)
+	} else {
+		delete(t.lines[t.next], heap)
+		t.lines[t.next] = stamped
+		t.next = (t.next + 1) % TRACE_LINES
+	}
+}
+
+// A read, in the trace when what the screen says (its texts, kinds, ids) changed: with its
+// first texts, and how many reads since the last such line. A lookup waiting a minute on an
+// unchanged screen is then one line, not a thousand. A change of texts alone (a clock, a
+// price, a counter) is written once a second at most; a change of shape (the elements, their
+// kinds and ids: a screen or a popup coming) at once.
+trace_read :: proc(r: ^Runner, ms: f64) {
+	t := &r.trace
+	shape: u64 = 14695981039346656037
+	for n in r.h.nodes {
+		for s in ([]string{n.class, n.id}) {
+			for c in transmute([]u8)s do shape = (shape ~ u64(c)) * 1099511628211
+			shape = (shape ~ 0xff) * 1099511628211
+		}
+	}
+	if len(t.lines) > 0 && (r.h.content == t.read_content || (shape == t.read_shape && time.tick_since(t.read_at) < time.Second)) {
+		t.same_reads += 1
+		return
+	}
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, "read %.0f ms: %d nodes", ms, len(r.h.nodes))
+	if t.same_reads > 0 do fmt.sbprintf(&b, " (%d reads since the last read line)", t.same_reads)
+	shown := 0
+	for i in r.h.order {
+		n := r.h.nodes[i]
+		label := n.text if n.text != "" else n.desc
+		if label == "" do continue
+		fmt.sbprintf(&b, "%s%q", " | " if shown > 0 else "; texts: ", clipped(label, 60))
+		shown += 1
+		if shown == 10 do break
+	}
+	if shown == 0 do strings.write_string(&b, "; no text")
+	trace_keep(r, strings.to_string(b))
+	t.read_content, t.read_shape, t.read_at, t.same_reads = r.h.content, shape, time.tick_now(), 0
+}
+
+// The trace, oldest line first, after a last line for the reads that said the same since the
+// last read line.
+trace_text :: proc(r: ^Runner, alloc := context.temp_allocator) -> string {
+	t := &r.trace
+	if t.same_reads > 0 do trace_keep(r, fmt.tprintf("%d more reads since the last read line", t.same_reads))
+	t.same_reads = 0
+	b := strings.builder_make(alloc)
+	for k in 0 ..< len(t.lines) {
+		strings.write_string(&b, t.lines[(t.next + k) % len(t.lines)])
+		strings.write_byte(&b, '\n')
+	}
+	return strings.to_string(b)
+}
+
+// The first `n` bytes of `s` at most, cut between characters.
+@(private = "file")
+clipped :: proc(s: string, n: int) -> string {
+	cut := min(len(s), n)
+	for cut < len(s) && cut > 0 && s[cut] & 0xC0 == 0x80 do cut -= 1
+	return s[:cut]
+}
+
+trace_free :: proc(r: ^Runner) {
+	for line in r.trace.lines do delete(line, runtime.heap_allocator())
+	delete(r.trace.lines)
+	r.trace = {}
+}
+
+// How long a step of a command took (since `t`, which moves to now; note).
 debug_step :: proc(r: ^Runner, what: string, t: ^time.Tick) {
-	if r.debug do fmt.printf("      [%s %.0f ms]\n", what, us(t^) / 1000)
+	note(r, "%s %.0f ms", what, us(t^) / 1000)
 	t^ = time.tick_now()
 }
 
 shell :: proc(r: ^Runner, format: string, args: ..any) -> string {
 	t := time.tick_now()
 	out, _ := op_shell(r.c, fmt.tprintf(format, ..args), r.alloc)
-	if r.debug do fmt.printf("      [shell %.0f ms: %s -> %d bytes]\n", us(t) / 1000, fmt.tprintf(format, ..args), len(out))
+	note(r, "shell %.0f ms: %s -> %d bytes", us(t) / 1000, fmt.tprintf(format, ..args), len(out))
 	return out
 }
 

@@ -304,7 +304,8 @@ How Speedrun works inside: [dev/DEVELOPMENT.md](dev/DEVELOPMENT.md). What is sti
 ## Status
 
 Speedrun is young and changes fast. If a flow that passes with Maestro fails with Speedrun,
-please open an issue with the flow and the output of `SPEEDRUN_DEBUG=1 speedrun test …`.
+please open an issue with the flow and its folder in the debug output (`logs/debug.log` there
+traces the run), or the output of `SPEEDRUN_DEBUG=1 speedrun test …`.
 
 ## License
 

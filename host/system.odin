@@ -405,7 +405,7 @@ answer_notification_alert :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	}
 	if pick < 0 do pick = buttons[1] if r.notifications == "allow" && len(buttons) > 1 else buttons[0]
 	n := r.h.nodes[pick]
-	if r.debug do fmt.printf("      [notification alert: tapping %q]\n", n.desc)
+	note(r, "notification alert: tapping %q", n.desc)
 	// A system alert's button: held a display frame (IOS_FRAME_TAP_MS).
 	if _, tok := op_press(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2, IOS_FRAME_TAP_MS); !tok do return false, false
 	return true, true
@@ -438,7 +438,7 @@ answer_error_dialog :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 		if r.launched_label != "" && !strings.contains(title, r.launched_label) do pick = close
 	}
 	n := r.h.nodes[pick]
-	if r.debug do fmt.printf("      [error dialog %q: tapping %q]\n", title, n.text)
+	note(r, "error dialog %q: tapping %q", title, n.text)
 	if _, tok := op_tap(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2); !tok do return false, false
 	return true, true
 }
@@ -498,8 +498,8 @@ active_window_rotated :: proc(r: ^Runner, landscape: bool) -> (waited: bool) {
 	start := time.tick_now()
 	for {
 		if _, ok := op_tree(r.c, &nodes, context.temp_allocator); !ok do return waited
-		if r.debug && len(nodes) > 0 do fmt.printf("      [active window %d nodes, %v %v %v %v, %q]\n", len(nodes), nodes[0].left, nodes[0].top, nodes[0].right, nodes[0].bottom, nodes[0].text)
-		if r.debug && len(nodes) == 0 do fmt.println("      [no active window]")
+		if len(nodes) > 0 do note(r, "active window %d nodes, %v %v %v %v, %q", len(nodes), nodes[0].left, nodes[0].top, nodes[0].right, nodes[0].bottom, nodes[0].text)
+		if len(nodes) == 0 do note(r, "no active window")
 		limit := time.Duration(SETTLE_TIMEOUT_MS) * time.Millisecond
 		// While the app is gone the status bar can be the active window: not that one.
 		if len(nodes) > 0 && 2 * min(nodes[0].right - nodes[0].left, nodes[0].bottom - nodes[0].top) >= min(r.w, r.h_px) {
@@ -894,7 +894,7 @@ set_location :: proc(r: ^Runner, latitude, longitude: f64, keep_sending := true)
 		n, _ := op_location(r.c, m.providers[:], lat, lon, LOCATION_RESEND_MS)
 		m.in_agent = n == len(m.providers)
 		if !m.in_agent && n > 0 do _, _ = op_location(r.c, nil, "", "", 0)
-		if !m.in_agent && r.debug do fmt.println("      [location: the agent cannot set test providers; using `cmd location`]")
+		if !m.in_agent do note(r, "location: the agent cannot set test providers; using `cmd location`")
 		if m.in_agent do return nil
 	}
 	if m.in_agent {
@@ -975,7 +975,7 @@ travel_distance :: proc(a, b: [2]f64) -> f64 {
 // terms, decline the sign-in.
 auto_verify :: proc(r: ^Runner, app: string) -> Err {
 	if label, ok := op_label(r.c, app, context.temp_allocator); app != "" && ok && label != "" {
-		if r.debug do fmt.printf("      [autoVerify: %s is named %q]\n", app, label)
+		note(r, "autoVerify: %s is named %q", app, label)
 		if !read_screen(r) do return AGENT_LOST
 		if el := deepest_text_match(r, compile(r, label) or_return); el >= 0 {
 			n := r.h.nodes[el]

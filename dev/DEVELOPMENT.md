@@ -188,8 +188,9 @@ replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
   `report.xml` / `report.html`), with flow `tags` and `properties` (`junitId`,
   `junitClassname`).
 - The debug output: `~/.speedrun/tests/<yyyy-MM-dd_HHmmss>/<flow>/` with `commands.json`,
-  `logs/speedrun.log`, on a failure `screenshots/final.png` (and on iOS `logs/ios-agent.log`,
-  the end of the agent's log), and what `takeScreenshot` and
+  `logs/speedrun.log`, on a failure `screenshots/final.png` and `logs/debug.log` (the end of
+  the flow's trace, below; on iOS also `logs/ios-agent.log`, the end of the agent's log),
+  and what `takeScreenshot` and
   `startRecording` write (`takeScreenshot/<path>.png`, `startRecording/<path>.mp4`, as in
   Maestro 2.11; a path leaving that folder is an error); `--debug-output`,
   `--flatten-debug-output`, `--test-output-dir` as in Maestro.
@@ -304,6 +305,13 @@ every request: they stay short (~1.9 KB for the 7 tools).
    with the total and how many hierarchy reads it took. A failed lookup or assertion prints
    the windows and texts of the last read (below the view in live mode). `SPEEDRUN_DEBUG=1`
    prints every hierarchy read and shell command with its time (and implies `--plain`).
+   Without it the same lines are kept, for a failed flow's `logs/debug.log` (`note`, the
+   trace: a zip of the debug output is what a user sends, and a rerun with the variable may
+   not fail): the last 1500, each with the local time (as the agent's NSLog lines), plus
+   each command's start and end. A read is kept only when what the screen says changed
+   (texts, kinds, ids), with the count of reads since: a minute's wait is one line. A change
+   of texts alone is kept once a second at most (a ticker would fill the trace). Taps note
+   their point and what lies there, settles their result.
 
 ## Maestro flow files
 
@@ -638,15 +646,20 @@ Known differences in how, not what:
   before SpringBoard's (the fallback for an app being relaunched): with three tries at most,
   an app whose main thread was blocked ~2 s at a time on CI failed them all, the read threw,
   and the agent closed the connection ("agent connection lost").
-- iOS: a snapshot of the app with nothing under the application is read again through a new
-  `XCUIApplication`, used from then on if it has the tree, and logged (`speedrun: empty
-  read of …` in the agent's log, every 5 s while it lasts): the app's state, the pid XCTest
-  has for it, the apps XCTest lists as active with their pids, and what SpringBoard and the
-  other active apps hold. A user's CI read only the bare application (its name, a
-  full-screen frame) for a minute, with iOS 26's "Save Password?" sheet over a busy React
-  Native screen, and XCTest's log had no "Requesting snapshot of accessibility hierarchy"
-  line in that time. Not reproduced: Safari's sheet, dismissed early or late, and an app
-  blocking its main thread for 6 s all read whole. Speedrun Bench never reads empty.
+- iOS: a snapshot of the app with no text under the application (no label, title, value,
+  identifier or placeholder) for 2 s is read again through a new `XCUIApplication`, used
+  from then on if it has text, and logged (`speedrun: empty read of …` in the agent's log,
+  then every 5 s while it lasts): the app's state, the pid XCTest has for it, the
+  snapshot's nodes (kinds and frames), what the accessibility hit test reaches at four
+  points, the apps XCTest lists as active with their pids, and what SpringBoard and the
+  other active apps hold. A user's CI read no text in the app for a minute, twice, with iOS
+  26's "Save Password?" sheet over a busy React Native screen (the second of two the app
+  shows after sign-in; the first read whole), and XCTest's log had no "Requesting snapshot
+  of accessibility hierarchy" line in that time. The first version of this checked for no
+  nodes at all and never fired there: a failure's `screen:` line lists only the roots, so
+  the app had nodes, none with text. The 2 s keep launch screens and transitions out. Not
+  reproduced: Safari's sheet, dismissed early or late, and an app blocking its main thread
+  for 6 s all read whole. Speedrun Bench never reads without text past its launch.
 - A lost connection to the agent (it crashed, was killed, or closed the connection when an
   operation threw) is made again, and the command that saw it runs again, twice per flow at
   most (`run_list`, `reconnect`). `device_restart` connects again when the agent answers a
@@ -654,7 +667,9 @@ Known differences in how, not what:
   reused). A sub-flow or a repeat is not run again: its own commands are. CI's iOS
   simulator once lost the connection 3 s into the journey, after a first read that took
   41 s (1 s in other runs). A failed iOS flow's debug output has the end of the runner's log
-  (`logs/ios-agent.log`: xcodebuild's output, the agent's NSLog lines, a crash), and after a
+  (`logs/ios-agent.log`: xcodebuild's output, the agent's NSLog lines, a crash; its last 400
+  lines, a run of XCTest's lines that differ only in their time kept as the first and a
+  count: one per snapshot, they made the 400 lines 22 s), and after a
   reconnect the end of the one before the restart (`logs/ios-agent-before-restart.log`:
   `ios_start` keeps it as `speedrun-ios-runner-<port>.prev.log`).
 - iOS: an issue XCTest records inside its own calls (an automation failure: "Failed to get
