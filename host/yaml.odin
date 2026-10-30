@@ -295,7 +295,14 @@ parse_value :: proc(p: ^Parser, rest: string, indent: int, no: int) -> ^Yaml {
 		q := text[0]
 		if (q == '"' || q == '\'') && quote_closed(text) do break
 		if q != '"' && q != '\'' && map_colon(p.lines[p.i].content) >= 0 do break
-		text = strings.concatenate({text, " ", p.lines[p.i].content}, p.alloc)
+		// A line break folds into a space, except one escaped in double quotes (`\` ending the
+		// line), which joins the lines with nothing (YAML 7.3.1): Jackson splits long strings so.
+		sep := " "
+		if q == '"' && escaped_break(text) {
+			text = text[:len(text) - 1]
+			sep = ""
+		}
+		text = strings.concatenate({text, sep, p.lines[p.i].content}, p.alloc)
 		p.i += 1
 	}
 	// SnakeYAML (Maestro's parser): in a plain scalar, `: ` or a final `:` starts a mapping.
@@ -308,6 +315,15 @@ parse_value :: proc(p: ^Parser, rest: string, indent: int, no: int) -> ^Yaml {
 		}
 	}
 	return parse_scalar(p, text, no)
+}
+
+// Whether a line of a double-quoted scalar ends with an escaped line break: an odd number
+// of backslashes (an even one is escaped backslashes).
+@(private = "file")
+escaped_break :: proc(s: string) -> bool {
+	n := 0
+	for n < len(s) && s[len(s) - 1 - n] == '\\' do n += 1
+	return n % 2 == 1
 }
 
 @(private = "file")
