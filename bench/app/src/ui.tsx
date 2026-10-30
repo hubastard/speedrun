@@ -86,10 +86,14 @@ export function Screen({
 
 // A loading overlay over a screen's body (Screen's overlay): fades in with a spinner while
 // `loading`, out after. Always mounted, transparent when idle; see-through while loading, the
-// controls behind it showing, but taking the touches. The spinner fills it (flex: 1).
+// controls behind it showing, but taking the touches. The spinner fills it (flex: 1). One
+// loading from the start shows from the first frame, as an app's loading screen does: faded
+// in from transparent, it let touches through until the JavaScript thread started the fade,
+// which on CI's simulator came after the screen looked settled, and a tap then went either
+// way (Speedrun Bench's PIN screen lost a digit to it).
 export function Fade({ loading }: { loading: boolean }) {
   const c = useColors();
-  const opacity = useSharedValue(0);
+  const opacity = useSharedValue(loading ? 1 : 0);
   useEffect(() => {
     opacity.value = withTiming(loading ? 1 : 0, { duration: 250 });
   }, [loading, opacity]);
