@@ -17,7 +17,7 @@ import { Device } from './src/screens/Device';
 import { Feed } from './src/screens/Feed';
 import { Drag, Gestures, LongList } from './src/screens/Gestures';
 import { Inputs } from './src/screens/Inputs';
-import { Animations, ComposeLab, Lab, Scene } from './src/screens/Lab';
+import { Animations, Lab, NativeLab, Scene } from './src/screens/Lab';
 import { EditProfile, Pin, Profile, Settings } from './src/screens/Profile';
 import { Selectors } from './src/screens/Selectors';
 import { Cart, Checkout, OrderDone, ProductScreen, Shop } from './src/screens/Shop';
@@ -104,7 +104,7 @@ export default function App() {
                 <Stack.Screen name="Pin" component={Pin} />
                 <Stack.Screen name="Animations" component={Animations} />
                 <Stack.Screen name="Scene" component={Scene} />
-                <Stack.Screen name="Compose" component={ComposeLab} />
+                <Stack.Screen name="Native" component={NativeLab} />
                 <Stack.Screen name="Gestures" component={Gestures} />
                 <Stack.Screen name="Drag" component={Drag} />
                 <Stack.Screen name="LongList" component={LongList} />

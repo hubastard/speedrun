@@ -1,0 +1,181 @@
+package expo.modules.nativelab
+
+import android.content.Context
+import android.view.ViewGroup
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import expo.modules.kotlin.AppContext
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.views.ExpoView
+import kotlinx.coroutines.delay
+
+class NativeLabModule : Module() {
+  override fun definition() = ModuleDefinition {
+    Name("NativeLab")
+    View(NativeLabView::class) {}
+  }
+}
+
+// The lab's native screen in Jetpack Compose (NativeLabModule.swift: the same in SwiftUI).
+// Compose sends accessibility events only while an accessibility service is enabled, and a
+// UiAutomation client (a test tool) is none: a read refreshes the root and the ~50 nodes
+// fetched with it, and a tool's node cache serves the others as they were. Here 120 numbers
+// come first, so what changes below them (a text, a progress bar that comes and goes, a line
+// shown and hidden) is past those 50, in boxes of a fixed size: no view resizes, which would
+// send an event.
+class NativeLabView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
+  override val shouldUseAndroidLayout = true
+
+  // Added once attached: React Native measures a view before it is in a window, and a
+  // ComposeView measured then finds no recomposer and throws.
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    if (childCount > 0) return
+    addView(
+      ComposeView(context).apply {
+        setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        setContent { Lab() }
+      },
+      LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    )
+  }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun Lab() {
+  var loads by remember { mutableIntStateOf(0) }
+  var loading by remember { mutableStateOf(false) }
+  var count by remember { mutableIntStateOf(0) }
+  var details by remember { mutableStateOf(false) }
+  var locks by remember { mutableIntStateOf(0) }
+  var locked by remember { mutableStateOf(false) }
+  var card by remember { mutableStateOf(false) }
+  var cardTaps by remember { mutableIntStateOf(0) }
+  var list by remember { mutableStateOf(false) }
+  var picked by remember { mutableStateOf("none") }
+  LaunchedEffect(loads) {
+    if (loads == 0) return@LaunchedEffect
+    loading = true
+    delay(2_000)
+    loading = false
+  }
+  LaunchedEffect(locks) {
+    if (locks == 0) return@LaunchedEffect
+    locked = true
+    delay(1_500)
+    locked = false
+  }
+  Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+    if (list) {
+      // A lazy list: rows exist only once scrolled to.
+      Column(Modifier.fillMaxSize()) {
+        Button(onClick = { list = false }, Modifier.padding(16.dp).testTag("native-close-list")) { Text("Close list") }
+        LazyColumn(Modifier.fillMaxSize()) {
+          items(100) { k ->
+            Text(
+              "Item ${k + 1}",
+              Modifier.fillMaxWidth().clickable { picked = "Item ${k + 1}"; list = false }
+                .padding(16.dp).testTag("native-item-${k + 1}")
+            )
+          }
+        }
+      }
+    } else {
+      Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Button(onClick = { loads++ }, Modifier.testTag("native-load")) { Text("Load") }
+          Button(onClick = { count++ }, Modifier.testTag("native-add")) { Text("Add") }
+          Button(onClick = { details = !details }, Modifier.testTag("native-toggle")) { Text("Details") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Button(onClick = { locks++ }, Modifier.testTag("native-lock")) { Text("Lock") }
+          Button(onClick = { card = true }, Modifier.testTag("native-card")) { Text("Card") }
+          Button(onClick = { list = true }, Modifier.testTag("native-list")) { Text("List") }
+        }
+        repeat(12) { row ->
+          Row { repeat(10) { Text("${row * 10 + it} ", fontSize = 12.sp) } }
+        }
+        Box(Modifier.width(240.dp).height(28.dp)) {
+          Text("Loads finished: ${if (loading) loads - 1 else loads}", Modifier.testTag("native-loads"))
+        }
+        Box(Modifier.width(240.dp).height(28.dp)) {
+          Text("Count: $count", Modifier.testTag("native-count"))
+        }
+        Box(Modifier.width(240.dp).height(28.dp)) {
+          Text("Card taps: $cardTaps", Modifier.testTag("native-card-taps"))
+        }
+        Box(Modifier.width(240.dp).height(28.dp)) {
+          Text("Picked: $picked", Modifier.testTag("native-picked"))
+        }
+        // Tagged holders are nodes of their own, their children listed under them: a cached
+        // holder keeps the children it had.
+        Box(Modifier.testTag("native-bar-holder").fillMaxWidth().height(8.dp)) {
+          if (loading) LinearProgressIndicator(Modifier.testTag("native-bar"))
+        }
+        Box(Modifier.testTag("native-details-holder").fillMaxWidth().height(28.dp)) {
+          if (details) Text("Details shown", Modifier.testTag("native-details"))
+        }
+        // A card that springs in from the side (slow and bouncy, as Android's animation scale
+        // allows: test tools turn it off).
+        Box(Modifier.fillMaxWidth().height(56.dp)) {
+          // The plain one: in a Column, the name finds ColumnScope's first.
+          androidx.compose.animation.AnimatedVisibility(
+            visible = card,
+            enter = slideInHorizontally(spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessVeryLow)) { it }
+          ) {
+            Button(onClick = { cardTaps++ }, Modifier.testTag("native-card-button")) { Text("Card button") }
+          }
+        }
+      }
+      // A loading overlay for 1.5 s: it takes the taps, with a spinner.
+      if (locked) {
+        Box(
+          Modifier.fillMaxSize().testTag("native-overlay").background(Color(0x40000000))
+            .pointerInput(Unit) { detectTapGestures { } },
+          contentAlignment = Alignment.Center
+        ) {
+          CircularProgressIndicator()
+        }
+      }
+    }
+  }
+}

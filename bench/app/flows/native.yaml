@@ -1,0 +1,55 @@
+appId: dev.speedrun.bench
+name: "Native UI (Jetpack Compose, SwiftUI): texts that change, views that come and go, a spring, a loading overlay, a lazy list"
+# The lab's native screen: Jetpack Compose on Android, SwiftUI on iOS, the same texts and ids.
+# Compose sends a test tool's UiAutomation connection no accessibility events: below 120
+# numbers (past the ~50 nodes a read refreshes), in boxes of a fixed size, a cached node stayed
+# as it was (speedrun issue #2). SwiftUI runs its animations on its own clock and decides
+# itself what takes a touch.
+tags: [lab, native]
+---
+- runFlow: _shared/guest.yaml
+- runFlow:
+    file: _shared/lab.yaml
+    env:
+      SCREEN: native
+# A text that changes in place.
+- tapOn: Add
+- tapOn: Add
+- tapOn:
+    id: native-add
+- assertVisible: "Count: 3"
+# A line that comes and goes, its box unchanged.
+- tapOn: Details
+- assertVisible:
+    id: native-details
+- tapOn: Details
+- assertNotVisible:
+    id: native-details
+# A progress indicator that shows for 2 s, twice: waited for, then waited out.
+- repeat:
+    times: 2
+    commands:
+      - tapOn: Load
+      - extendedWaitUntil:
+          visible:
+            id: native-bar
+          timeout: 5000
+      - extendedWaitUntil:
+          notVisible:
+            id: native-bar
+          timeout: 10000
+- assertVisible: "Loads finished: 2"
+# A button that springs in from the side, tapped once it rests.
+- tapOn: Card
+- tapOn: Card button
+- assertVisible: "Card taps: 1"
+# A loading overlay takes the taps for 1.5 s: the tap waits it out, and counts once.
+- tapOn: Lock
+- tapOn: Add
+- assertVisible: "Count: 4"
+# A lazy list: its rows exist once scrolled to.
+- tapOn: List
+- scrollUntilVisible:
+    element: Item 80
+- tapOn: Item 80
+- assertVisible: "Picked: Item 80"

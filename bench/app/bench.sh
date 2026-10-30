@@ -74,6 +74,9 @@ compile() {
   mkdir -p "$PREBUILT"
   if [ "$PLATFORM" = ios ]; then
     CI=1 npx expo prebuild --platform ios
+    # prebuild reuses ios/ and skips pod install unless package.json's dependencies changed:
+    # a module added under modules/ would be missing.
+    (cd ios && pod install --silent)
     xcodebuild -workspace ios/SpeedrunBench.xcworkspace -scheme SpeedrunBench -configuration Release \
       -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/build -quiet
     rm -rf "$(app_path)"
@@ -149,11 +152,9 @@ publish() {
 run() {
   local tool="$1" report="$RESULTS/$PLATFORM-$1.xml" debug="$RESULTS/$PLATFORM-$1-debug"; shift
   rm -rf "$debug"
-  # The flows folder, unless a flow file or folder is given. Flows tagged android-only
-  # (Jetpack Compose) are left out on iOS.
+  # The flows folder, unless a flow file or folder is given.
   local flows=(flows) arg
   for arg in "$@"; do [ -e "$arg" ] && flows=(); done
-  [ "$PLATFORM" = ios ] && set -- --exclude-tags android-only "$@"
   # On iOS speedrun keeps its agent between runs: stop it, so both tools start cold.
   [ "$PLATFORM" = ios ] && "$SPEEDRUN" --stop-agent >/dev/null 2>&1 || true
   local t0 t1 status=0

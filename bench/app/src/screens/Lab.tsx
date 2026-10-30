@@ -3,10 +3,10 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import LottieView from 'lottie-react-native';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated as RNAnimated, Easing as RNEasing, FlatList, Platform, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Animated as RNAnimated, Easing as RNEasing, FlatList, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
-import { ComposeLabView } from '../../modules/compose-lab';
+import { NativeLabView } from '../../modules/native-lab';
 import { orderClosed, setState } from '../store';
 import { Body, Button, Confetti, Gap, Marquee, Row, s, Screen, Shimmer, useColors } from '../ui';
 
@@ -25,17 +25,18 @@ export function Lab() {
       {/* The popups an order brings, without the order. */}
       <Row testID="lab-popups-first" title="First order popups" onPress={() => { setState({ orders: 1 }); orderClosed(); }} />
       <Row testID="lab-popups-second" title="Second order popup" onPress={() => { setState({ orders: 2 }); orderClosed(); }} />
-      {Platform.OS === 'android' ? <Row testID="lab-compose" title="Jetpack Compose" onPress={() => nav.navigate('Compose')} /> : null}
+      <Row testID="lab-native" title="Native UI" onPress={() => nav.navigate('Native')} />
     </Screen>
   );
 }
 
-// A Jetpack Compose screen (modules/compose-lab), Android only: Compose keeps its own
-// accessibility tree, which test tools read differently from views'.
-export function ComposeLab() {
+// The platform's own UI toolkit (modules/native-lab): Jetpack Compose on Android, SwiftUI on
+// iOS, with the same texts and identifiers. Each keeps its own accessibility tree, animations
+// and hit testing, apart from the views React Native draws with.
+export function NativeLab() {
   return (
-    <Screen title="Jetpack Compose" scroll={false}>
-      <ComposeLabView style={{ flex: 1 }} />
+    <Screen title="Native UI" scroll={false}>
+      <NativeLabView style={{ flex: 1 }} />
     </Screen>
   );
 }

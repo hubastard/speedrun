@@ -17,7 +17,7 @@ group = 'dev.speedrun.bench'
 version = '1.0.0'
 
 android {
-  namespace "expo.modules.composelab"
+  namespace "expo.modules.nativelab"
   defaultConfig {
     versionCode 1
     versionName '1.0.0'

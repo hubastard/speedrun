@@ -14,7 +14,7 @@ against Maestro on hard, real-world screens.
 | Shop | Debounced search, category chips, product page (photo carousel, color, size, quantity, gift wrap), cart (swipe to remove, a promo code that fails once), checkout (keyboard over a sticky footer), confirmation with confetti | `pressKey`, `selected`/`checked`/`enabled`, `repeat`, `retry`, `hideKeyboard`, `copyTextFrom`, `inputRandom*`, popups after an order |
 | Chats | A bot that "types" (bouncing dots) before answering, a long-press menu, double tap to react | `longPressOn`, `doubleTapOn`, `setClipboard`, `pasteText`, `tapOn` at a point |
 | Profile | Edit form (validation on blur), settings (switches, a native alert, a long list), PIN on a custom keypad under a loading overlay for its first 1.5 s | Native alerts, keypads, a layout that moves under the keypad, a see-through overlay that takes the taps |
-| Lab | One screen per kind of animation, gestures, selectors, inputs and keys, device APIs, and a Jetpack Compose screen (Android) | See below |
+| Lab | One screen per kind of animation, gestures, selectors, inputs and keys, device APIs, and one in the platform's own UI toolkit (Jetpack Compose, SwiftUI) | See below |
 
 The lab:
 
@@ -32,11 +32,13 @@ The lab:
 - **Device**: launch arguments, location (`setLocation`, `travel`), permissions
   (`setPermissions`), photos (`addMedia`), orientation, dark mode, airplane mode (Android),
   app lifecycle (`pressKey: Home`, `stopApp`, `killApp`), screenshots and recordings.
-- **Jetpack Compose** (Android only, `modules/compose-lab`): a native Compose screen. Compose
-  sends test tools no accessibility events, so a node past the first ~50 of a read can stay as
-  a tool cached it: below 120 numbers, a count that changes, a line shown and hidden, and a
-  progress bar that comes and goes, all in boxes that never resize. Its flow is tagged
-  `android-only`, which `bench.sh` leaves out on iOS.
+- **Native UI** (`modules/native-lab`): the same screen in Jetpack Compose on Android and in
+  SwiftUI on iOS, with the same texts and ids, outside React Native. Compose sends test tools
+  no accessibility events, so a node past the first ~50 of a read can stay as a tool cached
+  it: below 120 numbers, a count that changes, a line shown and hidden, and a progress
+  indicator that comes and goes, all in boxes that never resize. SwiftUI animates on its own
+  clock and decides itself what takes a touch: a button that springs in, a loading overlay
+  that takes the taps for 1.5 s. And a lazy list, scrolled to its 80th row.
 
 ## Running it
 
