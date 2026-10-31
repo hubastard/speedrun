@@ -117,7 +117,9 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 
 A `when: visible` whose element is not there waits up to 7 s for it to show, as in
 Maestro, counted from the end of the last command that touched the app. Several checks in a
-row share that wait: the first one waits it out, the next ones read the screen once.
+row share that wait: the first one waits it out, the next ones read the screen once. A
+`runFlow` counts as touching the app only when one of its commands did: a shared file of
+checks that all came out false, or that only asserted, does not start the wait again.
 
 Flows that dismiss popups "if they show" (notification prompts, ratings, surveys) after
 every action spend most of their time there. If your popups show up early or not at all,

@@ -68,7 +68,8 @@ Maestro's time up to the failing step, then speedrun's time for the rest of the 
 Maestro's pace on that flow so far (`bench.sh` computes it from both tools' per-command
 times). The drag and onboarding flows changed after Maestro's suite run (sideways
 `scrollUntilVisible`): its rows for them were measured again on their own, the same day, and
-the totals take them in.
+the totals take them in. The popups flow gained checks for popups that never show on
+2026-10-31 (7 s in either tool): its rows are from before.
 
 | Flow (android) | Speedrun | Maestro | Speedup |
 |---|---:|---:|---:|

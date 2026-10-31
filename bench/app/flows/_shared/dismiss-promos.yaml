@@ -1,0 +1,10 @@
+# Popups the app does not show (any more), kept "in case": a check, then a file of more
+# checks, as shared login flows have them. Nothing here touches the app.
+appId: dev.speedrun.bench
+---
+- runFlow:
+    when:
+      visible: "Try Pro free for a month"
+    commands:
+      - tapOn: "Not now"
+- runFlow: dismiss-notify.yaml

@@ -425,8 +425,9 @@ write_file :: proc(path: string, data: []byte) -> bool {
 // ---- command list ---------------------------------------------------------------------
 
 // Runs commands in order. A failing command fails the list unless it is optional (then it
-// is a warning); a false condition skips a command.
-run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
+// is a warning); a false condition skips a command. `mutated` is set when a command
+// completed that may have changed the screen.
+run_list :: proc(r: ^Runner, cmds: []Cmd, section := "", mutated: ^bool = nil) -> (ok: bool) {
 	parent := r.path
 	defer r.path = parent
 	view_section(r, section)
@@ -485,6 +486,7 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "") -> (ok: bool) {
 			rec.status, rec.error = "FAILED", msg
 		}
 		if mutating do r.last_interaction = time.tick_now()
+		if mutating && rec.status == "COMPLETED" && mutated != nil do mutated^ = true
 		first_line, _, _ := strings.partition(rec.error, "\n")
 		trace_keep(r, fmt.tprintf("%s< %s %s (%.0f ms, %.0f reads)%s%s", strings.repeat("  ", r.depth, context.temp_allocator), node.desc, rec.status, rec.duration_ms, r.reads - reads, ": " if first_line != "" else "", first_line))
 		node.ms, node.error = rec.duration_ms, rec.error
@@ -863,19 +865,19 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 }
 
 // A sub-flow: its own env scope, the caller's env then its own, then onFlowStart, commands,
-// onFlowComplete.
+// onFlowComplete. It counts as an interaction (the `when:` and lookup timeouts start again)
+// when one of its commands did, as in Maestro: a sub-flow whose checks were all false, or
+// that only asserted, does not.
 @(private = "file")
 run_sub :: proc(r: ^Runner, s: Sub_Flow) -> (mutating: bool, err: Err) {
 	push_scope(r)
 	defer pop_scope(r)
 	if e := define_env(r, s.call_env[:]); e != nil do return false, e
 	if e := define_env(r, s.env[:]); e != nil do return false, e
-	before := len(r.records)
 	ok := true
-	if len(s.on_start) > 0 do ok = run_list(r, s.on_start[:], "s")
-	if ok do ok = run_list(r, s.commands[:])
-	if len(s.on_complete) > 0 do ok = run_list(r, s.on_complete[:], "c") && ok
-	for rec in r.records[before:] do if rec.status != "SKIPPED" do mutating = true
+	if len(s.on_start) > 0 do ok = run_list(r, s.on_start[:], "s", &mutating)
+	if ok do ok = run_list(r, s.commands[:], mutated = &mutating)
+	if len(s.on_complete) > 0 do ok = run_list(r, s.on_complete[:], "c", &mutating) && ok
 	if !ok do return mutating, SUB_FLOW_FAILED
 	return mutating, nil
 }

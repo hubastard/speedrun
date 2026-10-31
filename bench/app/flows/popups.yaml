@@ -17,3 +17,10 @@ tags: [lab, popups]
     id: survey-title
 - assertVisible:
     id: lab-device
+# Checks for popups that do not show wait 7 s in all, counted from the last command that may
+# have changed the app (evalScript is one). A file of checks that touched nothing is not:
+# the check after it reads the screen once instead of waiting 7 s again (14 s in all).
+- evalScript: ${output.checksFrom = Date.now()}
+- runFlow: _shared/dismiss-promos.yaml
+- runFlow: _shared/dismiss-notify.yaml
+- assertTrue: ${Date.now() - output.checksFrom < 12000}
