@@ -111,6 +111,7 @@ speedrun mcp                    # the session's verbs as an MCP server, on stdin
 | `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
 | `SPEEDRUN_REDUCE_MOTION=1` | iOS: turn the simulator's Reduce Motion on for the run (then back as it was). React Native's animations end at once: Speedrun Bench's suite runs 2% faster (14% before v0.2.1's lookup fixes). Some apps lay themselves out differently with it. |
+| `SPEEDRUN_CLEAR_STATE_REINSTALL=1` | iOS: `clearState` reinstalls the app, as Maestro does, instead of emptying its folders (~0.7 s slower). |
 | `SPEEDRUN_CONDITION_TIMEOUT_MS` | How long a `when: visible` (or `notVisible`) waits for its element (default 7000, as Maestro); a condition's own `timeout` takes precedence. See [Conditions take up to 7 s](maestro-compatibility.md#conditions-take-up-to-7-s). |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |
 

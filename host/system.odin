@@ -21,13 +21,8 @@ set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 	values := make([]Env_Pair, len(perms), context.temp_allocator)
 	for p, i in perms do values[i] = {p.key, eval(r, p.value) or_return}
 	if r.dev.platform == .IOS {
-		// The runner keeps the last permissions it was given (XCTestIOSDevice.setPermissions):
-		// `notifications`, else `all`, is how it answers the notification alert.
-		r.notifications = ""
-		for p in values do if p.key == "all" do r.notifications = p.value
-		for p in values do if p.key == "notifications" do r.notifications = p.value
-		if r.notifications != "allow" && r.notifications != "deny" do r.notifications = ""
-		r.notifications = strings.clone(r.notifications, r.alloc)
+		// The runner keeps the last permissions it was given (XCTestIOSDevice.setPermissions).
+		r.notifications = strings.clone(notification_answer(values), r.alloc)
 		return ios_set_permissions(r, app, values)
 	}
 	for p in values do if p.key == "all" do android_set_all_permissions(r, app, p.value)
@@ -305,9 +300,18 @@ IOS_TCC_SERVICES :: [][2]string {
 }
 
 // Location permission applied per "udid app" in this process: `simctl privacy` takes ~0.3 s
-// and launchApp applies `all: allow` each time. ios_clear_state forgets an app. On the heap:
+// and launchApp applies `all: allow` each time. ios_clear_state resets it. On the heap:
 // it outlives each flow's arena (a suite's next flow read a freed map).
 ios_location_set: map[string]string
+
+// How the notification alert is answered: "allow" or "deny" by `notifications`, else `all`;
+// "" leaves it. Values evaluated.
+notification_answer :: proc(values: []Env_Pair) -> string {
+	answer := ""
+	for p in values do if p.key == "all" do answer = p.value
+	for p in values do if p.key == "notifications" do answer = p.value
+	return answer if answer == "allow" || answer == "deny" else ""
+}
 
 // iOS permissions, through the TCC database as applesimutils does, and simctl for location.
 // Notifications have no setting there: their alert is answered when a read shows it
@@ -443,7 +447,6 @@ answer_error_dialog :: proc(r: ^Runner) -> (tapped: bool, ok: bool) {
 	return true, true
 }
 
-@(private = "file")
 sql_quote :: proc(s: string) -> string {
 	q, _ := strings.replace_all(s, "'", "''", context.temp_allocator)
 	return strings.concatenate({"'", q, "'"}, context.temp_allocator)

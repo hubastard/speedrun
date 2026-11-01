@@ -582,7 +582,11 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 				if out, ok := simctl("keychain", r.dev.udid, "reset"); !ok do return true, out
 			}
 			t := time.tick_now()
-			if d.clear_state do ios_clear_state(r.dev.udid, app) or_return
+			if d.clear_state {
+				values := make([]Env_Pair, len(perms), context.temp_allocator)
+				for p, i in perms do values[i] = {p.key, eval(r, p.value) or_return}
+				ios_clear_state(r, app, notification_answer(values)) or_return
+			}
 			debug_step(r, "clear state", &t)
 			set_permissions(r, app, perms) or_return
 			debug_step(r, "permissions", &t)
@@ -614,7 +618,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		app := eval(r, d.app_id) or_return
 		if r.dev.platform == .IOS {
 			// killApp is stopApp on iOS (no process death there).
-			if d.op == .Clear_State do return true, ios_clear_state(r.dev.udid, app)
+			if d.op == .Clear_State do return true, ios_clear_state(r, app)
 			simctl("terminate", r.dev.udid, app)
 			return true, nil
 		}

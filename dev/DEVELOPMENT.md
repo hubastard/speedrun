@@ -55,6 +55,18 @@ what is still slow: `dev/TO_IMPROVE.md`.
     launch arguments, orientation, dark and airplane mode, location, media, recording).
   - `image.odin`, `image/`: screenshot cropping and comparison, with stb_image (vendored,
     public domain).
+  - `clearstate.odin`: iOS `clearState`. It empties the app's containers from the Mac (its
+    data container, app groups' but those another app shares, which a reinstall keeps, and
+    extensions'; `simctl listapps` lists them), deletes its TCC
+    rows, resets its location authorization if locationd has one, and deletes app-group
+    preferences through cfprefsd (`simctl spawn … defaults delete <path>`: cfprefsd serves
+    them from its cache once their file is gone; the app's own are dropped with its process).
+    ~0.3 s where reinstalling took ~1 s, and the next launch is ~0.1 s faster. SpringBoard
+    holds the notification setting in memory (`Library/BulletinBoard/VersionedSectionInfo.plist`
+    is only its copy), so when it differs from what the launch asks for, or usernotificationsd
+    has notifications scheduled or delivered for the app, the app is reinstalled (the debug log
+    says why; `SPEEDRUN_CLEAR_STATE_REINSTALL=1` always does).
+    It reads binary plists itself (NSKeyedArchiver archives included).
   - `slim.odin`, `slim/`: `speedrun slim`, an iOS simulator's background services turned off
     (SimSlim's list, MIT, less what apps call). It writes launchd_sim's store of turned-off
     services (`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`)
@@ -383,7 +395,7 @@ language) where Maestro pulls and parses the APK. Then Chrome's first-run screen
 On iOS (simulators), the same commands run, with Maestro's iOS behavior: `back` does nothing
 (use the navigation bar's `BackButton`), `killApp` is `stopApp`, only ENTER, BACKSPACE, HOME and
 LOCK keys act, and the hierarchy is the foreground app plus the status bars with Maestro's
-attribute mapping; `clearState` reinstalls the app, as Maestro does; `hideKeyboard` swipes as
+attribute mapping; `clearState` empties the app's folders (Maestro reinstalls it); `hideKeyboard` swipes as
 Maestro's does; airplane mode does nothing (no simulator has it). Permissions (`launchApp`
 grants all by default, as in Maestro) are written to the simulator's privacy database the
 way Maestro's `applesimutils` does, so neither is needed; location goes through

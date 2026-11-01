@@ -91,7 +91,7 @@ And by state: `enabled`, `checked`, `selected`, `focused` (`true` or `false`):
 ```yaml
 - launchApp                   # the flow's appId; stops it first if it was running
 - launchApp:
-    clearState: true          # its data erased first (iOS: reinstalled)
+    clearState: true          # its data erased first, as if just installed
     clearKeychain: true       # iOS: the keychain too (saved logins)
     permissions:
       notifications: allow    # also location, camera, contacts, photos, microphone,

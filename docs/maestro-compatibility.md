@@ -68,6 +68,15 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   `UIAnimationDragCoefficient: 1` to keep normal speed. With `SPEEDRUN_REDUCE_MOTION=1`,
   Speedrun also turns the simulator's Reduce Motion on for the run (React Native's animations
   end at once) and back as it was afterwards.
+- **iOS `clearState` empties the app's folders instead of reinstalling it**: ~0.7 s faster,
+  and the app starts faster after it. It resets what reinstalling does: the app's files and
+  settings, its app groups' and extensions', its permissions and location access. What a
+  reinstall keeps stays: the keychain, and an app group another installed app shares. The
+  notification permission stays when it is already what the launch asks for (Maestro sets it
+  before launching, so no alert shows either); otherwise, or when the app has notifications
+  scheduled or in Notification Center, the app is reinstalled. Items the app added to
+  Spotlight or Siri suggestions stay, and its home screen icon stays where it was.
+  `SPEEDRUN_CLEAR_STATE_REINSTALL=1` always reinstalls it.
 - **`scrollUntilVisible` scrolls without momentum**, so the list stops where the finger
   stops, even on a slow CI emulator. It takes more, shorter swipes, and its `speed` has no
   effect. `swipe` and `scroll`
