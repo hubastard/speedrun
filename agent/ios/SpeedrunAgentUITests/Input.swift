@@ -29,6 +29,8 @@ final class Input {
     /// still before typing stops watching it (retypeIfScrambled).
     static let scrambleWaitMs = 2000
     static let scrambleStillMs = 500
+    /// Times the text is typed again before typing leaves the field as it is.
+    static let retypeTries = 2
     /// Response field inject_path: XCTest-synthesized event (Android uses 0-2), or nothing
     /// sent (deleting from an empty field).
     static let injectPath: UInt8 = 3
@@ -204,7 +206,8 @@ final class Input {
     /// behind them ("sneaker" came out "sakerne", and "saker", on CI's simulator). Typed into
     /// an empty field, the text is watched until the field shows it. The same characters in
     /// another order, or some of them once the field holds still: deleted, then typed again a
-    /// key at a time, each once the last one shows. The text's start alone is left as it is
+    /// key at a time, each once the last one shows, until the field keeps the text (twice at
+    /// most). The text's start alone is left as it is
     /// (a field with a maximum length keeps no more). A field that changes what it
     /// is given (a phone number's format, capitals) stops the watch at once: a character the
     /// text does not have. So does one that still reads empty once the keys are confirmed: it
@@ -240,13 +243,34 @@ final class Input {
             let keyDeadline = now() + UInt64(Self.keyWaitMs) * 1_000_000
             while now() < keyDeadline && shown() != shows { Thread.sleep(forTimeInterval: 0.01) }
         }
-        try Private.typeText(String(repeating: "\u{8}", count: value.count), charactersPerSecond: rate, wait: false)
-        var typed = ""
-        waitFor(typed)
-        for key in text {
-            try Private.typeText(String(key), charactersPerSecond: rate, wait: false)
-            typed.append(key)
+        // Whether the field shows the text and keeps it: the app's state, behind the keys,
+        // can still change it.
+        func holds() -> Bool {
+            waitFor(text)
+            let end = now() + UInt64(Self.scrambleStillMs) * 1_000_000
+            while now() < end {
+                if shown() != text { return false }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            return true
+        }
+        for attempt in 1...Self.retypeTries {
+            // All of it selected, then deleted: the cursor need not be at the end. On CI the
+            // field read "sakerne" with the cursor before "ne"; deletes from there left "ne",
+            // and the keys typed again went in front of it ("sneakerne").
+            try Private.typeKey("a", modifiers: .command, wait: false)
+            try Private.typeText("\u{8}", charactersPerSecond: rate, wait: false)
+            var typed = ""
             waitFor(typed)
+            for key in text {
+                try Private.typeText(String(key), charactersPerSecond: rate, wait: false)
+                typed.append(key)
+                waitFor(typed)
+            }
+            if holds() { return }
+            if attempt < Self.retypeTries {
+                NSLog("speedrun: typed \"\(text)\" again, the field shows \"\(shown())\": once more")
+            }
         }
     }
 

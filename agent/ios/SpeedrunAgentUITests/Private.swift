@@ -205,13 +205,7 @@ enum Private {
     /// Text typed through the keyboard as key events (XCPointerEventPath typeText), at
     /// charactersPerSecond; with wait false, returns once sent (see unconfirmed).
     static func typeText(_ text: String, charactersPerSecond: Int, wait: Bool = true) throws {
-        guard let pathClass = NSClassFromString("XCPointerEventPath") as? NSObject.Type else {
-            throw AgentError(message: "XCPointerEventPath is missing")
-        }
-        let initText = NSSelectorFromString("initForTextInput")
-        let alloc = pathClass.perform(NSSelectorFromString("alloc")).takeUnretainedValue() as! NSObject
-        guard alloc.responds(to: initText) else { throw AgentError(message: "XCPointerEventPath.initForTextInput is missing") }
-        let path = alloc.perform(initText).takeUnretainedValue() as! NSObject
+        let path = try textInputPath()
         let type = NSSelectorFromString("typeText:atOffset:typingSpeed:shouldRedact:")
         guard path.responds(to: type) else {
             throw AgentError(message: "XCPointerEventPath.typeText:atOffset:typingSpeed:shouldRedact: is missing")
@@ -219,6 +213,27 @@ enum Private {
         typealias TypeText = @convention(c) (NSObject, Selector, NSString, TimeInterval, UInt64, Bool) -> Void
         unsafeBitCast(path.method(for: type), to: TypeText.self)(path, type, text as NSString, 0, UInt64(max(charactersPerSecond, 1)), false)
         try synthesize(try record(with: path), wait: wait)
+    }
+
+    /// A key pressed with modifiers (⌘A) as a key event (XCPointerEventPath typeKey); with
+    /// wait false, returns once sent (see unconfirmed).
+    static func typeKey(_ key: String, modifiers: XCUIElement.KeyModifierFlags, wait: Bool = true) throws {
+        let path = try textInputPath()
+        let type = NSSelectorFromString("typeKey:modifiers:atOffset:")
+        guard path.responds(to: type) else { throw AgentError(message: "XCPointerEventPath.typeKey:modifiers:atOffset: is missing") }
+        typealias TypeKey = @convention(c) (NSObject, Selector, NSString, UInt, TimeInterval) -> Void
+        unsafeBitCast(path.method(for: type), to: TypeKey.self)(path, type, key as NSString, modifiers.rawValue, 0)
+        try synthesize(try record(with: path), wait: wait)
+    }
+
+    private static func textInputPath() throws -> NSObject {
+        guard let pathClass = NSClassFromString("XCPointerEventPath") as? NSObject.Type else {
+            throw AgentError(message: "XCPointerEventPath is missing")
+        }
+        let initText = NSSelectorFromString("initForTextInput")
+        let alloc = pathClass.perform(NSSelectorFromString("alloc")).takeUnretainedValue() as! NSObject
+        guard alloc.responds(to: initText) else { throw AgentError(message: "XCPointerEventPath.initForTextInput is missing") }
+        return alloc.perform(initText).takeUnretainedValue() as! NSObject
     }
 
     /// The side (lock) button. Main thread.

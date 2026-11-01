@@ -417,7 +417,10 @@ pacing. Typed into an empty field, the text is watched until the field shows it:
 Native field whose value the app sets from its state took the keys out of order once on CI's
 simulator, its JavaScript behind them ("sneaker" read "sakerne"). The same characters in
 another order are deleted and typed again a key at a time, each once the last one shows (a
-forced test: ~3 s for 7 keys). The watch ends at once on a character the text does not have
+forced test: ~3 s for 7 keys), until the field keeps the text for 0.5 s (twice at most). The
+delete is ⌘A then one delete: the app's state can leave the cursor inside the text (CI read
+"sakerne" with it before "ne"; deletes from there left "ne", and the text typed again went in
+front of it: "sneakerne"). The watch ends at once on a character the text does not have
 (a format, capitals), and on a field still reading empty once the keys are confirmed (one
 showing its placeholder); it cost the other typing steps nothing measurable. `eraseText` sends no more deletes than the focused field holds characters (its
 value's length, the placeholder's while it shows one) and none to an empty field.
