@@ -349,7 +349,7 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 			make_dirs(fmt.tprintf("%s/screenshots", dir))
 			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
 		}
-		header := fmt.tprintf("speedrun %s, %s: the end of the flow's trace (what SPEEDRUN_DEBUG=1 prints), in local time.\n> and < mark each command's start and end; a read line, a change in what the screen says (in its texts alone: once a second at most).\n\n", VERSION, "iOS" if r.dev.platform == .IOS else "Android")
+		header := fmt.tprintf("speedrun %s, %s: the end of the flow's trace (what SPEEDRUN_DEBUG=1 prints), in local time.\n> and < mark each command's start and end; a read line, a change in what the screen says (in its texts alone: once a second at most, except in the 2 s after an action), its first texts, then those it did not say at the last read line (new:).\n\n", VERSION, "iOS" if r.dev.platform == .IOS else "Android")
 		write_file(fmt.tprintf("%s/logs/debug.log", dir), transmute([]byte)strings.concatenate({header, trace_text(r)}, context.temp_allocator))
 		// iOS: the end of the agent's log (xcodebuild's output: the agent's lines, a crash),
 		// and after a lost agent, the end of the one before the restart: why it was lost.
@@ -2962,7 +2962,12 @@ Trace :: struct {
 	read_content: u64, // Hierarchy.content of the last read line
 	read_shape:   u64, // and its shape (trace_read)
 	read_at:      time.Tick, // when it was written
+	read_texts:   map[string]bool, // what the screen said then (on the heap)
 }
+
+// After an action, every change of the screen goes in the trace for this long: an error or a
+// toast the app shows for a moment, then a screen it goes back to.
+TRACE_EVERY_READ_AFTER_ACTION :: 2 * time.Second
 
 // A line of SPEEDRUN_DEBUG's output: printed with it, and kept in the trace.
 note :: proc(r: ^Runner, format: string, args: ..any) {
@@ -2989,10 +2994,12 @@ trace_keep :: proc(r: ^Runner, line: string) {
 }
 
 // A read, in the trace when what the screen says (its texts, kinds, ids) changed: with its
-// first texts, and how many reads since the last such line. A lookup waiting a minute on an
-// unchanged screen is then one line, not a thousand. A change of texts alone (a clock, a
-// price, a counter) is written once a second at most; a change of shape (the elements, their
-// kinds and ids: a screen or a popup coming) at once.
+// first texts, the others it did not say at the last read line (`new:`, wherever they are on
+// the screen), and how many reads since that line. A lookup waiting a minute on an unchanged
+// screen is then one line, not a thousand. A change of texts alone (a clock, a price, a
+// counter) is written once a second at most, except in the 2 s after an action
+// (TRACE_EVERY_READ_AFTER_ACTION); a change of shape (the elements, their kinds and ids: a
+// screen or a popup coming) at once.
 trace_read :: proc(r: ^Runner, ms: f64) {
 	t := &r.trace
 	shape: u64 = 14695981039346656037
@@ -3002,7 +3009,8 @@ trace_read :: proc(r: ^Runner, ms: f64) {
 			shape = (shape ~ 0xff) * 1099511628211
 		}
 	}
-	if len(t.lines) > 0 && (r.h.content == t.read_content || (shape == t.read_shape && time.tick_since(t.read_at) < time.Second)) {
+	throttled := shape == t.read_shape && time.tick_since(t.read_at) < time.Second && time.tick_since(r.last_interaction) >= TRACE_EVERY_READ_AFTER_ACTION
+	if len(t.lines) > 0 && (r.h.content == t.read_content || throttled) {
 		t.same_reads += 1
 		return
 	}
@@ -3010,15 +3018,32 @@ trace_read :: proc(r: ^Runner, ms: f64) {
 	fmt.sbprintf(&b, "read %.0f ms: %d nodes", ms, len(r.h.nodes))
 	if t.same_reads > 0 do fmt.sbprintf(&b, " (%d reads since the last read line)", t.same_reads)
 	shown := 0
+	first := make(map[string]bool, 10, context.temp_allocator)
 	for i in r.h.order {
 		n := r.h.nodes[i]
 		label := n.text if n.text != "" else n.desc
 		if label == "" do continue
 		fmt.sbprintf(&b, "%s%q", " | " if shown > 0 else "; texts: ", clipped(label, 60))
+		first[label] = true
 		shown += 1
 		if shown == 10 do break
 	}
 	if shown == 0 do strings.write_string(&b, "; no text")
+	heap := runtime.heap_allocator()
+	texts := make(map[string]bool, 64, heap)
+	added := 0
+	for i in r.h.order {
+		n := r.h.nodes[i]
+		label := n.text if n.text != "" else n.desc
+		if label == "" || label in texts do continue
+		texts[strings.clone(label, heap)] = true
+		if t.read_texts == nil || label in t.read_texts || label in first || added == 10 do continue
+		fmt.sbprintf(&b, "%s%q", " | " if added > 0 else "; new: ", clipped(label, 60))
+		added += 1
+	}
+	for k in t.read_texts do delete(k, heap)
+	delete(t.read_texts)
+	t.read_texts = texts
 	trace_keep(r, strings.to_string(b))
 	t.read_content, t.read_shape, t.read_at, t.same_reads = r.h.content, shape, time.tick_now(), 0
 }
@@ -3048,6 +3073,8 @@ clipped :: proc(s: string, n: int) -> string {
 trace_free :: proc(r: ^Runner) {
 	for line in r.trace.lines do delete(line, runtime.heap_allocator())
 	delete(r.trace.lines)
+	for k in r.trace.read_texts do delete(k, runtime.heap_allocator())
+	delete(r.trace.read_texts)
 	r.trace = {}
 }
 

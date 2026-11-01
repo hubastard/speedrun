@@ -327,9 +327,13 @@ every request: they stay short (~1.9 KB for the 7 tools).
    trace: a zip of the debug output is what a user sends, and a rerun with the variable may
    not fail): the last 1500, each with the local time (as the agent's NSLog lines), plus
    each command's start and end. A read is kept only when what the screen says changed
-   (texts, kinds, ids), with the count of reads since: a minute's wait is one line. A change
-   of texts alone is kept once a second at most (a ticker would fill the trace). Taps note
-   their point and what lies there, settles their result.
+   (texts, kinds, ids), with the count of reads since: a minute's wait is one line. Its line
+   gives the first 10 texts, then (`new:`) those the last read line did not have, wherever
+   they are: an error by a button at the bottom of the screen. A change of texts alone is
+   kept once a second at most (a ticker would fill the trace), but every one in the 2 s after
+   an action: a message the app shows for a moment before going back to a screen (a review
+   screen that closed after its confirm button, the screen before it back). Taps note their
+   point and what lies there, settles their result.
 
 ## Maestro flow files
 
