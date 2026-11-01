@@ -144,7 +144,14 @@ characters) 255 ms against 2.9 s.
   set at launch does not reach it. Enter's settle sees the screen change until ~430 ms, then
   one more signature (~210 ms) confirms it; Maestro's 617 ms on 2026-10-26 was 790 ms on
   10-25, so it is level within Maestro's spread. Not waiting for testmanagerd's confirmation
-  was slower for Enter (more signatures while the keyboard moves).
+  was slower for Enter (more signatures while the keyboard moves). Speeding up every process
+  does not reach it either (2026-11-01, frames measured): UIKit's internal preferences turned
+  on for all of them (`UIPreferences` in the device's
+  `Library/Preferences/FeatureFlags/Domain/UIKit.plist`, read at boot) with a global
+  `UIAnimationDragCoefficient` of 0.1 left the keyboard at ~550 ms to show and ~820 ms to
+  hide, and the bench flows unchanged within noise; the simulator's Slow Animations state
+  (`com.apple.UIKit.SimulatorSlowMotionAnimationState`, set with `notifyutil` in the
+  simulator) slows the app 10x but the keyboard and the launch only ~1.3x.
 - **iOS taps in general: 0.5–0.65 s vs ~0.15 s for the same tap on Android.** testmanagerd
   confirms a synthesized event ~230 ms after it, the screen starts changing ~300 ms after the
   tap begins, and a snapshot costs ~70 ms. Not waiting for the confirmation gained little for
