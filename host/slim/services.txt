@@ -1,0 +1,170 @@
+# The iOS simulator's background services that `speedrun slim` turns off: launchd labels, one
+# per line. From SimSlim (MIT License, LICENSE here; https://github.com/MobAI-App/simslim),
+# grouped as it groups them, less what an app reaches through a public framework, which stays
+# on: push (apsd), universal links (swcd), the photo library (assetsd), contacts, calendars
+# and reminders, HealthKit (healthd), HomeKit (homed), StoreKit's products (storekitd,
+# itunesstored), Apple Pay (passd, financed), DeviceCheck, Sign in with Apple (akd), CloudKit
+# and iCloud documents and keys (cloudd, bird, syncdefaultsd), Spotlight's searchd (the
+# document picker's Recents), Safari's history and Safe Browsing and web privacy (in-app
+# browsers), CallKit, Live Activities, ad attribution (adprivacyd) and map snapshots. The App
+# Store's engagement services (AMS) are off: in-app purchases cannot be made, and they are
+# busy for minutes after a first boot.
+
+# Widgets & Wallpaper
+com.apple.PosterBoard
+com.apple.chronod
+com.apple.navd
+# Siri & Intelligence
+com.apple.assistant_cdmd
+com.apple.assistant_service
+com.apple.siriactionsd
+com.apple.siriinferenced
+com.apple.siriknowledged
+com.apple.sirittsd
+com.apple.siri.context.service
+com.apple.siri.acousticsignature
+com.apple.corespeechd
+com.apple.voiced
+com.apple.voicebankingd
+com.apple.speechmodeltrainingd
+com.apple.intelligenceplatformd
+com.apple.intelligencecontextd
+com.apple.intelligenceflowd
+com.apple.intelligencetasksd
+com.apple.generativeexperiencesd
+com.apple.knowledgeconstructiond
+com.apple.naturallanguaged
+com.apple.textunderstandingd
+com.apple.modelcatalogd
+com.apple.modelmanagerd
+com.apple.mlhostd
+com.apple.mlruntimed
+com.apple.suggestd
+com.apple.parsecd
+com.apple.parsec-fbf
+com.apple.proactiveeventtrackerd
+# Spotlight & Search
+com.apple.searchtoold
+com.apple.spotlightknowledged
+com.apple.spotlightknowledged.updater
+com.apple.corespotlightservice
+# iCloud & Apple Account
+com.apple.appleaccountd
+com.apple.appleaccounttransparencyd
+com.apple.appleidsetupd
+com.apple.amsaccountsd
+com.apple.amsengagementd
+com.apple.amsondevicestoraged
+com.apple.cloudphotod
+com.apple.ckdiscretionaryd
+com.apple.cloudsettingssyncagent
+com.apple.cdpd
+com.apple.sosd
+com.apple.SecureBackupDaemon
+com.apple.TrustedPeersHelper
+com.apple.protectedcloudstorage.protectedcloudkeysyncing
+com.apple.icloudmailagent
+com.apple.icloudsubscriptionoptimizerd
+com.apple.communicationtrustd
+# App Store & Media
+com.apple.appstored
+com.apple.appstorecomponentsd
+com.apple.itunescloudd
+com.apple.videosubscriptionsd
+com.apple.assetsubscriptiond
+com.apple.musicd
+# Mail
+com.apple.email.maild
+com.apple.exchangesyncd
+com.apple.dataaccess.dataaccessd
+com.apple.contacts.postersyncd
+com.apple.peopled
+# Safari Sync & Web Services
+com.apple.SafariBookmarksSyncAgent
+com.apple.Safari.passwordbreachd
+com.apple.safarifetcherd
+com.apple.WebBookmarks.webbookmarksd
+com.apple.webkit.adattributiond
+com.apple.webkit.webpushd
+# Family & Screen Time
+com.apple.familycircled
+com.apple.FamilyControlsAgent
+com.apple.familynotification
+com.apple.askpermissiond
+com.apple.asktod
+com.apple.ScreenTimeAgent
+com.apple.ScreenTimeSettingsAgent
+com.apple.UsageTrackingAgent
+# Health, Home & Fitness (the apps' own)
+com.apple.healthappd
+com.apple.healthcontentd
+com.apple.healtheventsd
+com.apple.healthrecordsd
+com.apple.finhealthd
+com.apple.homeeventsd
+com.apple.fitcore
+com.apple.fitcore.session
+com.apple.fitnesscoachingd
+com.apple.fitnessintelligenced
+com.apple.activityawardsd
+com.apple.activitysharingd
+# Photo & Media Analysis
+com.apple.photoanalysisd
+com.apple.photosface
+com.apple.mediaanalysisd
+com.apple.mediaanalysisd.service
+com.apple.mediastream.mstreamd
+com.apple.medialibraryd
+# News, Weather, Maps & Games
+com.apple.newsd
+com.apple.weatherd
+com.apple.Maps.mapssyncd
+com.apple.Maps.mapspushd
+com.apple.Maps.geocorrectiond
+com.apple.maps.destinationd
+com.apple.jetpackassetd
+com.apple.tipsd
+com.apple.gamesaved
+com.apple.GameController.gamecontrollerd
+# Messaging & FaceTime
+com.apple.identityservicesd
+com.apple.ids_simd
+com.apple.imautomatichistorydeletionagent
+com.apple.imcore.imtransferagent
+com.apple.imdpersistence.IMDPersistenceAgent
+com.apple.facetimemessagestored
+# Sharing & Device Connectivity (and the Watch's faces, not in SimSlim's list)
+com.apple.rapportd
+com.apple.companiond
+com.apple.carkitd
+com.apple.wcd
+com.apple.tvremoted
+com.apple.avatarsd
+com.apple.stickersd
+com.apple.sociallayerd
+com.apple.announced
+com.apple.findmy.findmylocated
+com.apple.nanotimekitcompaniond
+# Ads, Diagnostics & Telemetry
+com.apple.ap.promotedcontentd
+com.apple.diagnosticextensionsd
+com.apple.feedbackd
+com.apple.rtcreportingd
+com.apple.securityuploadd
+com.apple.geoanalyticsd
+com.apple.triald
+com.apple.followupd
+com.apple.purplebuddy.budd
+# Other Background Services
+com.apple.merchantd
+com.apple.coreidvd
+com.apple.businessservicesd
+com.apple.deviceaccessd
+com.apple.replicatord
+com.apple.linkd
+com.apple.ind
+com.apple.storagedatad
+com.apple.StatusKitAgent
+com.apple.countryd
+com.apple.mobileassetd
+com.apple.managedconfiguration.passcodenagd

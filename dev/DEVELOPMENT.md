@@ -55,6 +55,12 @@ what is still slow: `dev/TO_IMPROVE.md`.
     launch arguments, orientation, dark and airplane mode, location, media, recording).
   - `image.odin`, `image/`: screenshot cropping and comparison, with stb_image (vendored,
     public domain).
+  - `slim.odin`, `slim/`: `speedrun slim`, an iOS simulator's background services turned off
+    (SimSlim's list, MIT, less what apps call). It writes launchd_sim's store of turned-off
+    services (`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`)
+    while the simulator is off, so they never start; the boot then reads back
+    `launchctl print-disabled` to check. Only first boots gain: a settled simulator idles at
+    ~1% of a core either way.
 - `build.sh` — builds the agent APK, the JavaScript engine and the image codecs, then
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.

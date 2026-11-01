@@ -28,6 +28,7 @@ mkdir -p "$stage/licenses"
 cp host/js/quickjs-ng/LICENSE "$stage/licenses/quickjs-ng.txt"
 cp host/js/datafaker/LICENSE "$stage/licenses/datafaker.txt"
 cp host/image/build/LICENSE.txt "$stage/licenses/stb.txt"
+cp host/slim/LICENSE "$stage/licenses/simslim.txt"
 if command -v xcodebuild > /dev/null; then
   ios="Android and iOS simulators (the iOS agent was built with $(xcodebuild -version | sed -n 1p))"
 else

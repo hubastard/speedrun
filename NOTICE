@@ -12,3 +12,5 @@ It includes third-party software, each under its own license (their texts: `spee
   host/js/datafaker/LICENSE. https://github.com/datafaker-net/datafaker
 - stb_image and stb_image_write (host/image), public domain or MIT License, at the end of
   each header. https://github.com/nothings/stb
+- SimSlim's list of an iOS simulator's background services (host/slim/services.txt), MIT
+  License: host/slim/LICENSE. https://github.com/MobAI-App/simslim

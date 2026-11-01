@@ -267,9 +267,10 @@ app is ready instead of after a fixed wait.
   runners included). The install script picks the right package.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
-- **iOS:** Xcode and a booted simulator. Real iOS devices are not supported yet. A release's
-  iOS agent is built with one Xcode (its release notes name it); with a much different Xcode,
-  build from source.
+- **iOS:** Xcode and a booted simulator. On CI, `speedrun slim` boots one without the
+  background services tests do not use ([Command line](docs/cli.md#other-commands)). Real iOS
+  devices are not supported yet. A release's iOS agent is built with one Xcode (its release
+  notes name it); with a much different Xcode, build from source.
 - `curl`, for flow scripts that make HTTP requests.
 
 ## Documentation
