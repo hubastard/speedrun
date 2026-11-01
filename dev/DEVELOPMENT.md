@@ -150,6 +150,11 @@ for flows whose scripts make HTTP requests.
   journey (`bench/journey/journey.yaml`) with speedrun on an Android 15 emulator (Ubuntu,
   KVM) and an iOS simulator (macOS runner, the newest Xcode installed). The JUnit report
   and the debug output are kept as artifacts.
+  The iOS job boots its simulator with `speedrun slim`, in the background while the iOS
+  agent builds, from a speedrun built in seconds without it (`SPEEDRUN_NO_IOS=1`). After the
+  journey, the sign-in flow clears the app's state as the journey left it, and the step fails
+  when clearState reinstalled the app instead of emptying its folders (the flow passes
+  either way).
   The Android job turns error dialogs off (`hide_error_dialogs`) and ends the home app,
   which closes a "Pixel Launcher isn't responding" dialog already up: a freshly booted
   emulator's launcher often stalls, and once its dialog came up as the journey typed the
