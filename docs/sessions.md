@@ -124,14 +124,31 @@ before the new screen is there. `speedrun session clear` starts the recording ov
 ### As an MCP server
 
 `speedrun mcp` serves the session as [Model Context Protocol](https://modelcontextprotocol.io)
-tools, over stdin and stdout. With Claude Code:
+tools, over stdin and stdout. With [Claude Code](https://claude.com/claude-code), after
+installing Speedrun:
 
 ```sh
-claude mcp add speedrun -- ~/.speedrun/speedrun mcp
+claude mcp add speedrun -- ~/.speedrun/speedrun mcp              # this project
+claude mcp add --scope user speedrun -- ~/.speedrun/speedrun mcp # every project
 ```
 
-Other MCP clients take the command (the binary's full path: a client may not start servers
-with your shell's PATH) and the argument `mcp`; see the [README](../README.md#as-an-mcp-server).
+Other MCP clients (Claude Desktop, Cursor, ...) take a server in their JSON configuration:
+
+```json
+{
+  "mcpServers": {
+    "speedrun": { "command": "/Users/you/.speedrun/speedrun", "args": ["mcp"] }
+  }
+}
+```
+
+Use the binary's full path: an MCP client may not start servers with your shell's PATH. Then
+start an emulator or simulator and ask the agent to test something, like:
+
+```
+Start a speedrun session for com.example.app, sign in as user@example.com, and save the flow to flows/sign-in.yaml
+```
+
 The tools:
 
 | Tool | |

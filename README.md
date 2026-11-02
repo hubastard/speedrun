@@ -50,7 +50,7 @@ appId: com.example.app
   with screenshots and logs for every failure. It answers the "isn't responding" dialogs a
   freshly booted emulator puts up, reconnects to its agent if the agent crashes, and boots iOS
   simulators without the background services that slow a runner's first minutes
-  ([`speedrun slim`](#faster-ios-ci-with-speedrun-slim)).
+  ([Running on CI](#running-on-ci)).
 
 ## Quick start
 
@@ -66,15 +66,7 @@ appId: com.example.app
    curl -fsSL https://raw.githubusercontent.com/hubastard/speedrun/main/install.sh | bash
    ```
 
-   - The script installs into `~/.speedrun` and adds it to your PATH. For another folder or a
-     specific release, put `SPEEDRUN_DIR=/usr/local/bin` or `SPEEDRUN_VERSION=v0.2.0` in
-     front of `bash`.
-   - Speedrun is one file, with its Android and iOS agents built in. You can also download it
-     from the [releases](https://github.com/hubastard/speedrun/releases) and put it anywhere
-     on your PATH.
-   - Speedrun tells you when a new release is out. Update with `brew upgrade speedrun`, or
-     `speedrun update` if you used the script.
-   - To build it yourself, see [Building from source](#building-from-source).
+   Other ways to install, updating, and building from source: [Install](docs/install.md).
 
 2. **Write a flow** ([how](docs/flows.md)), or use the ones you have:
 
@@ -118,49 +110,20 @@ Everything runs as written except Maestro's AI commands (`assertWithAI` and the 
 details, and the few differences you may notice:
 [Maestro compatibility](docs/maestro-compatibility.md).
 
-## Faster iOS CI with `speedrun slim`
-
-A CI runner boots its simulator for the first time, and for minutes after that the
-simulator's background services take the CPU your tests need: Siri and Apple Intelligence,
-Spotlight's indexing, widgets, iCloud and App Store syncing, the Health, News, Weather and
-Maps services. `speedrun slim` turns them off, then boots the simulator. Use it in place of
-`xcrun simctl boot`:
+## Running on CI
 
 ```sh
-UDID=$(xcrun simctl create ci "iPhone 17 Pro")   # or a simulator the runner already has
-speedrun slim --device "$UDID"                   # turns the services off, boots it, waits for the boot
-xcrun simctl install "$UDID" MyApp.app
-speedrun test -p ios --device "$UDID" flows/ --format junit --output report.xml
+speedrun slim --device "$UDID"     # iOS: boots the simulator without the services tests do not use
+speedrun test flows/ --format junit --output report.xml --debug-output debug --flatten-debug-output
 ```
 
-On Speedrun's own CI (GitHub Actions, `macos-26` runner), the iOS job went from 9.5–11
-minutes to 6–7 minutes, with one more flow than before. Speedrun's agent started in 33 s
-instead of 61 s, and the [benchmark journey](#benchmark) ran in 51 s instead of 76 s.
+On a CI runner's first boot, an iOS simulator's background services (Siri, Spotlight's
+indexing, iCloud syncing and more) take the CPU your tests need for minutes. `speedrun slim`
+turns them off and boots the simulator: use it in place of `xcrun simctl boot`. Speedrun's own
+iOS CI job went from 9.5–11 minutes to 6–7 minutes, with one more flow than before.
 
-- **Boot it while your app builds.** The boot takes a minute or more on a runner. Start it in
-  the background, and wait for it before the tests:
-
-  ```sh
-  speedrun slim --device "$UDID" > slim.log 2>&1 &
-  SLIM=$!
-  ./build-my-app.sh
-  wait $SLIM || { cat slim.log; exit 1; }
-  ```
-
-  In GitHub Actions each step is its own shell: Speedrun's
-  [workflow](.github/workflows/journey.yml) starts the boot in one step and waits for it in
-  a later one.
-- **What your app uses keeps working:** push notifications, universal links, the photo
-  library, contacts, calendars, HealthKit, StoreKit's products, Apple Pay, CloudKit, Sign in
-  with Apple and the keychain. In-app purchases do not.
-- **iOS 18.5 or later.** On an older simulator it stops without booting it, so a script that
-  runs on both can fall back: `speedrun slim --device "$UDID" || xcrun simctl bootstatus "$UDID" -b`.
-- **The simulator stays slim**, through `simctl erase` too, until `speedrun slim --off`. A
-  booted simulator is shut down and booted again.
-- **It helps a fresh boot.** A simulator that has been up for a while is quiet either way, so
-  on your Mac it changes little after the first minutes.
-
-More: [Command line](docs/cli.md#other-commands).
+Reports, sharding, what to keep from a failed run, and booting the simulator while your app
+builds: [Running on CI](docs/ci.md).
 
 ## Explore an app with an AI agent
 
@@ -175,86 +138,32 @@ speedrun do 'tapOn: @5' 'inputText: "user@example.com"' 'tapOn: @7'
 speedrun session save flows/sign-in.yaml
 ```
 
-Each answer says how each command went and what changed on screen, in a few lines: an agent
-pays a few hundred tokens per step, not a whole accessibility tree. See
-[Sessions](docs/sessions.md), and [the comparison with other agent tools](#for-ai-agents).
-
-### As an MCP server
-
-`speedrun mcp` serves the same as [Model Context Protocol](https://modelcontextprotocol.io)
-tools (`session_start`, `look`, `run`, `save_flow`...), for agents that take tools from MCP
-servers. With [Claude Code](https://claude.com/claude-code), after installing Speedrun:
+Each answer says how each command went and what changed on screen: an agent pays a few
+hundred tokens per step, not a whole accessibility tree. `speedrun mcp` serves the same as
+[MCP](https://modelcontextprotocol.io) tools; with [Claude Code](https://claude.com/claude-code):
 
 ```sh
-claude mcp add speedrun -- ~/.speedrun/speedrun mcp              # this project
-claude mcp add --scope user speedrun -- ~/.speedrun/speedrun mcp # every project
+claude mcp add speedrun -- ~/.speedrun/speedrun mcp
 ```
 
-Other MCP clients (Claude Desktop, Cursor, ...) take a server in their JSON configuration:
+Other MCP clients, and every command: [Sessions](docs/sessions.md).
 
-```json
-{
-  "mcpServers": {
-    "speedrun": { "command": "/Users/you/.speedrun/speedrun", "args": ["mcp"] }
-  }
-}
-```
-
-Use the binary's full path: an MCP client may not start servers with your shell's PATH. Then start an emulator or simulator and ask the agent to test something like: 
-```
-Start a speedrun session for com.example.app, sign in as user@example.com, and save the flow to flows/sign-in.yaml
-````
-
-## Built against an app made to be hard to test
+## Benchmark
 
 Speedrun is developed against [Speedrun Bench](bench/app), a React Native app built to trip up
-UI test tools: screens that never stop moving (looping Lottie and Reanimated animations,
-tickers, marquees, shimmering skeletons, carousels that page on their own), a button that
-turns on late, a banner that shifts the layout, a loading overlay over a keypad, popups that
-arrive late or one after another, the keyboard over the checkout button, lists that load
-more as you scroll, native alerts and permission prompts. Its 19 flows cover every command
-and selector, and are Speedrun's regression suite on Android and iOS; a journey through the
-app also runs on GitHub Actions' emulator and simulator after every push.
+UI test tools: screens that never stop moving, a button that turns on late, a loading overlay
+over a keypad, popups that arrive late, the keyboard over the checkout button, native alerts
+and permission prompts. Its 19 flows are Speedrun's regression suite on Android and iOS, and a
+journey through the app runs on GitHub Actions' emulator and simulator after every push.
 
 <p align="center">
   <img alt="Speedrun testing six animated screens of Speedrun Bench on the iOS simulator in 16 seconds" src="docs/assets/speedrun-bench-animations-ios.gif" width="320"><br>
   <sub>Six of those screens on the iOS simulator, in real time, with animations at their normal speed: Speedrun taps each screen's button three times while it moves, then checks the count. No sleeps.</sub>
 </p>
 
-Waiting for a still screen would never end on such an app. Speedrun waits until what it acts
-on has settled and leaves endless animations out of that check; it also waits for a disabled
-button to turn on, a loading overlay to go and a popup to finish sliding in before it taps.
-
-## Benchmark
-
-Speedrun Bench's 19 flows, run by Speedrun and Maestro from the same files:
-
-| | Speedrun | Maestro 2.11 | Speedrun is |
-|---|---|---|---|
-| **Android emulator**, whole suite | **5 min 55 s**, 19/19 passed | 46 min 56 s, 16/19 passed | |
-| on the 16 flows both pass | 5 min 4 s | 43 min 58 s | **8.7x faster** |
-| **iOS simulator**, whole suite | **9 min 33 s**, 19/19 passed | 40 min 19 s, 8/19 passed | |
-| on the 8 flows both pass | 2 min 34 s | 7 min 42 s | **3.0x faster** |
-
-Maestro's time for a flow it fails stops at the failure. Estimating the whole suite as if it
-had finished those flows, Speedrun is about 8.0x faster on Android and 4.8x on iOS. On native
-screens, the system Settings app ([`bench/settings`](bench/settings)), Speedrun is 10.7x
-faster on Android and 2.9x on iOS.
-
-Measured on an Apple M1 Pro (16 GB), with an Android 17 emulator and an iPhone 17 Pro
-simulator (iOS 26.2): Speedrun's current code on 2026-10-29, the other tools on 2026-10-27
-(they have not changed since). Speedrun's iOS numbers are with `SPEEDRUN_REDUCE_MOTION=1` (the
-simulator's Reduce Motion on during the run; without it this suite took 585 s instead of
-573 s) and, as Speedrun always runs iOS apps, their animations 10x faster (UIKit's animation
-speed setting). Per-flow results, why Maestro failed, and how to rerun it all:
-[bench/app](bench/app/README.md).
-
-### Against other black-box tools
-
-One user journey on Speedrun Bench (sign in with a code, search the shop and fill a cart, set
-a PIN under a loading overlay, scroll a long list), written for each tool the way its tests
-are usually written: [bench/journey](bench/journey). Each tool ran it three times after a
-warm-up; the time is the median of its passing runs, its start-up included.
+One user journey on it (sign in with a code, fill a cart, set a PIN under a loading overlay,
+scroll a long list), written for each tool the way its tests are usually written. The median
+of three runs after a warm-up, start-up included ([bench/journey](bench/journey)):
 
 | Tool | Android emulator | iOS simulator |
 |---|---:|---:|
@@ -265,41 +174,21 @@ warm-up; the time is the median of its passing runs, its start-up included.
 | XCUITest | | 81.2 s, 3/3 passed |
 | Maestro 2.11 | 126.5 s, 2/3 passed | 113.1 s, 2/3 passed |
 
-Speedrun runs the journey 2.9x faster than Appium on Android and 3.7x on iOS, 3.2x (Android)
-and 1.9x (iOS) faster than maestro-runner, 4.0x (Android) and 2.8x (iOS) faster than Argent's
-e2e runner, 3.2x faster than XCUITest, and 6.2x (Android) and 4.4x (iOS) faster than Maestro.
-Speedrun and Argent ran on 2026-10-29, maestro-runner on 2026-10-28, the others on
-2026-10-27, on the same machine; Speedrun on iOS with `SPEEDRUN_REDUCE_MOTION=1` (26.6 s
-without) and the app's animations 10x faster, as always.
+- **Against Maestro, from the same flow files:** Speedrun passes all 19 of the app's flows on
+  both platforms, Maestro 16 on Android and 8 on iOS. On the flows both pass, Speedrun is 8.7x
+  faster on Android and 3.0x on iOS ([bench/app](bench/app/README.md)); on the system
+  Settings app ([bench/settings](bench/settings)), 10.7x and 2.9x.
+- **For AI agents**, trying out a feature through each tool's MCP server: Speedrun took 4.5 s
+  on Android and 7.8 s on iOS, [agent-device](https://github.com/callstackincubator/agent-device)
+  8.2 s and 12.5 s, [Argent](https://github.com/software-mansion/argent) 13.0 s and 11.8 s,
+  and Speedrun's answers cost the agent the fewest tokens ([bench/agents](bench/agents)).
 
-It also passed every run, as it passes all 19 flows of the app's test suite on both
-platforms. Maestro failed one journey run on each platform (a tap lost on the product page on
-iOS, the long-list scroll out of time on Android) and 3 of the suite's 19 flows on Android, 11
-on iOS; maestro-runner's long-list scroll ran out of time in one Android run. The journey leaves out one step of the suite that the other tools could not pass
-reliably: tapping a checkbox right after scrolling to it, a tap Maestro lost in all 4 of its
-iOS runs and XCUITest in 1 of 4.
-
-### For AI agents
-
-The steps an agent takes to try out a feature of an app, driven through each agent tool's MCP
-server with the loop its documentation recommends, the calls scripted rather than chosen by a
-model: on Speedrun Bench, launch it, skip the onboarding, search the shop, open a product and
-check what shows; on a neutral app another team made to benchmark its own agent, fill in and
-submit a login form ([bench/agents](bench/agents)). The time is the median of three runs after
-a warm-up, session set-up included; the tokens are what the tool answered, which the agent
-reads.
-
-| Tool | Android emulator | iOS simulator | Neutral app, Android / iOS |
-|---|---:|---:|---:|
-| **Speedrun** | **4.5 s**, ~1,590 tokens | **7.8 s**, ~1,270 tokens | **4.0 s** / **6.8 s** |
-| [agent-device](https://github.com/callstackincubator/agent-device) 0.21 | 8.2 s, ~2,260 tokens | 12.5 s, ~1,680 tokens | 4.9 s / 11.3 s |
-| [Argent](https://github.com/software-mansion/argent) 0.31 | 13.0 s, ~11,370 tokens + 10 screenshots | 11.8 s, ~6,250 tokens + 10 screenshots | 11.9 s / 10.5 s |
-
-Every run passed, each tool with their default settings. On iOS that means Speedrun runs the app's animations
-10x faster, the others at normal speed. With all three
-at normal speed, Speedrun takes 11.3 s on Speedrun Bench and 8.5 s on the neutral app; with
-all three at Speedrun's 10x, agent-device takes 11.5 s and 10.7 s, Argent 11.7 s and 10.4 s.
-On Android all three ran with the system's animations off.
+Measured on an Apple M1 Pro with an Android 17 emulator and an iPhone 17 Pro simulator (iOS
+26.2), in October 2026, each tool as it ships. On iOS that means Speedrun runs the app's
+animations 10x faster, as it always does, and the other tools at normal speed; with the agent
+tools all at normal speed, on iOS Speedrun took 11.3 s, agent-device 12.5 s and Argent 11.8 s.
+Speedrun's iOS suite and journey runs also had the simulator's Reduce Motion on
+(`SPEEDRUN_REDUCE_MOTION=1`; the journey took 26.6 s without it).
 
 ## How it works
 
@@ -313,40 +202,27 @@ app is ready instead of after a fixed wait.
   runners included). The install script picks the right package.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
-- **iOS:** Xcode and a booted simulator. On CI, `speedrun slim` boots one without the
-  background services tests do not use ([Faster iOS CI](#faster-ios-ci-with-speedrun-slim)). Real iOS
-  devices are not supported yet. A release's iOS agent is built with one Xcode (its release
-  notes name it); with a much different Xcode, build from source.
+- **iOS:** Xcode and a booted simulator (on CI, boot it with
+  [`speedrun slim`](docs/ci.md#ios-boot-the-simulator-with-speedrun-slim)). Real iOS devices
+  are not supported yet. A release's iOS agent is built with one Xcode (its release notes name
+  it); with a much different Xcode, [build from source](docs/install.md#building-from-source).
 - `curl`, for flow scripts that make HTTP requests.
 
 ## Documentation
 
+- [Install](docs/install.md): Homebrew, the install script, updates, building from source.
 - [Writing flows](docs/flows.md): a flow's steps, finding elements, every command, for
   someone new to the format.
 - [Command line](docs/cli.md): options, environment variables, exit status.
+- [Running on CI](docs/ci.md): reports, sharding, failure artifacts, `speedrun slim` for iOS
+  simulators.
 - [Sessions](docs/sessions.md): drive an app a command at a time, from an AI agent or a
   terminal, and save the steps as a flow.
 - [Maestro compatibility](docs/maestro-compatibility.md): what is supported, and the
   differences you may notice.
 - [Troubleshooting](docs/troubleshooting.md).
-- [Benchmark](bench/app/README.md): the app, its flows, per-flow results.
-
-## Building from source
-
-You need JDK 17, the [Odin](https://odin-lang.org) compiler and a C compiler (`cc`), plus
-Xcode for iOS support.
-
-```sh
-git clone https://github.com/hubastard/speedrun.git
-cd speedrun
-./build.sh      # builds ./speedrun (Android support only without Xcode)
-./package.sh    # optional: a release archive in dist/
-```
-
-For iOS only, without a JDK: `SPEEDRUN_NO_ANDROID=1 ./build.sh`.
-
-How Speedrun works inside: [dev/DEVELOPMENT.md](dev/DEVELOPMENT.md). What is still slow:
-[dev/TO_IMPROVE.md](dev/TO_IMPROVE.md).
+- Benchmarks: [the app and its flows](bench/app/README.md), [the journey against other
+  tools](bench/journey), [agent tools](bench/agents).
 
 ## Status
 

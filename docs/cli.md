@@ -52,35 +52,9 @@ running `speedrun` is in (installed with Homebrew: `brew upgrade speedrun`), lea
 download against the SHA-256 published with it. A speedrun built from source refuses: update
 it with `git pull` and `./build.sh`.
 
-`speedrun slim` turns off about 140 background services of an iOS simulator that apps and
-tests do not use, then boots it: Siri and Apple Intelligence, Spotlight's indexing, widgets and
-wallpapers, iCloud and App Store syncing, the services of the Health, Fitness, News, Weather
-and Maps apps, diagnostics. A simulator spends the minutes after its first boot on them, when
-CI runs its first flows. On a 10-core Mac, with a never-booted iPhone 17 Pro (iOS 26.2):
-
-| | Stock | Slim |
-|---|---:|---:|
-| Boot | 29 s | 25 s |
-| The services' CPU in the first minute after it | 205 s | 50 s |
-| Boot, install the app, 4 flows | 137 to 150 s | 116 s |
-
-A simulator that has been up for a while is quiet either way, and slimming does not make its
-flows faster.
-
-What an app calls keeps working: push notifications, universal links, the photo library,
-contacts, calendars and reminders, HealthKit, HomeKit, StoreKit's products, Apple Pay,
-CloudKit, Sign in with Apple, the keychain. In-app purchases do not. The list is
-[host/slim/services.txt](../host/slim/services.txt), taken from
-[SimSlim](https://github.com/MobAI-App/simslim).
-
-The simulator keeps the setting, through `simctl erase` too, until `speedrun slim --off`. A
-booted simulator is shut down and booted again. It needs iOS 18.5 or later (earlier ones
-forget the setting when they boot). On CI, run it in place of `xcrun simctl boot`:
-
-```sh
-speedrun slim --device "$UDID"     # boots it
-speedrun test -p ios --device "$UDID" flows/
-```
+`speedrun slim` turns off the background services of an iOS simulator that apps and tests do
+not use, then boots it: a CI runner's first minutes go to the tests instead. See
+[Running on CI](ci.md#ios-boot-the-simulator-with-speedrun-slim).
 
 `speedrun test`, `speedrun session start` and `speedrun --version` end with a line when a newer
 release is out. They ask GitHub at most once a day, in the background (a command never waits

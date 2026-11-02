@@ -32,7 +32,7 @@ case "$(uname -m)" in
 esac
 case "$os-$arch" in
   macos-arm64 | linux-x86_64) ;;
-  *) fail "there is no speedrun package for $os $arch yet (macOS on Apple silicon and Linux x86_64 have one): build it from source, https://github.com/$REPO#building-from-source" ;;
+  *) fail "there is no speedrun package for $os $arch yet (macOS on Apple silicon and Linux x86_64 have one): build it from source, https://github.com/$REPO/blob/main/docs/install.md#building-from-source" ;;
 esac
 
 version="${SPEEDRUN_VERSION:-}"
