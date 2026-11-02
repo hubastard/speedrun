@@ -7,7 +7,7 @@
 # SPEEDRUN_NO_ANDROID=1: an iOS-only speedrun, without the Android agent (no JDK or Gradle
 # needed; CI's iOS job); it refuses Android devices, and package.sh refuses to pack it.
 # SPEEDRUN_NO_IOS=1: without the iOS agent even with Xcode installed (CI's iOS job builds one
-# in seconds to run `speedrun slim` while the agent builds); package.sh refuses it too.
+# in seconds to run `speedrun fast-boot` while the agent builds); package.sh refuses it too.
 set -euo pipefail
 cd "$(dirname "$0")"
 

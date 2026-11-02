@@ -1,7 +1,7 @@
 # Runs the benchmark journey (bench/journey/journey.yaml) with speedrun on an Android emulator
 # and an iOS simulator after every push to main: a regression check on Speedrun Bench, the
 # prebuilt app for these sources (bench-app.yml publishes it), else built here. On iOS, the
-# simulator is booted with `speedrun slim`, and a flow then clears the app's state. The JUnit
+# simulator is booted with `speedrun fast-boot`, and a flow then clears the app's state. The JUnit
 # reports and speedrun's debug output are kept as artifacts.
 name: Journey
 
@@ -146,10 +146,10 @@ jobs:
           dirname "$(find "$RUNNER_TEMP" -maxdepth 3 -name odin -type f | head -1)" >> "$GITHUB_PATH"
 
       # A simulator's first boot on a fresh runner takes minutes, and the services it starts
-      # keep it busy for minutes more: `speedrun slim` boots it without them (and so is
+      # keep it busy for minutes more: `speedrun fast-boot` boots it without them (and so is
       # tested on every push). It runs in the background while the iOS agent and the app are
       # built or fetched, from a speedrun built without its agent, in seconds.
-      - name: Start booting a slim simulator
+      - name: Start fast-booting the simulator
         env:
           SPEEDRUN_NO_ANDROID: 1
           SPEEDRUN_NO_IOS: 1
@@ -157,9 +157,9 @@ jobs:
           udid=$(xcrun simctl list devices available -j \
             | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for r in sorted(d, reverse=True) for x in d[r] if x["name"].startswith("iPhone") and "Pro" in x["name"]))')
           ./build.sh
-          cp speedrun "$RUNNER_TEMP/speedrun-slim"
-          nohup sh -c '"$1" slim --device "$2"; echo $? > "$3"' sh "$RUNNER_TEMP/speedrun-slim" "$udid" "$RUNNER_TEMP/slim.status" \
-            > "$RUNNER_TEMP/slim.log" 2>&1 &
+          cp speedrun "$RUNNER_TEMP/speedrun-boot"
+          nohup sh -c '"$1" fast-boot --device "$2"; echo $? > "$3"' sh "$RUNNER_TEMP/speedrun-boot" "$udid" "$RUNNER_TEMP/boot.status" \
+            > "$RUNNER_TEMP/boot.log" 2>&1 &
           echo "SIMULATOR=$udid" >> "$GITHUB_ENV"
 
       # iOS only: no Android agent, so no JDK or Gradle (5 minutes of the job).
@@ -191,9 +191,11 @@ jobs:
       - name: Wait for the simulator, install the app
         timeout-minutes: 15
         run: |
-          while [ ! -f "$RUNNER_TEMP/slim.status" ]; do sleep 1; done
-          cat "$RUNNER_TEMP/slim.log"
-          [ "$(cat "$RUNNER_TEMP/slim.status")" = 0 ]
+          while [ ! -f "$RUNNER_TEMP/boot.status" ]; do sleep 1; done
+          cat "$RUNNER_TEMP/boot.log"
+          [ "$(cat "$RUNNER_TEMP/boot.status")" = 0 ]
+          # fast-boot boots the simulator even when the services stay on: check they are off.
+          grep -q "background services off, booted" "$RUNNER_TEMP/boot.log"
           xcrun simctl install "$SIMULATOR" bench/app/prebuilt/SpeedrunBench.app
 
       # SPEEDRUN_DEBUG: every read, settle and hit test in the log (CI's simulator is slower

@@ -41,7 +41,7 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 ```
 speedrun --stop-agent      # stop the iOS agent kept running between runs
 speedrun update [version]  # install the latest release (or the one named) where this one is
-speedrun slim [--device <udid>] [--off]  # an iOS simulator without the services tests do not use, booted
+speedrun fast-boot [--device <udid>] [--off]  # boot an iOS simulator without the services tests do not use
 speedrun --version
 speedrun --licenses        # its license and those of the code built into it
 speedrun --help
@@ -52,9 +52,9 @@ running `speedrun` is in (installed with Homebrew: `brew upgrade speedrun`), lea
 download against the SHA-256 published with it. A speedrun built from source refuses: update
 it with `git pull` and `./build.sh`.
 
-`speedrun slim` turns off the background services of an iOS simulator that apps and tests do
-not use, then boots it: a CI runner's first minutes go to the tests instead. See
-[Running on CI](ci.md#ios-boot-the-simulator-with-speedrun-slim).
+`speedrun fast-boot` turns off the background services of an iOS simulator that apps and tests
+do not use, then boots it: a CI runner's first minutes go to the tests instead. See
+[Running on CI](ci.md#ios-boot-the-simulator-with-speedrun-fast-boot).
 
 `speedrun test`, `speedrun session start` and `speedrun --version` end with a line when a newer
 release is out. They ask GitHub at most once a day, in the background (a command never waits

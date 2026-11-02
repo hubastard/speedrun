@@ -51,7 +51,7 @@ LICENSES ::
 	"\n==== QuickJS-ng: MIT License\n\n" + #load("js/quickjs-ng/LICENSE", string) +
 	"\n==== Datafaker: Apache License 2.0\n\n" + #load("js/datafaker/LICENSE", string) +
 	"\n==== stb_image, stb_image_write\n\n" + #load("image/build/LICENSE.txt", string) +
-	"\n==== SimSlim: MIT License\n\n" + #load("slim/LICENSE", string)
+	"\n==== SimSlim: MIT License\n\n" + #load("fast_boot/LICENSE", string)
 
 // The release: build.sh passes it (-define:SPEEDRUN_VERSION=...), from SPEEDRUN_VERSION or git.
 VERSION :: #config(SPEEDRUN_VERSION, "dev")
@@ -869,8 +869,8 @@ USAGE :: `usage:
                                          (speedrun session --help)
   speedrun mcp                           the same as a Model Context Protocol server (stdio)
   speedrun update [version]              install the latest release (or the one named) in place
-  speedrun slim [--device <udid>]        an iOS simulator without the background services tests
-                                         do not use, booted (speedrun slim --help)
+  speedrun fast-boot [--device <udid>]   boot an iOS simulator without the background services
+                                         tests do not use (speedrun fast-boot --help)
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
   speedrun --stop-agent        stop the iOS agent kept running between runs
@@ -901,7 +901,7 @@ run_cli :: proc(args: []string) -> int {
 		case "look":    return run_look_cli(args[1:])
 		case "mcp":     return run_mcp_cli(args[1:])
 		case "update":  return run_update_cli(args[1:])
-		case "slim":    return run_slim_cli(args[1:])
+		case "fast-boot", "slim": return run_fast_boot_cli(args[1:]) // slim: its name until v0.2.10
 		}
 	}
 	// The test form: [-p <platform>] [--device <id>] [--no-ansi] [--verbose] test [options] <flows>...

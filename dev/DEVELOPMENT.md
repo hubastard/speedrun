@@ -67,12 +67,15 @@ what is still slow: `dev/TO_IMPROVE.md`.
     has notifications scheduled or delivered for the app, the app is reinstalled (the debug log
     says why; `SPEEDRUN_CLEAR_STATE_REINSTALL=1` always does).
     It reads binary plists itself (NSKeyedArchiver archives included).
-  - `slim.odin`, `slim/`: `speedrun slim`, an iOS simulator's background services turned off
+  - `fast_boot.odin`, `fast_boot/`: `speedrun fast-boot` (`slim` until v0.2.10, still
+    accepted but no longer documented), an iOS simulator's background services turned off
     (SimSlim's list, MIT, less what apps call). It writes launchd_sim's store of turned-off
     services (`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`)
     while the simulator is off, so they never start; the boot then reads back
-    `launchctl print-disabled` to check. Only first boots gain: a settled simulator idles at
-    ~1% of a core either way.
+    `launchctl print-disabled` to check. Where the services cannot be turned off (before iOS
+    18.5, the store unwritable) or the check finds them on, it warns and the simulator is
+    still booted, exit 0: a CI script needs no fallback to simctl. Only first boots gain: a
+    settled simulator idles at ~1% of a core either way.
 - `build.sh` — builds the agent APK, the JavaScript engine and the image codecs, then
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
@@ -150,7 +153,7 @@ for flows whose scripts make HTTP requests.
   journey (`bench/journey/journey.yaml`) with speedrun on an Android 15 emulator (Ubuntu,
   KVM) and an iOS simulator (macOS runner, the newest Xcode installed). The JUnit report
   and the debug output are kept as artifacts.
-  The iOS job boots its simulator with `speedrun slim`, in the background while the iOS
+  The iOS job boots its simulator with `speedrun fast-boot`, in the background while the iOS
   agent builds, from a speedrun built in seconds without it (`SPEEDRUN_NO_IOS=1`). After the
   journey, the sign-in flow clears the app's state as the journey left it, and the step fails
   when clearState reinstalled the app instead of emptying its folders (the flow passes

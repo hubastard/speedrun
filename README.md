@@ -113,12 +113,12 @@ details, and the few differences you may notice:
 ## Running on CI
 
 ```sh
-speedrun slim --device "$UDID"     # iOS: boots the simulator without the services tests do not use
+speedrun fast-boot --device "$UDID"   # iOS: boots the simulator without the services tests do not use
 speedrun test flows/ --format junit --output report.xml --debug-output debug --flatten-debug-output
 ```
 
 On a CI runner's first boot, an iOS simulator's background services (Siri, Spotlight's
-indexing, iCloud syncing and more) take the CPU your tests need for minutes. `speedrun slim`
+indexing, iCloud syncing and more) take the CPU your tests need for minutes. `speedrun fast-boot`
 turns them off and boots the simulator: use it in place of `xcrun simctl boot`. Speedrun's own
 iOS CI job went from 9.5–11 minutes to 6–7 minutes, with one more flow than before.
 
@@ -203,7 +203,7 @@ app is ready instead of after a fixed wait.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
 - **iOS:** Xcode and a booted simulator (on CI, boot it with
-  [`speedrun slim`](docs/ci.md#ios-boot-the-simulator-with-speedrun-slim)). Real iOS devices
+  [`speedrun fast-boot`](docs/ci.md#ios-boot-the-simulator-with-speedrun-fast-boot)). Real iOS devices
   are not supported yet. A release's iOS agent is built with one Xcode (its release notes name
   it); with a much different Xcode, [build from source](docs/install.md#building-from-source).
 - `curl`, for flow scripts that make HTTP requests.
@@ -214,8 +214,8 @@ app is ready instead of after a fixed wait.
 - [Writing flows](docs/flows.md): a flow's steps, finding elements, every command, for
   someone new to the format.
 - [Command line](docs/cli.md): options, environment variables, exit status.
-- [Running on CI](docs/ci.md): reports, sharding, failure artifacts, `speedrun slim` for iOS
-  simulators.
+- [Running on CI](docs/ci.md): reports, sharding, failure artifacts, `speedrun fast-boot` for
+  iOS simulators.
 - [Sessions](docs/sessions.md): drive an app a command at a time, from an AI agent or a
   terminal, and save the steps as a flow.
 - [Maestro compatibility](docs/maestro-compatibility.md): what is supported, and the
