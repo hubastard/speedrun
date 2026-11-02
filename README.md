@@ -120,7 +120,7 @@ speedrun test flows/ --format junit --output report.xml --debug-output debug --f
 On a CI runner's first boot, an iOS simulator's background services (Siri, Spotlight's
 indexing, iCloud syncing and more) take the CPU your tests need for minutes. `speedrun fast-boot`
 turns them off and boots the simulator: use it in place of `xcrun simctl boot`. Speedrun's own
-iOS CI job went from 9.5–11 minutes to 6–7 minutes, with one more flow than before.
+iOS CI job went from about 10 minutes to about 6, with one more flow than before.
 
 Reports, sharding, what to keep from a failed run, and booting the simulator while your app
 builds: [Running on CI](docs/ci.md).
