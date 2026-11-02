@@ -72,7 +72,7 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 	legacy_shards := 0
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
-		name, inline, has_inline := strings.partition(a, "=")
+		name, eq, inline := strings.partition(a, "=")
 		if !strings.has_prefix(a, "-") || a == "-" {
 			append(&o.inputs, a)
 			continue
@@ -90,7 +90,7 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 		}
 		value := ""
 		if takes_value(name) {
-			if has_inline != "" {
+			if eq != "" {
 				value = inline
 			} else if i + 1 < len(args) {
 				value = args[i + 1]
@@ -312,6 +312,8 @@ run_suite :: proc(c: ^Conn, dev: ^Device, plan: ^Plan, o: ^Test_Options, device_
 			flow_dir = flow_dir(debug_dir, flow_file_name(path), shard),
 		}, context.allocator)
 		print_flow_line(prefix, &res)
+		// As Maestro: a shard's failures carry its prefix in the reports.
+		if !res.passed && prefix != "" && res.error != "" do res.error = strings.concatenate({prefix, res.error})
 		return res
 	}
 	for path in plan.sequence {
