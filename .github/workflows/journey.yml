@@ -269,6 +269,12 @@ jobs:
           cat "$RUNNER_TEMP/rwa.log"
           exit 1
 
+      # Chrome's sandbox needs the user namespaces Ubuntu 23.10 and later keep from it: allowed
+      # on this throwaway runner, so Chrome runs with it (speedrun would run it without, and say
+      # so).
+      - name: Allow Chrome's sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # Speedrun downloads each browser on its first run: Chrome for Testing's headless shell,
       # Mozilla's Firefox.
       - name: Run in Chrome

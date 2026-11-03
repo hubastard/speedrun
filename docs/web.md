@@ -50,6 +50,11 @@ no Selenium, no Node. Which Chrome:
 
 Each run starts with a fresh profile: no cookies, storage or cache from an earlier run.
 
+Chrome runs with its sandbox. Where it cannot run, Chrome exits at once (Ubuntu 23.10 and
+later keep it from the user namespaces it needs: GitHub's `ubuntu-24.04` runners among them),
+and Speedrun starts it again without, as Playwright does by default, and says so. To keep the
+sandbox there: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
+
 ## Firefox
 
 `--device firefox` runs the flows in Firefox, driven over

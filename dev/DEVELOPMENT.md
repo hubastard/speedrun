@@ -62,7 +62,12 @@ what is still slow: `dev/TO_IMPROVE.md`.
   them as the page's work). Page targets are auto-attached paused (`Target.setAutoAttach`
   `waitForDebuggerOnStart`) so the script is in before the page runs; a pop-up becomes the
   driven page. Dialogs are accepted. Chrome: `SPEEDRUN_CHROME`, the headless shell or the
-  installed Chrome, else Chrome for Testing downloaded into the cache. A killed run leaves
+  installed Chrome, else Chrome for Testing downloaded into the cache. Chrome's output goes to
+  `speedrun-chrome.log` in its profile, quoted when it does not start; when that log blames
+  the sandbox (Ubuntu 23.10+ restricts unprivileged user namespaces, so Chrome exits at
+  once on GitHub's ubuntu-24.04 runners), `web_start` starts it again with `--no-sandbox`
+  and prints a note; CI allows the namespaces instead (sysctl
+  `kernel.apparmor_restrict_unprivileged_userns=0`). A killed run leaves
   its profile folder (`speedrun-chrome-<pid>-*` in the temp folder); the next run deletes
   those whose pid is gone. `SPEEDRUN_WEB_DEBUG=1` prints every DevTools message and, per
   settle, the work it last waited for.

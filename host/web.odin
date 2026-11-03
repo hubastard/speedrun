@@ -67,6 +67,7 @@ Web :: struct {
 	pid:          posix.pid_t,
 	to, from:     posix.FD, // the pipe's ends on this side: to Chrome's fd 3, from its fd 4 (Firefox: its WebSocket, both)
 	firefox:      bool, // Firefox over WebDriver BiDi (web_firefox.odin), not Chrome over DevTools
+	no_sandbox:   bool, // Chrome without its sandbox: a start with it failed (web_start)
 	ws_raw:       [dynamic]byte, // Firefox: read from the WebSocket, not yet a whole frame
 	ws_message:   [dynamic]byte, // Firefox: a message's frames so far
 	nav_events:   int, // Firefox: the driven page's documents loaded or failed (bidi_navigate)
@@ -112,24 +113,33 @@ web_start :: proc(d: ^Device) -> string {
 	if web_firefox do exe, err = firefox_executable()
 	else do exe, err = web_chrome(web_headless)
 	if err != "" do return err
-	w := new(Web, runtime.heap_allocator())
-	w.alloc = runtime.heap_allocator()
-	w.headless = web_headless
-	w.firefox = web_firefox
-	w.inbox.allocator = w.alloc
-	w.pages.allocator = w.alloc
-	w.frames.allocator = w.alloc
-	w.ws_raw.allocator = w.alloc
-	w.ws_message.allocator = w.alloc
-	if e := firefox_spawn(w, exe) if w.firefox else web_spawn(w, exe); e != "" {
+	w: ^Web
+	// Chrome whose sandbox cannot run here exits at once: Ubuntu 23.10 and later keep it from
+	// the user namespaces it needs (GitHub's ubuntu-24.04 runners among them). Then it is
+	// started again without it, as Playwright starts Chrome by default, and the run says so.
+	for no_sandbox in ([]bool{false, true}) {
+		w = new(Web, runtime.heap_allocator())
+		w.alloc = runtime.heap_allocator()
+		w.headless = web_headless
+		w.firefox = web_firefox
+		w.no_sandbox = no_sandbox
+		w.inbox.allocator = w.alloc
+		w.pages.allocator = w.alloc
+		w.frames.allocator = w.alloc
+		w.ws_raw.allocator = w.alloc
+		w.ws_message.allocator = w.alloc
+		if e := firefox_spawn(w, exe) if w.firefox else web_spawn(w, exe); e != "" {
+			web = w
+			web_stop()
+			return e
+		}
 		web = w
+		e := bidi_open(w) if w.firefox else web_open(w)
+		if e == "" do break
+		sandbox := !w.firefox && !no_sandbox && web_sandbox_failed(w)
 		web_stop()
-		return e
-	}
-	web = w
-	if e := bidi_open(w) if w.firefox else web_open(w); e != "" {
-		web_stop()
-		return e
+		if !sandbox do return e
+		fmt.eprintln("Chrome's sandbox cannot run on this machine (on Ubuntu 23.10 and later: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 allows it): running Chrome without it.")
 	}
 	listener, lerr := net.listen_tcp({net.IP4_Loopback, 0})
 	if lerr != nil {
@@ -145,6 +155,14 @@ web_start :: proc(d: ^Device) -> string {
 	d.udid = WEB_FIREFOX if w.firefox else WEB_DEVICE
 	d.name = strings.clone(fmt.tprintf("%s%s", strings.trim_prefix(w.product, "Headless"), fmt.tprintf(", headless %dx%d", size[0], size[1]) if w.headless else ""))
 	return ""
+}
+
+// Chrome's log tells its start failed for want of its sandbox ("No usable sandbox!", the
+// namespace or setuid helper errors).
+@(private = "file")
+web_sandbox_failed :: proc(w: ^Web) -> bool {
+	data, _ := os.read_entire_file(fmt.tprintf("%s/speedrun-chrome.log", w.profile), context.temp_allocator)
+	return strings.contains(strings.to_lower(string(data), context.temp_allocator), "sandbox")
 }
 
 // Stops Chrome (and with it the agent thread) and deletes its profile. Safe to call twice, and
@@ -203,6 +221,8 @@ web_spawn :: proc(w: ^Web, exe: string) -> string {
 	append(&args, exe)
 	append(&args, ..WEB_FLAGS)
 	if w.headless do append(&args, "--headless", "--hide-scrollbars")
+	// Only after a start that failed for want of it (web_start): Chrome's sandbox is kept.
+	if w.no_sandbox do append(&args, "--no-sandbox")
 	if w.headless || web_size != {} do append(&args, fmt.tprintf("--window-size=%d,%d", size[0], size[1]))
 	append(&args, fmt.tprintf("--user-data-dir=%s", profile), "--remote-debugging-pipe", "--no-startup-window")
 	argv := make([]cstring, len(args) + 1, context.temp_allocator)
@@ -221,12 +241,16 @@ web_spawn :: proc(w: ^Web, exe: string) -> string {
 	child_in, child_out := high(to[0]), high(from[1])
 	w.to, w.from = high(to[1]), high(from[0])
 	null := posix.open("/dev/null", {.RDWR})
+	// Its output goes to a file in the profile, quoted when it fails to start.
+	clog := strings.clone_to_cstring(fmt.tprintf("%s/speedrun-chrome.log", profile), context.temp_allocator)
+	log_fd := posix.open(clog, {.WRONLY, .CREAT, .TRUNC}, {.IRUSR, .IWUSR})
+	if log_fd < 0 do log_fd = null
 	pid := posix.fork()
 	if pid == 0 {
 		// Only async-signal-safe calls until exec.
 		posix.dup2(null, 0)
-		posix.dup2(null, 1)
-		posix.dup2(null, 2)
+		posix.dup2(log_fd, 1)
+		posix.dup2(log_fd, 2)
 		posix.dup2(child_in, 3)
 		posix.dup2(child_out, 4)
 		posix.setsid() // its own session: a Ctrl-C at the terminal reaches this process, which stops it
@@ -235,6 +259,7 @@ web_spawn :: proc(w: ^Web, exe: string) -> string {
 	}
 	posix.close(child_in)
 	posix.close(child_out)
+	if log_fd != null do posix.close(log_fd)
 	posix.close(null)
 	if pid < 0 do return "could not start Chrome (fork failed)"
 	w.pid = pid
@@ -265,7 +290,11 @@ web_sweep_profiles :: proc() {
 @(private = "file")
 web_open :: proc(w: ^Web) -> string {
 	version, err := web_call(w, "Browser.getVersion", "{}", "", WEB_START_TIMEOUT)
-	if err != "" do return fmt.tprintf("Chrome did not start: %s", err)
+	if err != "" {
+		data, _ := os.read_entire_file(fmt.tprintf("%s/speedrun-chrome.log", w.profile), context.temp_allocator)
+		lines := strings.split_lines(strings.trim_space(string(data)), context.temp_allocator)
+		return fmt.tprintf("Chrome did not start: %s\n%s", err, strings.join(lines[max(len(lines) - 15, 0):], "\n", context.temp_allocator))
+	}
 	if v, ok := version["product"].(json.String); ok do w.product = strings.clone(v, w.alloc)
 	if _, e := web_call(w, "Target.setAutoAttach", `{"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true}`); e != "" do return e
 	if _, e := web_call(w, "Target.createTarget", `{"url":"about:blank"}`); e != "" do return e
