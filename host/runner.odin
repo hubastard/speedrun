@@ -2112,7 +2112,7 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
 	if !ok do return {status = .Timeout}, AGENT_LOST
-	note(r, "settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events)
+	note(r, "settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events%s", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events, fmt.tprintf(", JavaScript busy %d ms", res.js_us / 1000) if res.js_us > 0 else "")
 	return res, nil
 }
 

@@ -12,7 +12,8 @@ what is still slow: `dev/TO_IMPROVE.md`.
   at the top of `Agent.kt`): read the screen (`TREE`, `FIND`, `SCREEN` for all windows), act
   (`TAP`, `KEY`, `SWIPE`, `TYPE`, `ERASE`, `PRESS`), wait (`SETTLE`, `MARK`), plus `SHELL` and
   `SCREENSHOT`. Settle detection watches window switches, the active
-  window's frames and accessibility events, then confirms with a main-thread idle probe.
+  window's frames and accessibility events, then confirms with a main-thread idle probe
+  (and, in a React Native app, an idle JavaScript thread: `JsThread.kt`).
   Reads go through the connection's node cache, which accessibility events keep current:
   a read refreshes the root and the ~50 nodes fetched with it, and serves the others from
   the cache. Compose sends no events to a UiAutomation client (only while an accessibility
@@ -152,7 +153,7 @@ what is still slow: `dev/TO_IMPROVE.md`.
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.
 - `bench/app` — Speedrun Bench, a React Native app made to be tested (with a screen in Jetpack
-  Compose and SwiftUI), and its 20 flows: the
+  Compose and SwiftUI), and its 21 flows: the
   regression suite (every command and selector, on Android and iOS with the same files) and
   the benchmark against Maestro (`bench/app/bench.sh`; see its README).
 - `bench/settings` — the Settings benchmark, `bench_scenario_android.yaml` and
@@ -894,6 +895,20 @@ Known differences in how, not what:
   SPEEDRUN_DEBUG). Nodes are told apart by kind, id and depth (and order), not their text,
   so a counter stays one node. Each of those taps 1.4 s; the flow 35 s; the other scenes,
   and screens whose changes end within 500 ms, settle as before.
+- React Native apps: settle also waits for the app's JavaScript thread to go idle (busy =
+  it ran more than 40% of the last 40 ms), 2 s at most (an app whose JavaScript stays that
+  busy is not waited for again until it has been seen idle). The tree shows the next screen
+  as soon as JavaScript commits it, but React Navigation's JavaScript stack before version 7
+  keeps the closing card mounted and touchable (Android: a view at opacity 0 takes touches)
+  until its animation's end reaches JavaScript, and the screen under it ignores touches
+  until then: with JavaScript busy (a debug bundle on a CI runner), the next tap landed on
+  the invisible card's row (Android) or nowhere (iOS), and `inputText` typed into nothing.
+  The bench app's Transitions screen and `transitions.yaml` reproduce it (800 ms of
+  JavaScript after the choice). Android reads the thread's `schedstat` in `/proc` (thread
+  `mqt_js`, `mqt_v_js` with the new architecture; only the shell agent can see the app's
+  process), iOS libproc's thread info (`com.facebook.react.JavaScript`, or
+  `.runtime.JavaScript`; a simulator's apps are processes of the Mac): `JsThread.kt`, and
+  `JsThread` in `Settle.swift`. Other apps have no such thread and settle as before.
 - `SPEEDRUN_CONDITION_TIMEOUT_MS` replaces the 7 s of a `when:` check (not of an
   assertion or a lookup): flows that dismiss popups "if they show" after every action
   otherwise wait 7 s after each. A condition's own `timeout` (a field Maestro does not

@@ -22,6 +22,8 @@ final class Screen {
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     private var foregroundID = ""
     private var foreground: XCUIApplication?
+    /// The foreground app's process id, as foregroundApp() last found it.
+    var foregroundPID: Int32? { foregroundID.isEmpty ? nil : Private.activePIDs[foregroundID] }
     /// Signature of the foreground app's last snapshot.
     private(set) var lastSignature: Int?
     /// The signature SETTLE ended on: a read that differs (the screen changed after the settle,

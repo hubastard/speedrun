@@ -1238,6 +1238,7 @@ web_settle :: proc(w: ^Web, quiet, no_change, timeout: i32, b: ^[dynamic]byte) {
 	wr_u32(b, 0)
 	wr_u32(b, 0)
 	wr_u32(b, 0)
+	wr_u32(b, 0)
 }
 
 // Opens `url` in the driven page; returns once the browser has its response (the document

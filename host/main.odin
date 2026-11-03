@@ -113,6 +113,7 @@ Settle_Result :: struct {
 	probes:       u32, // main-thread probes made
 	probe_max_us: u32, // slowest probe (large = app main thread was busy)
 	events:       u32, // accessibility events from the active window observed
+	js_us:        u32, // how long a busy JavaScript thread (React Native) held it off
 }
 
 // Device-side injection route (the byte that used to be the fast_inject flag; 0/1 unchanged).
@@ -543,6 +544,7 @@ op_settle :: proc(c: ^Conn, quiet_ms, no_change_ms, timeout_ms: i32) -> (res: Se
 	res.probes = rd_u32(&r)
 	res.probe_max_us = rd_u32(&r)
 	res.events = rd_u32(&r)
+	res.js_us = rd_u32(&r)
 	return res, r.ok
 }
 

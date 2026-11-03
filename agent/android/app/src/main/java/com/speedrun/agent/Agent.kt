@@ -129,12 +129,13 @@ internal object AgentLog {
  *   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms
  *                                            -> u8 status, u32 ui_done_us, u32 waited_us,
  *                                               u8 method, u32 frames, u32 probes, u32 probe_max_us,
- *                                               u32 events
+ *                                               u32 events, u32 js_us
  *        status: 0 = UI changed then went quiet, 1 = nothing changed, 2 = timeout
  *        method: 0 = window switches, frame stats and the active window's accessibility
  *                events, plus the idle probe; 1 = accessibility-event fallback; 3 = either,
  *                then the tree with an endless animation left out (Restless)
- *        frames/events = change signals seen of each kind
+ *        frames/events = change signals seen of each kind; js_us = how long a busy JavaScript
+ *        thread held it off (4. below)
  *        times are measured from the last action (TAP, KEY, SWIPE, TYPE, ERASE, PRESS, MARK).
  *
  * Settle (method 0): the UI is settled when
@@ -143,7 +144,9 @@ internal object AgentLog {
  *      accessibility event for quiet_ms, or for EVENT_QUIET_MS after an in-place change
  *      (no window switch) last seen as an event, and
  *   3. an accessibility round trip to the app (served on its main thread) returns fast,
- *      which means the main thread is idle and not about to produce more frames.
+ *      which means the main thread is idle and not about to produce more frames, and
+ *   4. in a React Native app, its JavaScript thread is idle too (JsThread), for at most
+ *      JS_WAIT_MAX_NS: the tree can show a screen that does not take touches yet.
  * An animation that never ends (an Animated loop, a ticker, a counter) draws frames forever:
  * once changes have gone on for RESTLESS_START_MS, the tree is read too, and the UI is settled
  * (method 3) when it holds still but for a few elements that change on every read (Restless),
@@ -193,6 +196,11 @@ private const val RESTLESS_READ_NS = 100_000_000L
 private const val RESTLESS_NS = 500_000_000L
 private const val RESTLESS_PAUSE_NS = 600_000_000L
 
+// A busy JavaScript thread (React Native, see JsThread) holds a settle off for this long at
+// most. An app whose JavaScript stays that busy is then not waited for again until it has been
+// seen idle once.
+private const val JS_WAIT_MAX_NS = 2_000_000_000L
+
 private const val SHELL_UID = 2000 // android.os.Process.SHELL_UID
 
 // A Toast is its own window, which the windows list leaves out (it takes no touches); its text
@@ -225,6 +233,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private val tree = DataOutputStream(treeBuf)
     private val bounds = Rect()
     private val mockLocation = MockLocation()
+    // The React Native app in front's JavaScript thread (see JsThread), and that app's package,
+    // as the last main-thread probe found it.
+    private val js = JsThread()
+    @Volatile private var frontPackage: String? = null
 
     // The latest Toast's texts, and until when it shows (elapsedRealtimeNanos).
     @Volatile private var toastTexts: List<String> = emptyList()
@@ -877,7 +889,9 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private fun probeMainThread(): Long {
         val t = SystemClock.elapsedRealtimeNanos()
         try {
-            ua.rootInActiveWindow?.refresh() // refresh() bypasses the client-side node cache
+            val root = ua.rootInActiveWindow
+            root?.refresh() // refresh() bypasses the client-side node cache
+            frontPackage = root?.packageName?.toString()
         } catch (e: Exception) {
             // Window went away mid-probe: treat as busy.
             return Long.MAX_VALUE / 1000
@@ -1024,6 +1038,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         var restlessFrom = start    // changes since: the action, or the last window switch
         var nextTreeRead = 0L
         var steadyReads = 0         // tree reads in a row that agreed with the one before
+        var jsFrom = 0L             // when a busy JavaScript thread first held this settle off
+        var jsLast = 0L             // and last did
 
         fun poll(): Boolean { // returns true if something changed
             val w = activeWindowId()
@@ -1063,25 +1079,46 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             return false
         }
 
+        fun jsBusy(now: Long): Boolean {
+            if (jsFrom != 0L && now - jsFrom >= JS_WAIT_MAX_NS) return false
+            js.follow(frontPackage, now)
+            if (!js.busy(now)) { js.pegged = false; return false }
+            if (js.pegged) return false
+            if (jsFrom == 0L) jsFrom = now
+            else if (now - jsFrom >= JS_WAIT_MAX_NS) { js.pegged = true; return false }
+            jsLast = now
+            return true
+        }
+
         while (true) {
             now = SystemClock.elapsedRealtimeNanos()
             if (poll()) { changed = true; last = now }
+            js.sample(now)
 
             val quietReached = changed && now - last >= if (lastWasEvent && !switched) eventQuiet else quiet
             val noChangeReached = !changed && now - start >= noChange
             if (quietReached || noChangeReached) {
-                val p = probeMainThread()
-                probes++
-                probeMaxUs = maxOf(probeMaxUs, p)
-                now = SystemClock.elapsedRealtimeNanos()
-                val busy = p > busyUs
-                if (poll() || busy) {
-                    // App was working or drew during the probe: not settled, keep watching.
-                    changed = true
-                    last = now
+                if (jsFrom != 0L && jsBusy(now)) {
+                    // JavaScript still busy (no need to probe again): wait for it, then a quiet.
+                    if (changed) last = now
                 } else {
-                    status = if (changed) 0 else 1
-                    break
+                    val p = probeMainThread()
+                    probes++
+                    probeMaxUs = maxOf(probeMaxUs, p)
+                    now = SystemClock.elapsedRealtimeNanos()
+                    val busy = p > busyUs
+                    if (poll() || busy) {
+                        // App was working or drew during the probe: not settled, keep watching.
+                        changed = true
+                        last = now
+                    } else if (jsBusy(now)) {
+                        // The UI holds still, but React Native's JavaScript is still at work: the
+                        // screen the tree shows may not take touches yet (see JsThread).
+                        if (changed) last = now
+                    } else {
+                        status = if (changed) 0 else 1
+                        break
+                    }
                 }
             } else if (changed && now - restlessFrom >= RESTLESS_START_NS && now >= nextTreeRead) {
                 // Still changing: maybe an animation that never ends (see Settle).
@@ -1092,7 +1129,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                     probes++
                     probeMaxUs = maxOf(probeMaxUs, p)
                     now = SystemClock.elapsedRealtimeNanos()
-                    if (p <= busyUs && activeWindowId() == window) {
+                    if (p <= busyUs && activeWindowId() == window && !jsBusy(now)) {
                         status = 0
                         method = 3
                         last = now
@@ -1113,6 +1150,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(probes)
         body.writeInt(minOf(probeMaxUs, Int.MAX_VALUE.toLong()).toInt())
         body.writeInt(events)
+        body.writeInt(if (jsFrom != 0L) ((jsLast - jsFrom) / 1000).toInt() else 0)
     }
 
     /** Fallback: Android coalesces content-change events (~100 ms), hence the larger window. */
@@ -1157,6 +1195,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(if (last > start) ((last - start) / 1000).toInt() else 0)
         body.writeInt(((now - start) / 1000).toInt())
         body.writeByte(method)
+        body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)

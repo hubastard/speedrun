@@ -393,11 +393,16 @@ enum Private {
         }
         let pidSel = NSSelectorFromString("processIdentifier")
         typealias Pid = @convention(c) (NSObject, Selector) -> Int32
-        return elements.compactMap { element -> String? in
+        var pids: [String: Int32] = [:]
+        let ids = elements.compactMap { element -> String? in
             guard element.responds(to: pidSel) else { return nil }
             let pid = unsafeBitCast(element.method(for: pidSel), to: Pid.self)(element, pidSel)
-            return bundleID(pid: pid)
+            let id = bundleID(pid: pid)
+            if let id { pids[id] = pid }
+            return id
         }
+        activePIDs = pids
+        return ids
     }
 
     /// The process id XCTest has for an app (XCUIApplication's processID), nil when this Xcode
@@ -430,6 +435,8 @@ enum Private {
     }
 
     private static var bundleIDs: [Int32: String] = [:]
+    /// The process id of each app activeBundleIDs() last listed, by bundle id.
+    private(set) static var activePIDs: [String: Int32] = [:]
 
     private static func bundleID(pid: Int32) -> String? {
         if let id = bundleIDs[pid] { return id }
