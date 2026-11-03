@@ -72,8 +72,10 @@ else
 fi
 
 echo "== Building speedrun (Odin)"
-# The version --version prints: SPEEDRUN_VERSION, else the git tag or commit.
-VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+# The version --version prints: SPEEDRUN_VERSION, else the git tag (v0.4.0, v0.4.0-3-gabc1234),
+# else dev-<commit>: a bare commit can read as a number to Odin's -define (4655e79 is 4655e79,
+# a float), and the build then fails.
+VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --dirty 2>/dev/null || echo "dev-$(git rev-parse --short HEAD 2>/dev/null)")}"
 # Odin takes no empty -define: without the iOS agent, IOS_AGENT_ID keeps its default ("").
 ios_define=()
 [ -n "$IOS_AGENT_ID" ] && ios_define=(-define:IOS_AGENT_ID="$IOS_AGENT_ID")

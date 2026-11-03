@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export SPEEDRUN_VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+export SPEEDRUN_VERSION="${SPEEDRUN_VERSION:-$(git describe --tags --dirty 2>/dev/null || echo "dev-$(git rev-parse --short HEAD 2>/dev/null)")}"
 [ "${SPEEDRUN_NO_ANDROID:-}" != 1 ] || { echo "package.sh: a release needs the Android agent; unset SPEEDRUN_NO_ANDROID"; exit 1; }
 [ "${SPEEDRUN_NO_IOS:-}" != 1 ] || { echo "package.sh: a release needs the iOS agent; unset SPEEDRUN_NO_IOS"; exit 1; }
 ./build.sh
