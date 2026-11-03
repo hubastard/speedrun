@@ -1,0 +1,27 @@
+Running on Firefox/159.0.1, headless 1280x720
+ > Flow Add, complete, filter and clear todos
+Launch app "http://127.0.0.1:8791/"... COMPLETED  107 ms
+Tap on "What needs to be done?"... COMPLETED  222 ms
+Input text Buy milk... COMPLETED  35 ms
+Press Enter key... COMPLETED  26 ms
+Input text Walk the dog... COMPLETED  39 ms
+Press Enter key... COMPLETED  18 ms
+Input text Write report... COMPLETED  34 ms
+Press Enter key... COMPLETED  16 ms
+Input text Call mom... COMPLETED  18 ms
+Press Enter key... COMPLETED  38 ms
+Input text Book flights... COMPLETED  262 ms
+Press Enter key... COMPLETED  66 ms
+Tap on CSS: .todo-list li:nth-child(2) .toggle... COMPLETED  111 ms
+Assert that ".*items left" is visible... COMPLETED  13 ms
+Tap on "Active"... COMPLETED  96 ms
+Assert that "Walk the dog" is not visible... COMPLETED  7 ms
+Tap on "Completed"... COMPLETED  76 ms
+Assert that "Walk the dog" is visible... COMPLETED  5 ms
+Assert that "Buy milk" is not visible... COMPLETED  0 ms
+Tap on "Clear completed"... COMPLETED  90 ms
+Tap on "All"... COMPLETED  38 ms
+Assert that ".*items left" is visible... COMPLETED  4 ms
+Assert that "Walk the dog" is not visible... COMPLETED  0 ms
+
+✅ Flow passed in 1.3 s · 23 commands · 9 hierarchy reads, 7.1 ms each

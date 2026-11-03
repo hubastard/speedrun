@@ -36,7 +36,8 @@ appId: com.example.app
 - **Fast.** A tap that opens a screen takes about 0.3 s, and a run starts in 1–3 s. The same
   user journey takes 20 s with Speedrun on Android, 59 s with Appium, 66 s with
   maestro-runner and 127 s with Maestro. In the browser, Cypress's own demo app's tests take
-  4.2 s with Speedrun, 5.9 s with Playwright and 11.3 s with Cypress ([benchmark](#benchmark)).
+  4.2 s with Speedrun, 5.9 s with Playwright and 11.3 s with Cypress, and Speedrun leads in
+  Firefox too ([benchmark](#benchmark)).
 - **Waits for the app, not the clock.** Each step starts the moment the app has finished
   changing: no sleeps, no comparing screenshots. Screens that never stop moving (spinners,
   tickers, carousels) don't hold it up.
@@ -201,8 +202,13 @@ a payments app in React and Material UI:
 | Maestro 2.11 | failed | 3/6 passed in 30 min, then stopped |
 
 Every tool ran a headless Chromium browser (Cypress its default, Electron), at the same window
-size, one test at a time, with its default settings. Playwright's `fill` puts a field's text in at once,
-while Speedrun types it a key at a time.
+size, one test at a time, with its default settings. Playwright's `fill` puts a field's text in
+at once, while Speedrun types it a key at a time.
+
+**In Firefox too**, on a GitHub Actions Linux runner (slower than the Mac: compare within a
+row), every tool in its own Firefox build: TodoMVC took 3.0 s with Speedrun, 3.9 s with
+Playwright and 9.0 s with Cypress, and the Real World App 11.5 s, 15.2 s and 21.8 s
+([the Linux results](bench/web#on-linux-in-chrome-and-firefox), Chrome's included).
 
 Measured on an Apple M1 Pro with an Android 17 emulator and an iPhone 17 Pro simulator (iOS
 26.2), in October 2026 (the web: November 2026), each tool as it ships. On iOS that means

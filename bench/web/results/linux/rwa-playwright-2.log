@@ -1,0 +1,12 @@
+
+Running 7 tests using 1 worker
+
+  ✓  1 [chromium] › rwa/playwright/tests/rwa.spec.ts:15:5 › Sign in and out (871ms)
+  ✓  2 [chromium] › rwa/playwright/tests/rwa.spec.ts:22:5 › Sign up, sign in, onboarding (1.7s)
+  ✓  3 [chromium] › rwa/playwright/tests/rwa.spec.ts:48:5 › Send a payment (1.2s)
+  ✓  4 [chromium] › rwa/playwright/tests/rwa.spec.ts:63:5 › Request money (1.1s)
+  ✓  5 [chromium] › rwa/playwright/tests/rwa.spec.ts:76:5 › Like and comment on a transaction (1.1s)
+  ✓  6 [chromium] › rwa/playwright/tests/rwa.spec.ts:91:5 › Edit user settings (944ms)
+  ✓  7 [chromium] › rwa/playwright/tests/rwa.spec.ts:102:5 › Add a bank account (939ms)
+
+  7 passed (8.5s)

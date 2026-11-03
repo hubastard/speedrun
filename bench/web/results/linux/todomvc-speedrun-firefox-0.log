@@ -1,0 +1,28 @@
+Downloading Firefox 159.0.1 into /home/runner/.cache/speedrun/firefox...
+Running on Firefox/159.0.1, headless 1280x720
+ > Flow Add, complete, filter and clear todos
+Launch app "http://127.0.0.1:8791/"... COMPLETED  103 ms
+Tap on "What needs to be done?"... COMPLETED  184 ms
+Input text Buy milk... COMPLETED  82 ms
+Press Enter key... COMPLETED  186 ms
+Input text Walk the dog... COMPLETED  224 ms
+Press Enter key... COMPLETED  40 ms
+Input text Write report... COMPLETED  133 ms
+Press Enter key... COMPLETED  33 ms
+Input text Call mom... COMPLETED  101 ms
+Press Enter key... COMPLETED  33 ms
+Input text Book flights... COMPLETED  22 ms
+Press Enter key... COMPLETED  14 ms
+Tap on CSS: .todo-list li:nth-child(2) .toggle... COMPLETED  17 ms
+Assert that ".*items left" is visible... COMPLETED  3 ms
+Tap on "Active"... COMPLETED  21 ms
+Assert that "Walk the dog" is not visible... COMPLETED  2 ms
+Tap on "Completed"... COMPLETED  12 ms
+Assert that "Walk the dog" is visible... COMPLETED  2 ms
+Assert that "Buy milk" is not visible... COMPLETED  0 ms
+Tap on "Clear completed"... COMPLETED  10 ms
+Tap on "All"... COMPLETED  16 ms
+Assert that ".*items left" is visible... COMPLETED  2 ms
+Assert that "Walk the dog" is not visible... COMPLETED  0 ms
+
+✅ Flow passed in 1.2 s · 23 commands · 9 hierarchy reads, 2.6 ms each
