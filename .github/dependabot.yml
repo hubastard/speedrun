@@ -1,0 +1,20 @@
+# Dependabot keeps the CI's actions and the Android agent's build current. Security updates
+# (a pull request for a dependency with a known vulnerability) cover every ecosystem in the
+# repository, npm included. The benchmarks' npm packages get no routine updates: their tools'
+# versions are pinned so the numbers can be reproduced. The code built into speedrun
+# (QuickJS-ng, stb_image, datafaker; NOTICE) is vendored, which Dependabot cannot see: watch
+# their releases.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: gradle
+    directory: /agent/android
+    schedule:
+      interval: monthly
