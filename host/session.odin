@@ -23,7 +23,8 @@ import "core:unicode"
 
 SESSION_USAGE :: `usage:
   speedrun session start --app <appId or URL> [--platform android|ios|web] [--device <id>]
-                         [--headless] [--screen-size WxH] [-e KEY=VALUE]... [--keep-animations]
+                         [--headless] [--screen-size WxH] [-e KEY=VALUE]...
+                         [--animations off|fast|normal|default]
   speedrun look [--shot]          the screen, a line per element, each with a ref (@7)
   speedrun do '<command>'...      flow commands, as written in a flow file (one per argument);
                                   @7 stands for that element's selector
@@ -173,13 +174,9 @@ run_look_cli :: proc(args: []string) -> int {
 session_start :: proc(args: []string) -> int {
 	app, platform, device := "", "", ""
 	env: [dynamic]string
-	animations := false
+	anim := ""
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
-		if a == "--keep-animations" {
-			animations = true
-			continue
-		}
 		value := args[i + 1] if i + 1 < len(args) else ""
 		switch {
 		case a == "--app" && value != "":
@@ -190,6 +187,8 @@ session_start :: proc(args: []string) -> int {
 			device = value
 		case (a == "-e" || a == "--env") && value != "":
 			append(&env, value)
+		case a == "--animations" && value != "":
+			anim = value
 		case a == "--headless":
 			web_headless = true
 			continue
@@ -208,15 +207,16 @@ session_start :: proc(args: []string) -> int {
 		}
 		i += 1
 	}
-	code, text := start_session(app, platform, device, env[:], animations)
+	code, text := start_session(app, platform, device, env[:], anim)
 	if code == 0 do fmt.println(text)
 	else do fmt.eprintln(text)
 	return code
 }
 
 // Starts the session process and waits until it serves (or says why it did not start).
-start_session :: proc(app, platform, device: string, env: []string, keep_device_animations := false) -> (code: int, text: string) {
+start_session :: proc(app, platform, device: string, env: []string, anim := "") -> (code: int, text: string) {
 	if app == "" do return 2, "A session needs the app's id (--app): the app its commands are for (launchApp's)."
+	if _, valid := parse_animations(anim); anim != "" && !valid do return 2, ANIMATIONS_USAGE
 	// A web page's URL: the browser.
 	platform := platform
 	if platform == "" && strings.contains(app, "://") do platform = "web"
@@ -244,7 +244,7 @@ start_session :: proc(app, platform, device: string, env: []string, keep_device_
 	if web_headless do append(&cmd, "--headless", "1")
 	if web_size != {} do append(&cmd, "--screen-size", fmt.tprintf("%dx%d", web_size[0], web_size[1]))
 	for e in env do append(&cmd, "-e", e)
-	if keep_device_animations do append(&cmd, "--keep-animations")
+	if anim != "" do append(&cmd, "--animations", anim)
 	log := fmt.tprintf("%s/session.log", dir)
 	f, ferr := os.open(log, {.Write, .Create, .Trunc}, {.Read_User, .Write_User})
 	if ferr != nil do return 1, fmt.tprintf("could not create %s: %v", log, ferr)
@@ -338,16 +338,13 @@ session_serve :: proc(args: []string) -> int {
 	app, platform, device := "", "", ""
 	env: [dynamic]string
 	for i := 0; i < len(args); i += 1 {
-		if args[i] == "--keep-animations" {
-			keep_animations = true
-			continue
-		}
 		if i + 1 >= len(args) do break
 		switch args[i] {
 		case "--app":      app = args[i + 1]
 		case "--platform": platform = args[i + 1]
 		case "--device":   device = args[i + 1]
 		case "-e":         append(&env, args[i + 1])
+		case "--animations": animations, _ = parse_animations(args[i + 1])
 		case "--headless": web_headless = true
 		case "--screen-size":
 			ws, _, hs := strings.partition(args[i + 1], "x")

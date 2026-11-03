@@ -205,11 +205,11 @@ size, one test at a time, with its default settings. Playwright's `fill` puts a 
 while Speedrun types it a key at a time.
 
 Measured on an Apple M1 Pro with an Android 17 emulator and an iPhone 17 Pro simulator (iOS
-26.2), in October 2026 (the web: November 2026), each tool as it ships. On iOS that means Speedrun runs the app's
-animations 10x faster, as it always does, and the other tools at normal speed; with the agent
-tools all at normal speed, on iOS Speedrun took 11.3 s, agent-device 12.5 s and Argent 11.8 s.
-Speedrun's iOS suite and journey runs also had the simulator's Reduce Motion on
-(`SPEEDRUN_REDUCE_MOTION=1`; the journey took 26.6 s without it).
+26.2), in October 2026 (the web: November 2026), each tool as it ships. On iOS that means
+Speedrun runs the app's animations 10x faster, as it does by default, and the other tools at
+normal speed; with the agent tools all at normal speed, on iOS Speedrun took 11.3 s,
+agent-device 12.5 s and Argent 11.8 s. Speedrun's iOS suite and journey runs also had the
+simulator's Reduce Motion on (`--animations off`; the journey took 26.6 s without it).
 
 ## How it works
 

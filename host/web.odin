@@ -270,16 +270,29 @@ web_page_attached :: proc(w: ^Web, session, target: string) {
 	// Screenshots in the page's own units, as the hierarchy's bounds (a Retina display's
 	// window draws at 2x).
 	if !w.headless do web_send(w, "Emulation.setDeviceMetricsOverride", `{"width":0,"height":0,"deviceScaleFactor":1,"mobile":false}`, s)
-	if dark, set := w.dark.?; set do web_send(w, "Emulation.setEmulatedMedia", web_scheme(dark), s)
+	if media := web_media(w); media != "" do web_send(w, "Emulation.setEmulatedMedia", media, s)
+	// --animations: the page's animations (CSS, Web Animations) sped up, its timers not.
+	#partial switch animations_for(.Web) {
+	case .Fast: web_send(w, "Animation.setPlaybackRate", `{"playbackRate":10}`, s)
+	case .Off:  web_send(w, "Animation.setPlaybackRate", `{"playbackRate":100}`, s)
+	}
 	if geo, set := w.geo.?; set do web_send(w, "Emulation.setGeolocationOverride", fmt.tprintf(`{{"latitude":%f,"longitude":%f,"accuracy":1}}`, geo[0], geo[1]), s)
 	web_send(w, "Runtime.runIfWaitingForDebugger", "{}", s)
 	append(&w.pages, Web_Page{s, strings.clone(target, w.alloc)})
 	w.navigating = false
 }
 
+// The media features a page is told (one call sets them all): the color scheme a flow set,
+// and reduced motion with --animations off. Empty: none.
 @(private = "file")
-web_scheme :: proc(dark: bool) -> string {
-	return fmt.tprintf(`{{"features":[{{"name":"prefers-color-scheme","value":"%s"}}]}}`, "dark" if dark else "light")
+web_media :: proc(w: ^Web) -> string {
+	features := make([dynamic]string, context.temp_allocator)
+	if dark, set := w.dark.?; set {
+		append(&features, fmt.tprintf(`{{"name":"prefers-color-scheme","value":"%s"}}`, "dark" if dark else "light"))
+	}
+	if animations_for(.Web) == .Off do append(&features, `{"name":"prefers-reduced-motion","value":"reduce"}`)
+	if len(features) == 0 do return ""
+	return fmt.tprintf(`{{"features":[%s]}}`, strings.join(features[:], ",", context.temp_allocator))
 }
 
 // The driven page.
@@ -742,7 +755,7 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 		if !ok do return .Lost
 		if set == 1 || set == 2 {
 			w.dark = set == 2
-			for p in w.pages do web_call(w, "Emulation.setEmulatedMedia", web_scheme(set == 2), p.session)
+			for p in w.pages do web_call(w, "Emulation.setEmulatedMedia", web_media(w), p.session)
 		}
 		v, _ := web_eval(w, "matchMedia('(prefers-color-scheme: dark)').matches", false)
 		dark, _ := v.(json.Boolean)

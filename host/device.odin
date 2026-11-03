@@ -110,15 +110,61 @@ Device :: struct {
 	motion_was: Maybe(bool), // iOS: as it was before this run changed it, restored by device_stop
 	motion_writer:  os.Process, // iOS: the `defaults write` setting it, while motion_writing
 	motion_writing: bool,
-	scales_was:     string, // Android: the three animation scales as found (device_prepare), "" when already off
+	scales_was:     string, // Android: the three animation scales as found (device_prepare), "" when as wanted
 }
 
 // The device adb talks to (--device); empty: adb's default (ANDROID_SERIAL, or the only one).
 adb_serial: string
 
-// --keep-animations: the device's animations left as they are (Android's animation scales
-// untouched, iOS apps at UIKit's normal speed, Reduce Motion untouched).
-keep_animations: bool
+// --animations: how the device runs animations during a run or a session. Each platform has
+// its default: Android's off, iOS apps' 10x faster, the web's as pages run them.
+//   off:    Android's animation scales at 0; iOS: Reduce Motion on, and 10x faster; the web:
+//           prefers-reduced-motion, and the page's animations 100x faster.
+//   fast:   Android's scales at 0.1; iOS apps 10x faster; the web's animations 10x faster.
+//   normal: Android's scales at 1; iOS apps at UIKit's own speed; the web as pages run it.
+// Android's scales and iOS's Reduce Motion are put back as they were found at the end.
+// default: each platform's default, as without --animations.
+Animations :: enum u8 {
+	Default,
+	Off,
+	Fast,
+	Normal,
+}
+
+animations: Animations
+
+ANIMATIONS_USAGE :: "--animations takes off, fast, normal or default"
+
+parse_animations :: proc(s: string) -> (a: Animations, ok: bool) {
+	switch s {
+	case "off":    return .Off, true
+	case "fast":   return .Fast, true
+	case "normal": return .Normal, true
+	case "default": return .Default, true
+	}
+	return .Default, false
+}
+
+animations_name :: proc(a: Animations) -> string {
+	switch a {
+	case .Off:     return "off"
+	case .Fast:    return "fast"
+	case .Normal:  return "normal"
+	case .Default:
+	}
+	return "default"
+}
+
+// The animations a platform runs with: --animations, else its default.
+animations_for :: proc(p: Platform) -> Animations {
+	if animations != .Default do return animations
+	switch p {
+	case .Android: return .Off
+	case .IOS:     return .Fast
+	case .Web:     return .Normal
+	}
+	return .Normal
+}
 
 // The device of this run, for the Ctrl-C handler.
 @(private = "file")
@@ -146,22 +192,21 @@ adb :: proc(args: ..string) -> (out: string, ok: bool) {
 @(private = "file")
 ANIMATION_SCALES :: [3]string{"window_animation_scale", "transition_animation_scale", "animator_duration_scale"}
 
-// Leaves the device ready for a UiAutomation client: animations off (as for any UI test, as
-// they were found kept in d.scales_was; left alone with --keep-animations) and no agent of an
-// earlier run left holding the UiAutomation slot. Copies of other agent builds are deleted; present reports whether this
-// build's is already there.
+// Leaves the device ready for a UiAutomation client: the animation scales --animations wants
+// (off by default, as for any UI test; as they were found kept in d.scales_was) and no agent
+// of an earlier run left holding the UiAutomation slot. Copies of other agent builds are
+// deleted; present reports whether this build's is already there.
 device_prepare :: proc(d: ^Device) -> (present: bool, err: string) {
 	if !ANDROID_AGENT {
 		return false, "This speedrun was built for iOS only (SPEEDRUN_NO_ANDROID=1), without its Android agent: build it with ./build.sh."
 	}
-	animations := "" if keep_animations else strings.concatenate({
+	scale := android_scale()
+	script := strings.concatenate({
 		"echo scales $(settings get global window_animation_scale) $(settings get global transition_animation_scale) ",
 		"$(settings get global animator_duration_scale); ",
-		"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; ",
-		"settings put global animator_duration_scale 0; ",
-	}, context.temp_allocator)
-	script := strings.concatenate({
-		animations, STOP_AGENTS, "; ", STOP_MAESTRO_DRIVER, "; ",
+		"settings put global window_animation_scale ", scale, "; settings put global transition_animation_scale ", scale,
+		"; settings put global animator_duration_scale ", scale, "; ",
+		STOP_AGENTS, "; ", STOP_MAESTRO_DRIVER, "; ",
 		"for f in /data/local/tmp/speedrun-agent-*.apk; do ",
 		`[ "$f" = `, device_apk(), ` ] && echo present || rm -f "$f"; done`,
 	}, context.temp_allocator)
@@ -173,16 +218,31 @@ device_prepare :: proc(d: ^Device) -> (present: bool, err: string) {
 	if strings.contains(out, "stopped-maestro") {
 		fmt.eprintln("Stopped Maestro's driver, left running on the device by an earlier Maestro run: it held the UiAutomation slot.")
 	}
-	// "scales 1 1 1" ("null" for one never set). Already all off: nothing to put back. A run
-	// that prepares twice (bench) keeps what the first found.
+	// "scales 1 1 1" ("null" for one never set, which Android reads as 1). Already as wanted:
+	// nothing to put back. A run that prepares twice (bench) keeps what the first found.
 	for line in strings.split_lines(out, context.temp_allocator) {
 		if !strings.has_prefix(line, "scales ") do continue
 		scales := strings.trim_space(line[len("scales "):])
-		if d.scales_was == "" && scales != "0 0 0" && scales != "0.0 0.0 0.0" {
-			d.scales_was = strings.clone(scales)
+		want := strconv.parse_f64(scale) or_else 0
+		as_wanted := true
+		for v in strings.fields(scales, context.temp_allocator) {
+			f, ok := strconv.parse_f64(v)
+			if v == "null" do f, ok = 1, true
+			if !ok || f != want do as_wanted = false
 		}
+		if d.scales_was == "" && !as_wanted do d.scales_was = strings.clone(scales)
 	}
 	return strings.contains(out, "present"), ""
+}
+
+// Android's animation scale for --animations.
+@(private = "file")
+android_scale :: proc() -> string {
+	#partial switch animations_for(.Android) {
+	case .Fast:   return "0.1"
+	case .Normal: return "1"
+	}
+	return "0"
 }
 
 // The shell commands that put the animation scales back as device_prepare found them.

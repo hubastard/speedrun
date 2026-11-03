@@ -61,8 +61,8 @@ Options (the same as maestro test's):
   --headless                 --screen-size <W>x<H>       (web)
 speedrun's own:
   --plain (or --no-ansi)     --timings <file.json>       --port <n>       --instrument
-  --keep-animations          the device's animations as they are (default: Android's off,
-                             iOS apps 10x faster)`
+  --animations off|fast|normal|default    how the device runs animations (default:
+                             Android off, iOS fast, web normal)`
 
 // args: what follows `test`; globals: -p/--device given before `test`.
 run_test_cli :: proc(args: []string, global_platform, global_device: string) -> int {
@@ -88,7 +88,7 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 			case "-e", "--env", "--config", "--format", "--output", "--test-suite-name", "--debug-output",
 			     "--test-output-dir", "--include-tags", "--exclude-tags", "-s", "--shards", "--shard-split",
 			     "--shard-all", "-p", "--platform", "--device", "--udid", "--timings", "--port",
-			     "--shard-worker", "--shard-result",
+			     "--shard-worker", "--shard-result", "--animations",
 			     "--screen-size", "--api-url", "--api-key", "--apple-team-id", "--driver-host-port":
 				return true
 			}
@@ -170,8 +170,13 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 			o.port, o.port_given = p, true
 		case "--instrument":
 			o.instrument = true
-		case "--keep-animations":
-			keep_animations = true
+		case "--animations":
+			a, valid := parse_animations(value)
+			if !valid {
+				fmt.eprintln(ANIMATIONS_USAGE)
+				return 2
+			}
+			animations = a
 		case "--shard-worker":
 			o.worker_shard = strconv.parse_int(value) or_else -1
 		case "--shard-result":
@@ -593,7 +598,7 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 		if o.instrument do append(&args, "--instrument")
 		if o.headless do append(&args, "--headless")
 		if o.screen_size != "" do append(&args, "--screen-size", o.screen_size)
-		if keep_animations do append(&args, "--keep-animations")
+		if animations != .Default do append(&args, "--animations", animations_name(animations))
 		for e in o.env do append(&args, "-e", fmt.aprintf("%s=%s", e.key, e.value))
 		append(&args, ..chunks[k][:])
 		p, err := os.process_start({command = args[:], stdout = os.stdout, stderr = os.stderr})

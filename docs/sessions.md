@@ -21,8 +21,9 @@ A website works the same way, in Chrome: give its URL as the app
 shows what the agent does). The MCP tool starts the browser headless unless told otherwise.
 
 As in a test run, the session turns Android's animations off and runs iOS apps' 10x faster,
-and `session stop` puts the device back as it found it. `--keep-animations` on `session
-start` leaves them as they are, for a device you also use by hand while a session runs.
+and `session stop` puts the device back as it found it. `--animations normal` on `session
+start` keeps every platform at 1x, for a device you also use by hand while a session runs
+(the other values: [`--animations`](cli.md#speedruns-own-options)).
 
 ## Reading the screen
 

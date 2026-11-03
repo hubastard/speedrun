@@ -66,13 +66,14 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   element is still there, unchanged, on the same screen, Speedrun taps it again where it is
   now, once. `retryTapIfNoChange: false` on the command turns that off: exactly one tap.
 - **Android animations are turned off** for every run and session, as is usual for UI tests,
-  and put back as they were when it ends. `--keep-animations` leaves them as they are.
+  and put back as they were when it ends.
 - **iOS apps started by `launchApp` animate 10x faster.** This speeds up screen transitions
   without changing what the flow sees. A flow can pass the launch argument
-  `UIAnimationDragCoefficient: 1` to keep normal speed, and `--keep-animations` keeps it for
-  every app. With `SPEEDRUN_REDUCE_MOTION=1`, Speedrun also turns the simulator's Reduce
-  Motion on for the run (React Native's animations end at once) and back as it was
-  afterwards.
+  `UIAnimationDragCoefficient: 1` to keep normal speed.
+- **`--animations off|fast|normal|default`** changes both, on every platform: `normal` runs
+  everything at 1x, and `off` also turns the iOS simulator's Reduce Motion on for the run
+  (React Native's animations end at once) and back as it was afterwards
+  ([details](cli.md#speedruns-own-options)).
 - **iOS `clearState` empties the app's folders instead of reinstalling it**: ~0.7 s faster,
   and the app starts faster after it. It resets what reinstalling does: the app's files and
   settings, its app groups' and extensions', its permissions and location access. What a

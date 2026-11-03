@@ -36,7 +36,7 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 | `--timings <file.json>` | Write each command's timing to a JSON file. |
 | `--port <n>` | The agent's port (default 7777 on Android, on the device: speedrun forwards a free port of this machine to it, so runs on several devices at once never share one; 7778 on iOS). |
 | `--instrument` | Android: run the agent as an instrumentation (a fallback; ~60 ms slower per action). |
-| `--keep-animations` | Leave the device's animations as they are: Android's are not turned off, and iOS apps run them at normal speed. By default Speedrun turns Android's off for the run (and back on after it) and runs iOS apps' 10x faster. |
+| `--animations off\|fast\|normal\|default` | How the device runs animations during the run. `off`: Android's animation scales at 0, the iOS simulator's Reduce Motion on (React Native's animations end at once) and UIKit's 10x faster, the web page's `prefers-reduced-motion` and its animations 100x faster. `fast`: Android's scales at 0.1, UIKit's 10x faster, the web page's animations 10x faster. `normal`: every platform at 1x. `default` (or no option): `off` on Android, `fast` on iOS, `normal` on the web. Android's scales and iOS's Reduce Motion are put back as they were found when the run ends. |
 
 ## Other commands
 
@@ -88,7 +88,6 @@ speedrun mcp                    # the session's verbs as an MCP server, on stdin
 | `SPEEDRUN_NO_UPDATE_CHECK=1` | Do not ask GitHub whether a newer release is out. |
 | `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
-| `SPEEDRUN_REDUCE_MOTION=1` | iOS: turn the simulator's Reduce Motion on for the run (then back as it was). React Native's animations end at once: Speedrun Bench's suite runs 2% faster (14% before v0.2.1's lookup fixes). Some apps lay themselves out differently with it. |
 | `SPEEDRUN_CLEAR_STATE_REINSTALL=1` | iOS: `clearState` reinstalls the app, as Maestro does, instead of emptying its folders (~0.7 s slower). |
 | `SPEEDRUN_CONDITION_TIMEOUT_MS` | How long a `when: visible` (or `notVisible`) waits for its element (default 7000, as Maestro); a condition's own `timeout` takes precedence. See [Conditions take up to 7 s](maestro-compatibility.md#conditions-take-up-to-7-s). |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |

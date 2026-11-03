@@ -183,7 +183,7 @@ ios_launch_arguments :: proc(args: []Launch_Arg) -> []string {
 	return out[:]
 }
 
-// iOS apps run their animations 10x faster, as Android's are turned off (device.odin):
+// iOS apps run their animations 10x faster (--animations fast, the default, and off; device.odin):
 // UIKit's UIAnimationDragCoefficient, which the simulator's "Slow Animations" sets to 10.
 // UIKit reads it from the app's defaults (this launch argument, unless the flow passes its
 // own) once the UIKit/UIPreferences feature flag is on (ios_launch_env).
@@ -191,13 +191,13 @@ ios_launch_arguments :: proc(args: []Launch_Arg) -> []string {
 ios_animation_args := [2]string{"-UIAnimationDragCoefficient", "0.1"}
 
 ios_animation_arguments :: proc(args: []Launch_Arg) -> []string {
-	if keep_animations do return nil
+	if animations_for(.IOS) == .Normal do return nil
 	for a in args do if strings.trim_left(a.key, "-") == "UIAnimationDragCoefficient" do return nil
 	return ios_animation_args[:]
 }
 
-// SPEEDRUN_REDUCE_MOTION=1: Reduce Motion on the simulator while it runs flows, React Native's
-// and Reanimated's animations ending at once. Opt-in: an app may lay itself out differently
+// --animations off: Reduce Motion on the simulator while it runs flows, React Native's and
+// Reanimated's animations ending at once. Opt-in: an app may lay itself out differently
 // with it (a banner over other content in one app, not without it). A flow that sets
 // UIAnimationDragCoefficient keeps the animations as they were, Reduce Motion too. The app
 // reads it when it starts: set before each launch, only when it differs. device_stop puts it
@@ -207,7 +207,7 @@ ios_animation_arguments :: proc(args: []Launch_Arg) -> []string {
 // simctl: 450 ms), and written in the background (simctl spawn, ~340 ms) while launchApp
 // clears the app and sets its permissions: ios_motion_wait before the launch.
 ios_motion_start :: proc(d: ^Device, args: []Launch_Arg) {
-	if keep_animations || os.get_env("SPEEDRUN_REDUCE_MOTION", context.temp_allocator) != "1" do return
+	if animations_for(.IOS) != .Off do return
 	now, known := d.motion.?
 	if !known do now = ios_motion_read(d.udid)
 	want := true

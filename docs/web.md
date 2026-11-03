@@ -29,6 +29,7 @@ When every flow of a run is a web flow, Speedrun runs them in the browser, as Ma
 | `--screen-size <W>x<H>` | The window's size (default 1024x768 headless, as Maestro). |
 | `-p`, `--platform web` | Run in the browser (the device name `chromium` does the same). |
 | `--shard-split <n>`, `--shard-all <n>` | Split the flows across n browsers, each its own Chrome. |
+| `--animations fast` | The page's animations (CSS transitions and animations, Web Animations) run 10x faster; `off` also tells the page `prefers-reduced-motion` and runs them 100x faster. The default, `normal`, leaves the page as it is. Its timers keep their time. |
 
 ## Chrome
 

@@ -485,7 +485,7 @@ which uses 10) and the `UIKit/UIPreferences` feature flag under which UIKit read
 screen or brings up the keyboard settles in about half the time; scrolling momentum and React Native's
 JavaScript-driven animations are not UIKit animations and keep their speed, and apps opened
 another way (`openLink`, the system) run at normal speed.
-With `SPEEDRUN_REDUCE_MOTION=1`, the simulator's Reduce Motion is on while flows run
+With `--animations off`, the simulator's Reduce Motion is on while flows run
 (`ios_motion_start`): React Native's and Reanimated's animations then end at once, the bulk of
 an iOS run's animation time once UIKit's run 10x faster. It was the default in 0.1.11 only:
 an app laid itself out differently with it (a banner over other content), so it is opt-in. The app reads it when it starts, so it is set before each `launchApp` when it
@@ -940,12 +940,18 @@ Known differences in how, not what:
   trusting a failure or a number.
 - Speedrun goes through the `adb` binary for `forward`/`push`/`install` (about 0.5 s of
   start-up per run). It could speak the adb wire protocol directly.
-- Animations are disabled by every run and session (normal practice for UI tests):
-  `device_prepare` reads `window_animation_scale`, `transition_animation_scale` and
-  `animator_duration_scale` in the same `adb shell` that sets them to 0, and `device_stop`
-  puts them back in the one that stops the agent (no extra round trip; nothing when they
-  were all 0 already). `session stop` waits for the session process to exit, so the device
-  is back as it was when the command returns.
+- Animations are disabled by every run and session (normal practice for UI tests;
+  `--animations fast` sets 0.1, `normal` 1): `device_prepare` reads
+  `window_animation_scale`, `transition_animation_scale` and `animator_duration_scale` in the
+  same `adb shell` that sets them, and `device_stop` puts them back in the one that stops the
+  agent (no extra round trip; nothing when they were as wanted already; `null`, never set,
+  reads as 1). `session stop` waits for the session process to exit, so the device is back
+  as it was when the command returns.
+- `--animations` (`Animations` in device.odin) is one setting for all three platforms, each
+  with its default (`animations_for`): Android `off`, iOS `fast` (UIKit's
+  `UIAnimationDragCoefficient` 0.1), the web `normal`. `off` adds iOS's Reduce Motion and,
+  on the web, `prefers-reduced-motion` (`web_media`, sent with the color scheme: one
+  `Emulation.setEmulatedMedia` sets both) and `Animation.setPlaybackRate` 100 (`fast`: 10).
 - A Toast is a window of its own that `getWindows()` leaves out (it takes no touches). The
   agent keeps the texts of the last `TYPE_NOTIFICATION_STATE_CHANGED` event from
   `android.widget.Toast` for 3.5 s (`LENGTH_LONG`, as Maestro) and adds them to each read as
