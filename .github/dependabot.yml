@@ -14,7 +14,12 @@ updates:
       actions:
         patterns: ['*']
 
+  # One pull request for the agent's build tools: the Android Gradle plugin, Gradle and Kotlin
+  # depend on each other's versions (Android Gradle plugin 9 needs Gradle 9).
   - package-ecosystem: gradle
     directory: /agent/android
     schedule:
       interval: monthly
+    groups:
+      agent-build:
+        patterns: ['*']
