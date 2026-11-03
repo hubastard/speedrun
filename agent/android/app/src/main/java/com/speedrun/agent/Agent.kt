@@ -195,6 +195,11 @@ private const val RESTLESS_PAUSE_NS = 600_000_000L
 
 private const val SHELL_UID = 2000 // android.os.Process.SHELL_UID
 
+// A Toast is its own window, which the windows list leaves out (it takes no touches); its text
+// comes in an accessibility event. It counts as on screen for Toast.LENGTH_LONG (3.5 s) from
+// that event, as in Maestro: the event doesn't say which length the app chose.
+private const val TOAST_NS = 3_500_000_000L
+
 /**
  * Shared by both entry points: AgentInstrumentation (UiAutomation from the instrumentation,
  * UiAutomation injection) and ShellMain (UiAutomation built in a shell-uid process,
@@ -220,6 +225,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private val tree = DataOutputStream(treeBuf)
     private val bounds = Rect()
     private val mockLocation = MockLocation()
+
+    // The latest Toast's texts, and until when it shows (elapsedRealtimeNanos).
+    @Volatile private var toastTexts: List<String> = emptyList()
+    @Volatile private var toastUntil = 0L
 
     private val serviceInfo: AccessibilityServiceInfo = ua.serviceInfo
 
@@ -253,6 +262,17 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                     lastChange.set(t)
                     lastChangeByWindow[e.windowId] = t
                 }
+                AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED ->
+                    if (e.className?.toString()?.startsWith("android.widget.Toast") == true) {
+                        // Its message, and on recent Android versions the app's name too.
+                        val texts = e.text.map { it.toString() }.filter { it.isNotEmpty() }
+                        if (texts.isNotEmpty()) {
+                            val t = SystemClock.elapsedRealtimeNanos()
+                            toastTexts = texts
+                            toastUntil = t + TOAST_NS
+                            lastChange.set(t)
+                        }
+                    }
             }
         }
     }
@@ -387,6 +407,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 depths.addLast(depth + 1)
             }
         }
+        root.getBoundsInScreen(bounds)
+        count += writeToast(bounds)
         composeShown = compose
         tree.flush()
         body.writeInt(count)
@@ -428,6 +450,35 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         str(n.error)
     }
 
+    /**
+     * The Toast showing, if any: a root of its own per text (its message, the app's name), an
+     * android.widget.Toast node each, where Android puts a Toast by default (centred, near the
+     * bottom of `screen`). The number of nodes written.
+     */
+    private fun writeToast(screen: Rect): Int {
+        val texts = toastTexts
+        if (texts.isEmpty() || SystemClock.elapsedRealtimeNanos() >= toastUntil || screen.isEmpty) return 0
+        val w = screen.width()
+        val h = screen.height()
+        val top = screen.bottom - h / 6
+        val line = (h / 6 - h / 10) / texts.size
+        for ((i, text) in texts.withIndex()) {
+            tree.writeShort(0)
+            tree.writeInt(screen.left + w / 8)
+            tree.writeInt(top + i * line)
+            tree.writeInt(screen.right - w / 8)
+            tree.writeInt(top + (i + 1) * line)
+            tree.writeByte(2 or 32) // enabled, visible
+            str(text)
+            str(null)
+            str(null)
+            str("android.widget.Toast")
+            str(null)
+            str(null)
+        }
+        return texts.size
+    }
+
     /** All windows, as flows see them (see SCREEN in the protocol). */
     private fun writeScreen() {
         freshNodes()
@@ -435,17 +486,21 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         var count = 0
         walkCompose = false
         val seen = HashSet<Int>()
+        val screen = Rect()
         val active = ua.rootInActiveWindow
         if (active != null) {
             seen.add(active.windowId)
+            active.getBoundsInScreen(screen)
             count += walkVisible(active)
         }
         val windows = try { ua.windows } catch (e: Exception) { emptyList() }
         for (w in windows) {
             if (!seen.add(w.id)) continue
             val root = w.root ?: continue
+            if (screen.isEmpty) root.getBoundsInScreen(screen)
             count += walkVisible(root)
         }
+        count += writeToast(screen)
         composeShown = walkCompose
         tree.flush()
         body.writeInt(count)

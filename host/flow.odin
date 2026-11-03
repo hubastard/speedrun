@@ -21,7 +21,7 @@ Selector :: struct {
 	contains_descendants:                [dynamic]^Selector,
 	// Fields Maestro reads from the same map for tap commands.
 	point:                               string,
-	retry_tap_if_no_change:              bool,
+	retry_tap_if_no_change:              Maybe(bool), // nil: not given
 	repeat, delay:                       Maybe(int),
 	wait_to_settle_timeout_ms:           Maybe(int),
 	wait_until_visible:                  bool,
@@ -126,6 +126,7 @@ Tap :: struct {
 	repeat:     int, // taps
 	delay_ms:   int, // between taps
 	retry:      bool, // retryTapIfNoChange
+	once:       bool, // retryTapIfNoChange: false, given: never a second tap (not even where a moved element went)
 	settle_ms:  Maybe(int),
 }
 Assert :: struct {
@@ -662,7 +663,8 @@ command :: proc(l: ^Loader, y: ^Yaml) -> (c: Cmd, ok: bool) {
 			long_press = name == "longPressOn",
 			repeat     = 1,
 			delay_ms   = 100, // TapOnElementCommand.DEFAULT_REPEAT_DELAY
-			retry      = sel.retry_tap_if_no_change,
+			retry      = sel.retry_tap_if_no_change.? or_else false,
+			once       = !(sel.retry_tap_if_no_change.? or_else true),
 			settle_ms  = sel.wait_to_settle_timeout_ms,
 		}
 		if r, has := sel.repeat.?; has do d.repeat = max(r, 1)

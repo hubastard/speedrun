@@ -1035,8 +1035,11 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// tap missed it: tap it where it is now. Once. A text gone means the app reacted (a
 		// keypad's fourth digit replaced the title and pushed the keys down with an error:
 		// tapping again typed a fifth). The screen a tap opened can repeat the tapped text
-		// elsewhere: iOS titles a pushed screen with the row that opened it.
-		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 {
+		// elsewhere: iOS titles a pushed screen with the row that opened it. Only when nothing
+		// changed after the tap: a move that came with the tap's own changes is the tap's doing
+		// (a "Show more" toggle that the text it opens pushes down: a second tap closed it,
+		// issue #9). A flow that says retryTapIfNoChange: false gets one tap, always.
+		if d.sel != nil && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 && !d.once && status == .No_Change {
 			if !read_since_tap && !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
 			if el := select(r, d.sel) or_return; el >= 0 {
@@ -2513,7 +2516,8 @@ JAVA_ONLY_REGEX :: []string{"(?=", "(?!", "(?<=", "(?<!", "(?<", "(?>", "(?i", "
 
 compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	if cached, ok := &r.regexes[pattern]; ok do return cached, nil
-	for j in JAVA_ONLY_REGEX do if strings.contains(pattern, j) {
+	engine := java_escapes(pattern)
+	for j in JAVA_ONLY_REGEX do if strings.contains(engine, j) {
 		return nil, fmt.aprintf("regex `%s` uses `%s`, which this runner's regex engine does not support", shortened(pattern), j, allocator = r.alloc)
 	}
 	pattern := strings.clone(pattern, r.alloc) // the key outlives a caller's temporary string
@@ -2521,7 +2525,7 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 		pattern = pattern,
 	}
 	parts := make([dynamic]regex.Regular_Expression, r.alloc)
-	switch e in compile_parts(top_alternatives(non_capturing(pattern)), &parts, r.alloc) {
+	switch e in compile_parts(top_alternatives(non_capturing(engine)), &parts, r.alloc) {
 	case nil:
 		entry.parts = parts[:]
 		if len(parts) > 1 do note(r, "regex `%s` (%d characters) compiled in %d parts", shortened(pattern), len(pattern), len(parts))
@@ -2537,6 +2541,64 @@ compile :: proc(r: ^Runner, pattern: string) -> (rx: ^Rx, err: Err) {
 	entry.empty = pattern == "" || parts_match(entry.parts, "")
 	r.regexes[pattern] = entry
 	return &r.regexes[pattern], nil
+}
+
+// Java syntax the engine lacks but that means the same as something it has: `\uHHHH`,
+// `\xHH` and `\x{H...}` become the character itself, and the inline flags i, s and u go (the
+// engine always ignores case, and its `.` already matches a line break); `(?s:...)` becomes
+// `(?:...)`. Other flags (m, x, -i) stay, and JAVA_ONLY_REGEX rejects them.
+@(private = "file")
+java_escapes :: proc(pattern: string) -> string {
+	if !strings.contains(pattern, "\\u") && !strings.contains(pattern, "\\x") && !strings.contains(pattern, "(?") do return pattern
+	b := strings.builder_make(context.temp_allocator)
+	in_class := false
+	for i := 0; i < len(pattern); i += 1 {
+		c := pattern[i]
+		if c == '\\' && i + 1 < len(pattern) {
+			hex, end := "", i + 2
+			switch pattern[i + 1] {
+			case 'u':
+				if i + 6 <= len(pattern) do hex, end = pattern[i + 2:i + 6], i + 6
+			case 'x':
+				if i + 2 < len(pattern) && pattern[i + 2] == '{' {
+					if close := strings.index_byte(pattern[i + 3:], '}'); close > 0 do hex, end = pattern[i + 3:i + 3 + close], i + 4 + close
+				} else if i + 4 <= len(pattern) {
+					hex, end = pattern[i + 2:i + 4], i + 4
+				}
+			}
+			if v, ok := strconv.parse_u64_of_base(hex, 16); ok && hex != "" && v <= 0x10FFFF {
+				ch := rune(v)
+				if ch < 0x80 && strings.contains_rune(`\.+*?()|[]{}^$-/`, ch) do strings.write_byte(&b, '\\')
+				strings.write_rune(&b, ch)
+				i = end - 1
+				continue
+			}
+			strings.write_byte(&b, c)
+			strings.write_byte(&b, pattern[i + 1])
+			i += 1
+			continue
+		}
+		switch {
+		case in_class:
+			if c == ']' do in_class = false
+		case c == '[':
+			in_class = true
+		case c == '(' && strings.has_prefix(pattern[i:], "(?"):
+			j := i + 2
+			for j < len(pattern) && strings.contains_rune("isu", rune(pattern[j])) do j += 1
+			if j > i + 2 && j < len(pattern) && pattern[j] == ')' {
+				i = j
+				continue
+			}
+			if j > i + 2 && j < len(pattern) && pattern[j] == ':' {
+				strings.write_string(&b, "(?:")
+				i = j
+				continue
+			}
+		}
+		strings.write_byte(&b, c)
+	}
+	return strings.to_string(b)
 }
 
 // Alternatives compiled as one program or, past the engine's limits (32767 instructions, 255

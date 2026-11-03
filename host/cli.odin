@@ -56,7 +56,9 @@ Options (the same as maestro test's):
   --test-output-dir <dir>    -p, --platform android|ios  --device, --udid <id>[,<id>...]
   --shard-split <n>          --shard-all <n>             -c, --continuous
 speedrun's own:
-  --plain (or --no-ansi)     --timings <file.json>       --port <n>       --instrument`
+  --plain (or --no-ansi)     --timings <file.json>       --port <n>       --instrument
+  --keep-animations          the device's animations as they are (default: Android's off,
+                             iOS apps 10x faster)`
 
 // args: what follows `test`; globals: -p/--device given before `test`.
 run_test_cli :: proc(args: []string, global_platform, global_device: string) -> int {
@@ -164,6 +166,8 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 			o.port, o.port_given = p, true
 		case "--instrument":
 			o.instrument = true
+		case "--keep-animations":
+			keep_animations = true
 		case "--shard-worker":
 			o.worker_shard = strconv.parse_int(value) or_else -1
 		case "--shard-result":
@@ -554,6 +558,7 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 			"--debug-output", debug_dir, "--flatten-debug-output")
 		if o.plain do append(&args, "--plain")
 		if o.instrument do append(&args, "--instrument")
+		if keep_animations do append(&args, "--keep-animations")
 		for e in o.env do append(&args, "-e", fmt.aprintf("%s=%s", e.key, e.value))
 		append(&args, ..chunks[k][:])
 		p, err := os.process_start({command = args[:], stdout = os.stdout, stderr = os.stderr})

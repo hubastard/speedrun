@@ -89,10 +89,15 @@ Device :: struct {
 	motion_was: Maybe(bool), // iOS: as it was before this run changed it, restored by device_stop
 	motion_writer:  os.Process, // iOS: the `defaults write` setting it, while motion_writing
 	motion_writing: bool,
+	scales_was:     string, // Android: the three animation scales as found (device_prepare), "" when already off
 }
 
 // The device adb talks to (--device); empty: adb's default (ANDROID_SERIAL, or the only one).
 adb_serial: string
+
+// --keep-animations: the device's animations left as they are (Android's animation scales
+// untouched, iOS apps at UIKit's normal speed, Reduce Motion untouched).
+keep_animations: bool
 
 // The device of this run, for the Ctrl-C handler.
 @(private = "file")
@@ -116,16 +121,26 @@ adb :: proc(args: ..string) -> (out: string, ok: bool) {
 	return strings.trim_space(strings.concatenate({string(stdout), string(stderr)}, context.temp_allocator)), false
 }
 
-// Leaves the device ready for a UiAutomation client: animations off (as for any UI test) and
-// no agent of an earlier run left holding the UiAutomation slot. Copies of other agent builds
-// are deleted; present reports whether this build's is already there.
-device_prepare :: proc() -> (present: bool, err: string) {
+// The animation scales speedrun turns off for a run and puts back afterwards (device_stop).
+@(private = "file")
+ANIMATION_SCALES :: [3]string{"window_animation_scale", "transition_animation_scale", "animator_duration_scale"}
+
+// Leaves the device ready for a UiAutomation client: animations off (as for any UI test, as
+// they were found kept in d.scales_was; left alone with --keep-animations) and no agent of an
+// earlier run left holding the UiAutomation slot. Copies of other agent builds are deleted; present reports whether this
+// build's is already there.
+device_prepare :: proc(d: ^Device) -> (present: bool, err: string) {
 	if !ANDROID_AGENT {
 		return false, "This speedrun was built for iOS only (SPEEDRUN_NO_ANDROID=1), without its Android agent: build it with ./build.sh."
 	}
-	script := strings.concatenate({
+	animations := "" if keep_animations else strings.concatenate({
+		"echo scales $(settings get global window_animation_scale) $(settings get global transition_animation_scale) ",
+		"$(settings get global animator_duration_scale); ",
 		"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; ",
-		"settings put global animator_duration_scale 0; ", STOP_AGENTS, "; ", STOP_MAESTRO_DRIVER, "; ",
+		"settings put global animator_duration_scale 0; ",
+	}, context.temp_allocator)
+	script := strings.concatenate({
+		animations, STOP_AGENTS, "; ", STOP_MAESTRO_DRIVER, "; ",
 		"for f in /data/local/tmp/speedrun-agent-*.apk; do ",
 		`[ "$f" = `, device_apk(), ` ] && echo present || rm -f "$f"; done`,
 	}, context.temp_allocator)
@@ -137,7 +152,37 @@ device_prepare :: proc() -> (present: bool, err: string) {
 	if strings.contains(out, "stopped-maestro") {
 		fmt.eprintln("Stopped Maestro's driver, left running on the device by an earlier Maestro run: it held the UiAutomation slot.")
 	}
+	// "scales 1 1 1" ("null" for one never set). Already all off: nothing to put back. A run
+	// that prepares twice (bench) keeps what the first found.
+	for line in strings.split_lines(out, context.temp_allocator) {
+		if !strings.has_prefix(line, "scales ") do continue
+		scales := strings.trim_space(line[len("scales "):])
+		if d.scales_was == "" && scales != "0 0 0" && scales != "0.0 0.0 0.0" {
+			d.scales_was = strings.clone(scales)
+		}
+	}
 	return strings.contains(out, "present"), ""
+}
+
+// The shell commands that put the animation scales back as device_prepare found them.
+@(private = "file")
+restore_scales :: proc(d: ^Device) -> string {
+	if d.scales_was == "" do return ""
+	b := strings.builder_make(context.temp_allocator)
+	keys := ANIMATION_SCALES
+	for v, i in strings.fields(d.scales_was, context.temp_allocator) {
+		if i >= len(keys) do break
+		key := keys[i]
+		// Each value is a number or "null" from settings get: nothing else goes into the shell.
+		if v == "null" {
+			fmt.sbprintf(&b, "settings delete global %s > /dev/null; ", key)
+		} else if _, ok := strconv.parse_f64(v); ok {
+			fmt.sbprintf(&b, "settings put global %s %s; ", key, v)
+		}
+	}
+	delete(d.scales_was)
+	d.scales_was = ""
+	return strings.to_string(b)
 }
 
 // The agent on the device, named by content so a rebuilt agent is pushed again.
@@ -269,7 +314,7 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 	posix.sigaction(.SIGTERM, &act, nil)
 	if d.platform == .IOS do return ios_start(d)
 
-	present, perr := device_prepare()
+	present, perr := device_prepare(d)
 	if perr != "" do return perr
 	if !d.instrument {
 		if !present {
@@ -329,7 +374,7 @@ device_stop :: proc(d: ^Device) {
 		current = nil
 		return
 	}
-	stop_agent(d)
+	stop_agent(d, restore_scales(d))
 	if d.forwarded {
 		adb("forward", "--remove", fmt.tprintf("tcp:%d", d.local_port))
 		d.forwarded, d.local_port = false, 0
@@ -341,14 +386,15 @@ device_stop :: proc(d: ^Device) {
 	current = nil
 }
 
+// `before`: shell commands to run in the same adb call (device_stop puts the animations back).
 @(private = "file")
-stop_agent :: proc(d: ^Device) {
+stop_agent :: proc(d: ^Device, before := "") {
 	if d.running {
 		_ = os.process_kill(d.adb)
 		_, _ = os.process_wait(d.adb)
 		d.running = false
 	}
-	adb("shell", STOP_AGENTS)
+	adb("shell", strings.concatenate({before, STOP_AGENTS}, context.temp_allocator))
 }
 
 // Waits for the shell agent's "listening" line. Its output goes to a temp file, polled, so

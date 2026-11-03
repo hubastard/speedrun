@@ -53,3 +53,18 @@ tags: [lab, native]
     element: Item 80
 - tapOn: Item 80
 - assertVisible: "Picked: Item 80"
+# Two text fields (issue #8): a tap on the second moves the focus there, and what is typed next
+# goes to it.
+- tapOn: Form
+- tapOn:
+    id: native-email
+- inputText: ada@example.com
+- tapOn:
+    id: native-password
+- assertVisible:
+    id: native-password
+    focused: true
+- inputText: s3cret
+- tapOn: Sign in
+- assertVisible: "Signed in as ada@example.com / s3cret"
+- tapOn: Close form

@@ -38,6 +38,10 @@ private struct LabScreen: View {
   @State private var cardTaps = 0
   @State private var list = false
   @State private var picked = "none"
+  @State private var form = false
+  @State private var email = ""
+  @State private var password = ""
+  @State private var signedIn = "Not signed in"
 
   var body: some View {
     if list {
@@ -56,6 +60,27 @@ private struct LabScreen: View {
         }
         .listStyle(.plain)
       }
+    } else if form {
+      // Two text fields: a tap on the second moves the focus there, and the text typed next
+      // goes to it (speedrun issue #8).
+      VStack(alignment: .leading, spacing: 8) {
+        TextField("Email", text: $email)
+          .textFieldStyle(.roundedBorder)
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+          .accessibilityIdentifier("native-email")
+        TextField("Password", text: $password)
+          .textFieldStyle(.roundedBorder)
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+          .accessibilityIdentifier("native-password")
+        button("Sign in", "native-sign-in") { signedIn = "Signed in as \(email) / \(password)" }
+        Text(signedIn).accessibilityIdentifier("native-signed-in")
+        button("Close form", "native-close-form") { form = false }
+        Spacer(minLength: 0)
+      }
+      .padding(16)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     } else {
       main
         .overlay {
@@ -96,6 +121,7 @@ private struct LabScreen: View {
         }
         button("List", "native-list") { list = true }
       }
+      button("Form", "native-form") { form = true }
       ForEach(0..<12, id: \.self) { row in
         HStack(spacing: 0) {
           ForEach(0..<10, id: \.self) { k in Text("\(row * 10 + k) ").font(.system(size: 12)) }

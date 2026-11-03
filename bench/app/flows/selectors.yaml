@@ -119,3 +119,38 @@ tags: [lab, selectors]
 - assertVisible:
     id: box-square
     label: The square box shows
+# Java's regex syntax (speedrun issue #10): \u and \x escapes (a non-breaking space), inline
+# flags.
+- scrollUntilVisible:
+    element:
+      id: more-toggle
+    centerElement: true
+- assertVisible: 'Starting(\u00A0.*)?'
+- assertVisible: 'Starting\x{a0}\xA01m.*'
+- assertVisible: '(?s)Learn more.*keep your data'
+- assertVisible: '(?i)LEARN MORE ABOUT.*'
+# Android: a Toast's text is on screen while it shows, then gone (issue #11).
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn: Toast
+      - assertVisible: "Couldn't sync. Try again."
+      - extendedWaitUntil:
+          notVisible: "Couldn't sync. Try again."
+          timeout: 6000
+# A toggle its own tap moves down (issue #9): one tap opens it, and it stays open; the next
+# closes it; with retryTapIfNoChange: false, exactly one tap too.
+- tapOn:
+    id: more-toggle
+- assertVisible:
+    id: more-text
+- tapOn:
+    id: more-toggle
+- assertNotVisible:
+    id: more-text
+- tapOn:
+    id: more-toggle
+    retryTapIfNoChange: false
+- assertVisible:
+    id: more-text

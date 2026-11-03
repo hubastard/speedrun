@@ -23,6 +23,7 @@ import "core:unicode"
 
 SESSION_USAGE :: `usage:
   speedrun session start --app <appId> [--platform android|ios] [--device <id>] [-e KEY=VALUE]...
+                         [--keep-animations]   (default: Android's off, iOS apps 10x faster)
   speedrun look [--shot]          the screen, a line per element, each with a ref (@7)
   speedrun do '<command>'...      flow commands, as written in a flow file (one per argument);
                                   @7 stands for that element's selector
@@ -172,8 +173,13 @@ run_look_cli :: proc(args: []string) -> int {
 session_start :: proc(args: []string) -> int {
 	app, platform, device := "", "", ""
 	env: [dynamic]string
+	animations := false
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
+		if a == "--keep-animations" {
+			animations = true
+			continue
+		}
 		value := args[i + 1] if i + 1 < len(args) else ""
 		switch {
 		case a == "--app" && value != "":
@@ -190,14 +196,14 @@ session_start :: proc(args: []string) -> int {
 		}
 		i += 1
 	}
-	code, text := start_session(app, platform, device, env[:])
+	code, text := start_session(app, platform, device, env[:], animations)
 	if code == 0 do fmt.println(text)
 	else do fmt.eprintln(text)
 	return code
 }
 
 // Starts the session process and waits until it serves (or says why it did not start).
-start_session :: proc(app, platform, device: string, env: []string) -> (code: int, text: string) {
+start_session :: proc(app, platform, device: string, env: []string, keep_device_animations := false) -> (code: int, text: string) {
 	if app == "" do return 2, "A session needs the app's id (--app): the app its commands are for (launchApp's)."
 	update_check_start()
 	if info, ok := session_running(); ok {
@@ -221,6 +227,7 @@ start_session :: proc(app, platform, device: string, env: []string) -> (code: in
 	if platform != "" do append(&cmd, "--platform", platform)
 	if device != "" do append(&cmd, "--device", device)
 	for e in env do append(&cmd, "-e", e)
+	if keep_device_animations do append(&cmd, "--keep-animations")
 	log := fmt.tprintf("%s/session.log", dir)
 	f, ferr := os.open(log, {.Write, .Create, .Trunc}, {.Read_User, .Write_User})
 	if ferr != nil do return 1, fmt.tprintf("could not create %s: %v", log, ferr)
@@ -286,6 +293,14 @@ session_request :: proc(verb, payload: string) -> (code: int, text: string, answ
 	if !recv_all(sock, head[:]) do return 1, fmt.tprintf("The session closed the connection (its log: %s/session.log).", session_dir()), false
 	answer := make([]u8, int(get_u32(head[1:5])), context.temp_allocator)
 	if !recv_all(sock, answer) do return 1, "The session closed the connection.", false
+	if verb == "stop" {
+		// It answers, then leaves the device as it found it (animations back on): done when it
+		// exits, so a command right after sees the device as it was.
+		for _ in 0 ..< 200 {
+			if posix.kill(posix.pid_t(info.pid), posix.Signal(0)) != .OK do break
+			time.sleep(25 * time.Millisecond)
+		}
+	}
 	return int(head[0]), string(answer), true
 }
 
@@ -305,13 +320,19 @@ get_u32 :: proc(b: []u8) -> u32 {
 session_serve :: proc(args: []string) -> int {
 	app, platform, device := "", "", ""
 	env: [dynamic]string
-	for i := 0; i + 1 < len(args); i += 2 {
+	for i := 0; i < len(args); i += 1 {
+		if args[i] == "--keep-animations" {
+			keep_animations = true
+			continue
+		}
+		if i + 1 >= len(args) do break
 		switch args[i] {
 		case "--app":      app = args[i + 1]
 		case "--platform": platform = args[i + 1]
 		case "--device":   device = args[i + 1]
 		case "-e":         append(&env, args[i + 1])
 		}
+		i += 1
 	}
 	token := os.get_env(SESSION_TOKEN_ENV, context.allocator)
 	if token == "" {

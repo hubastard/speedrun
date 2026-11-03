@@ -190,6 +190,7 @@ ios_launch_arguments :: proc(args: []Launch_Arg) -> []string {
 ios_animation_args := [2]string{"-UIAnimationDragCoefficient", "0.1"}
 
 ios_animation_arguments :: proc(args: []Launch_Arg) -> []string {
+	if keep_animations do return nil
 	for a in args do if strings.trim_left(a.key, "-") == "UIAnimationDragCoefficient" do return nil
 	return ios_animation_args[:]
 }
@@ -205,7 +206,7 @@ ios_animation_arguments :: proc(args: []Launch_Arg) -> []string {
 // simctl: 450 ms), and written in the background (simctl spawn, ~340 ms) while launchApp
 // clears the app and sets its permissions: ios_motion_wait before the launch.
 ios_motion_start :: proc(d: ^Device, args: []Launch_Arg) {
-	if os.get_env("SPEEDRUN_REDUCE_MOTION", context.temp_allocator) != "1" do return
+	if keep_animations || os.get_env("SPEEDRUN_REDUCE_MOTION", context.temp_allocator) != "1" do return
 	now, known := d.motion.?
 	if !known do now = ios_motion_read(d.udid)
 	want := true

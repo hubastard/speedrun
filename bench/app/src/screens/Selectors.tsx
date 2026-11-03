@@ -1,8 +1,9 @@
 // Selectors: elements alike but for where they are (index, below, rightOf, childOf,
 // containsChild), and elements told apart by their state (enabled, selected, checked,
-// focused) or their size.
+// focused) or their size. Also a toggle its own tap moves, texts for Java's regex syntax,
+// and (Android) a Toast.
 import React, { useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, TextInput, ToastAndroid, View } from 'react-native';
 
 import { Body, Button, Checkbox, Chip, Gap, s, Screen, useColors } from '../ui';
 
@@ -20,6 +21,7 @@ export function Selectors() {
   const [notify, setNotify] = useState(true);
   const [hide, setHide] = useState(false);
   const [slow, setSlow] = useState('Slow button: idle');
+  const [more, setMore] = useState(false);
   return (
     <Screen title="Selectors">
       <Text testID="selector-result" style={{ color: c.text, fontSize: 18, fontWeight: '700' }}>{result}</Text>
@@ -75,6 +77,23 @@ export function Selectors() {
         }}
       />
       <Body testID="slow-result">{slow}</Body>
+      <Gap />
+      {/* Java's regex syntax in flows (issue #10): non-breaking spaces, and a text on two lines. */}
+      <Text testID="nbsp-text" style={{ color: c.muted }}>{'Starting\u00a0\u00a01m\u00a00s'}</Text>
+      <Text testID="lines-text" style={{ color: c.muted }}>{'Learn more\nabout how we keep your data'}</Text>
+      {/* A Toast is a window of its own, which test tools don't list (issue #11). */}
+      {Platform.OS === 'android' ? (
+        <Button testID="toast-button" kind="secondary" title="Toast" onPress={() => ToastAndroid.show("Couldn't sync. Try again.", ToastAndroid.SHORT)} />
+      ) : null}
+      {/* Last, a toggle its own tap moves down, its label unchanged: what it shows comes in
+          above it, and nothing else moves (speedrun issue #9: a tap whose element moved was
+          tapped again, closing it). */}
+      {more ? <Text testID="more-text" style={{ color: c.text, height: 120 }}>{'The whole story,\nline by line.'}</Text> : null}
+      <Pressable testID="more-toggle" accessibilityRole="button" onPress={() => setMore((m) => !m)} style={{ paddingVertical: 10 }}>
+        <Text style={{ color: c.accent, fontWeight: '700' }}>Show more</Text>
+      </Pressable>
+      {/* Room below it: scrolled to the middle of the screen, it stays on screen open. */}
+      <View style={{ height: 400 }} />
     </Screen>
   );
 }

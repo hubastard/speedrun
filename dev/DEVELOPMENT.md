@@ -901,6 +901,14 @@ Known differences in how, not what:
   trusting a failure or a number.
 - Speedrun goes through the `adb` binary for `forward`/`push`/`install` (about 0.5 s of
   start-up per run). It could speak the adb wire protocol directly.
-- Animations are disabled by every run (normal practice for UI tests) and stay disabled;
-  re-enable with `adb shell settings put global <name> 1` for `window_animation_scale`,
-  `transition_animation_scale` and `animator_duration_scale`.
+- Animations are disabled by every run and session (normal practice for UI tests):
+  `device_prepare` reads `window_animation_scale`, `transition_animation_scale` and
+  `animator_duration_scale` in the same `adb shell` that sets them to 0, and `device_stop`
+  puts them back in the one that stops the agent (no extra round trip; nothing when they
+  were all 0 already). `session stop` waits for the session process to exit, so the device
+  is back as it was when the command returns.
+- A Toast is a window of its own that `getWindows()` leaves out (it takes no touches). The
+  agent keeps the texts of the last `TYPE_NOTIFICATION_STATE_CHANGED` event from
+  `android.widget.Toast` for 3.5 s (`LENGTH_LONG`, as Maestro) and adds them to each read as
+  roots of their own: an `android.widget.Toast` node per text (the message, and on recent
+  Android versions the app's name), near the bottom of the screen.

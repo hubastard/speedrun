@@ -26,7 +26,9 @@ The lab:
   press. **Drag and scroll**: a slider, drag and drop, a horizontal list, a 500-row list with
   sticky headers.
 - **Selectors**: `index`, `below`, `above`, `leftOf`, `childOf`, `containsChild`,
-  `containsDescendants`, `enabled`, `selected`, `checked`, `focused`, `optional`.
+  `containsDescendants`, `enabled`, `selected`, `checked`, `focused`, `optional`; texts with
+  non-breaking spaces and line breaks for Java's regex syntax (`\u00A0`, `(?s)`), a "Show
+  more" toggle that its own tap moves down, and on Android a Toast.
 - **Inputs and keys**: Enter, Backspace, Android's back button, erasing, copy and paste, random
   text, a draft that survives `stopApp` / `killApp` (not `clearState`).
 - **Device**: launch arguments, location (`setLocation`, `travel`), permissions
@@ -38,7 +40,8 @@ The lab:
   it: below 120 numbers, a count that changes, a line shown and hidden, and a progress
   indicator that comes and goes, all in boxes that never resize. SwiftUI animates on its own
   clock and decides itself what takes a touch: a button that springs in, a loading overlay
-  that takes the taps for 1.5 s. And a lazy list, scrolled to its 80th row.
+  that takes the taps for 1.5 s. And a lazy list, scrolled to its 80th row, and a form whose
+  second text field takes the focus from a tap.
 
 ## Running it
 

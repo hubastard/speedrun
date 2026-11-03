@@ -148,9 +148,18 @@ publish() {
   echo "== Published $name"
 }
 
+# Android's three animation scales, as `settings get` prints them.
+animation_scales() {
+  adb -s "$DEVICE" shell 'echo $(settings get global window_animation_scale) $(settings get global transition_animation_scale) $(settings get global animator_duration_scale)' | tr -d '\r'
+}
+
 # Runs the suite with one tool; prints its wall clock. $1: speedrun or maestro.
 run() {
   local tool="$1" report="$RESULTS/$PLATFORM-$1.xml" debug="$RESULTS/$PLATFORM-$1-debug"; shift
+  # Android: speedrun turns animations off for its run, and puts them back as it found them
+  # (speedrun issue #12). Checked on a device that has them on, as a fresh emulator does.
+  local scales=""
+  if [ "$PLATFORM" = android ] && [ "$tool" = speedrun ]; then scales=$(animation_scales); fi
   rm -rf "$debug"
   # The flows folder, unless a flow file or folder is given.
   local flows=(flows) arg
@@ -168,6 +177,10 @@ run() {
   fi
   t1=$(now_ms)
   [ "$PLATFORM" = ios ] && "$SPEEDRUN" --stop-agent >/dev/null 2>&1 || true
+  if [ -n "$scales" ] && [ "$(animation_scales)" != "$scales" ]; then
+    echo "== speedrun left the animation scales at $(animation_scales), not $scales as it found them"
+    SCALES_CHANGED=1
+  fi
   echo "$((t1 - t0))" > "$RESULTS/$PLATFORM-$tool.wall"
   echo "== $tool: $(( (t1 - t0) / 1000 )) s wall clock, exit $status"
 }
@@ -275,7 +288,7 @@ case "$CMD" in
   fetch) fetch ;;
   compile) compile ;;
   publish) publish ;;
-  test) run speedrun "$@"; table ;;
+  test) run speedrun "$@"; table; [ -z "${SCALES_CHANGED:-}" ] ;;
   maestro) run maestro "$@"; table ;;
   table) table ;;
   compare)

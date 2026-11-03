@@ -16,6 +16,10 @@ speedrun session stop
 Each command takes as long as it does in a flow: the device stays connected, and Speedrun
 waits for the app to settle after every step, as in a test run.
 
+As in a test run, the session turns Android's animations off and runs iOS apps' 10x faster,
+and `session stop` puts the device back as it found it. `--keep-animations` on `session
+start` leaves them as they are, for a device you also use by hand while a session runs.
+
 ## Reading the screen
 
 `speedrun look` prints one line per element a user can see or act on, in reading order:

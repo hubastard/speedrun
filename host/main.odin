@@ -1062,7 +1062,7 @@ run_cli :: proc(args: []string) -> int {
 			return 2
 		}
 		// uiautomator needs the UiAutomation slot: before the agent takes it.
-		if _, err := device_prepare(); err != "" {
+		if _, err := device_prepare(&dev); err != "" {
 			fmt.eprintln(err)
 			return 1
 		}

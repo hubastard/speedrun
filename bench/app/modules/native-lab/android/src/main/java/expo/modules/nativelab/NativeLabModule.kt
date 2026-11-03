@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -92,6 +93,10 @@ private fun Lab() {
   var cardTaps by remember { mutableIntStateOf(0) }
   var list by remember { mutableStateOf(false) }
   var picked by remember { mutableStateOf("none") }
+  var form by remember { mutableStateOf(false) }
+  var email by remember { mutableStateOf("") }
+  var password by remember { mutableStateOf("") }
+  var signedIn by remember { mutableStateOf("Not signed in") }
   LaunchedEffect(loads) {
     if (loads == 0) return@LaunchedEffect
     loading = true
@@ -119,6 +124,16 @@ private fun Lab() {
           }
         }
       }
+    } else if (form) {
+      // Two Material 3 text fields: a tap on the second moves the focus there, and the text
+      // typed next goes to it (speedrun issue #8).
+      Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(email, { email = it }, Modifier.testTag("native-email"), label = { Text("Email") })
+        OutlinedTextField(password, { password = it }, Modifier.testTag("native-password"), label = { Text("Password") })
+        Button(onClick = { signedIn = "Signed in as $email / $password" }, Modifier.testTag("native-sign-in")) { Text("Sign in") }
+        Text(signedIn, Modifier.testTag("native-signed-in"))
+        Button(onClick = { form = false }, Modifier.testTag("native-close-form")) { Text("Close form") }
+      }
     } else {
       Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -131,6 +146,7 @@ private fun Lab() {
           Button(onClick = { card = true }, Modifier.testTag("native-card")) { Text("Card") }
           Button(onClick = { list = true }, Modifier.testTag("native-list")) { Text("List") }
         }
+        Button(onClick = { form = true }, Modifier.testTag("native-form")) { Text("Form") }
         repeat(12) { row ->
           Row { repeat(10) { Text("${row * 10 + it} ", fontSize = 12.sp) } }
         }

@@ -60,14 +60,18 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 
 - **Steps run back to back.** Speedrun reads the screen in milliseconds, so lookups retry
   far more often within the same timeouts, and a step starts as soon as the app has settled.
-- **Android animations are turned off** by every run, as is usual for UI tests, and stay
-  off. To turn them back on: `adb shell settings put global window_animation_scale 1` (and
-  the same for `transition_animation_scale` and `animator_duration_scale`).
+- **A tap that missed a moving element is tapped again.** When the element moved between the
+  lookup and the tap (a screen still laying out), nothing changed after the tap, and the
+  element is still there, unchanged, on the same screen, Speedrun taps it again where it is
+  now, once. `retryTapIfNoChange: false` on the command turns that off: exactly one tap.
+- **Android animations are turned off** for every run and session, as is usual for UI tests,
+  and put back as they were when it ends. `--keep-animations` leaves them as they are.
 - **iOS apps started by `launchApp` animate 10x faster.** This speeds up screen transitions
   without changing what the flow sees. A flow can pass the launch argument
-  `UIAnimationDragCoefficient: 1` to keep normal speed. With `SPEEDRUN_REDUCE_MOTION=1`,
-  Speedrun also turns the simulator's Reduce Motion on for the run (React Native's animations
-  end at once) and back as it was afterwards.
+  `UIAnimationDragCoefficient: 1` to keep normal speed, and `--keep-animations` keeps it for
+  every app. With `SPEEDRUN_REDUCE_MOTION=1`, Speedrun also turns the simulator's Reduce
+  Motion on for the run (React Native's animations end at once) and back as it was
+  afterwards.
 - **iOS `clearState` empties the app's folders instead of reinstalling it**: ~0.7 s faster,
   and the app starts faster after it. It resets what reinstalling does: the app's files and
   settings, its app groups' and extensions', its permissions and location access. What a
@@ -95,9 +99,13 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   gesture, 200 ms apart (Maestro's arrive too far apart for a 300 ms double-tap window).
 - **Several devices connected and no `--device`:** Maestro asks which one to use. Speedrun
   takes the first Android device, else the booted simulator.
-- **Regular expressions:** Java-only syntax (lookarounds, inline flags, atomic groups,
-  `\p{...}`) is rejected. A pattern that is invalid in both tools matches as plain text, as
-  in Maestro. Speedrun's engine has size limits: a pattern is split at its top-level `|`
+- **Regular expressions:** Speedrun's engine reads classes, `\d` `\s` `\w` (ASCII only),
+  `.`, repetitions (greedy and lazy), groups, `|`, `^` `$` and `\b`, plus Java's `\uHHHH`,
+  `\xHH` and `\x{H...}` and the inline flags `(?i)`, `(?s)` and `(?u)`. Matching always
+  ignores case, and `.` also matches a line break. Other Java-only syntax (lookarounds,
+  `(?m)`, `(?x)`, atomic groups, possessive repetitions, `\p{...}`, `\Q...\E`) is rejected
+  with an error that names it. A pattern that is invalid in both tools matches as plain
+  text, as in Maestro. The engine has size limits: a pattern is split at its top-level `|`
   when it is too big (a list of thousands of alternatives works), and a part without one
   that compiles to more than 32,767 instructions or uses more than 255 character classes
   is an error.
