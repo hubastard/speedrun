@@ -13,6 +13,10 @@ on:
         description: Timed runs per tool (after one warm-up)
         default: '3'
 
+# Read-only: these jobs only check out the code and keep artifacts.
+permissions:
+  contents: read
+
 env:
   ODIN_VERSION: dev-2026-09
 
