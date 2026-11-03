@@ -1,9 +1,8 @@
-# Dependabot keeps the CI's actions and the Android agent's build current. Security updates
-# (a pull request for a dependency with a known vulnerability) cover every ecosystem in the
-# repository, npm included. The benchmarks' npm packages get no routine updates: their tools'
-# versions are pinned so the numbers can be reproduced. The code built into speedrun
-# (QuickJS-ng, stb_image, datafaker; NOTICE) is vendored, which Dependabot cannot see: watch
-# their releases.
+# Dependabot keeps the CI's actions and the Android agent's build current, and opens security
+# updates for anything here with a known vulnerability. The benchmarks and their npm packages
+# are the bench/ submodule (hubastard/speedrun-bench), a repository of its own that this one's
+# alerts do not cover. The code built into speedrun (QuickJS-ng, stb_image, datafaker;
+# NOTICE) is vendored, which Dependabot cannot see: watch their releases.
 version: 2
 updates:
   - package-ecosystem: github-actions

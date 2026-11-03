@@ -26,6 +26,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: true
 
       - name: Install Odin
         run: |

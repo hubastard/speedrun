@@ -24,5 +24,5 @@ agents it installs, and how it drives browsers. For example:
 - flow scripts' access beyond what a flow file gives them;
 - the browsers it downloads, and Firefox's system access during a run.
 
-Out of scope: the benchmark and test apps (`bench/`, `dev/`), and the apps and websites a
-flow tests.
+Out of scope: the benchmark and test apps (the `bench/` submodule,
+[speedrun-bench](https://github.com/hubastard/speedrun-bench), and `dev/`), and the apps and websites a flow tests.

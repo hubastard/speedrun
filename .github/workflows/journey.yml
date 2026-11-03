@@ -1,6 +1,7 @@
 # Runs the benchmark journey (bench/journey/journey.yaml) with speedrun on an Android emulator
 # and an iOS simulator after every push to main: a regression check on Speedrun Bench, the
-# prebuilt app for these sources (bench-app.yml publishes it), else built here. On iOS, the
+# prebuilt app for these sources (the speedrun-bench repository's bench-app.yml publishes it),
+# else built here. The benchmarks are the bench/ submodule (hubastard/speedrun-bench). On iOS, the
 # simulator is booted with `speedrun fast-boot`, and a flow then clears the app's state. On the
 # web, speedrun's web flows (dev/flows/web) and the Real World App's journeys (bench/web) run in
 # Chrome and in Firefox. The JUnit reports and speedrun's debug output are kept as artifacts.
@@ -33,6 +34,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: true
 
       - uses: actions/setup-java@v6
         with:
@@ -138,6 +140,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: true
 
       - name: Select the newest Xcode
         run: |
@@ -238,6 +241,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: true
 
       - name: Install Odin
         run: |

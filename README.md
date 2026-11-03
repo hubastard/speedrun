@@ -13,7 +13,7 @@
 
 <p align="center">
   <img alt="The same test run by Maestro in 35.0 s and by Speedrun in 4.5 s" src="docs/assets/maestro-vs-speedrun-android-settings.gif" width="600"><br>
-  <sub>The same 15-step test of Android's Settings app (<a href="bench/settings/bench_scenario_android.yaml">flow</a>) on one emulator, in real time.</sub>
+  <sub>The same 15-step test of Android's Settings app (<a href="https://github.com/hubastard/speedrun-bench/blob/main/settings/bench_scenario_android.yaml">flow</a>) on one emulator, in real time.</sub>
 </p>
 
 ---
@@ -156,7 +156,7 @@ Other MCP clients, and every command: [Sessions](docs/sessions.md).
 
 ## Benchmark
 
-Speedrun is developed against [Speedrun Bench](bench/app), a React Native app built to trip up
+Speedrun is developed against [Speedrun Bench](https://github.com/hubastard/speedrun-bench/tree/main/app), a React Native app built to trip up
 UI test tools: screens that never stop moving, a button that turns on late, a loading overlay
 over a keypad, popups that arrive late, the keyboard over the checkout button, native alerts
 and permission prompts. Its 19 flows are Speedrun's regression suite on Android and iOS, and a
@@ -169,7 +169,7 @@ journey through the app runs on GitHub Actions' emulator and simulator after eve
 
 One user journey on it (sign in with a code, fill a cart, set a PIN under a loading overlay,
 scroll a long list), written for each tool the way its tests are usually written. The median
-of three runs after a warm-up, start-up included ([bench/journey](bench/journey)):
+of three runs after a warm-up, start-up included ([bench/journey](https://github.com/hubastard/speedrun-bench/tree/main/journey)):
 
 | Tool | Android emulator | iOS simulator |
 |---|---:|---:|
@@ -182,15 +182,15 @@ of three runs after a warm-up, start-up included ([bench/journey](bench/journey)
 
 - **Against Maestro, from the same flow files:** Speedrun passes all 19 of the app's flows on
   both platforms, Maestro 16 on Android and 8 on iOS. On the flows both pass, Speedrun is 8.7x
-  faster on Android and 3.0x on iOS ([bench/app](bench/app/README.md)); on the system
-  Settings app ([bench/settings](bench/settings)), 10.7x and 2.9x.
+  faster on Android and 3.0x on iOS ([bench/app](https://github.com/hubastard/speedrun-bench/blob/main/app/README.md)); on the system
+  Settings app ([bench/settings](https://github.com/hubastard/speedrun-bench/tree/main/settings)), 10.7x and 2.9x.
 - **For AI agents**, trying out a feature through each tool's MCP server: Speedrun took 4.5 s
   on Android and 7.8 s on iOS, [agent-device](https://github.com/callstackincubator/agent-device)
   8.2 s and 12.5 s, [Argent](https://github.com/software-mansion/argent) 13.0 s and 11.8 s,
-  and Speedrun's answers cost the agent the fewest tokens ([bench/agents](bench/agents)).
+  and Speedrun's answers cost the agent the fewest tokens ([bench/agents](https://github.com/hubastard/speedrun-bench/tree/main/agents)).
 
 **On the web**, the same tests written for each tool, the median of three runs after a warm-up,
-start-up included ([bench/web](bench/web)): Playwright's TodoMVC demo, and seven tests from
+start-up included ([bench/web](https://github.com/hubastard/speedrun-bench/tree/main/web)): Playwright's TodoMVC demo, and seven tests from
 the suite of Cypress's [Real World App](https://github.com/cypress-io/cypress-realworld-app),
 a payments app in React and Material UI:
 
@@ -208,7 +208,7 @@ at once, while Speedrun types it a key at a time.
 **In Firefox too**, on a GitHub Actions Linux runner (slower than the Mac: compare within a
 row), every tool in its own Firefox build: TodoMVC took 3.0 s with Speedrun, 3.9 s with
 Playwright and 9.0 s with Cypress, and the Real World App 11.5 s, 15.2 s and 21.8 s
-([the Linux results](bench/web#on-linux-in-chrome-and-firefox), Chrome's included).
+([the Linux results](https://github.com/hubastard/speedrun-bench/tree/main/web#on-linux-in-chrome-and-firefox), Chrome's included).
 
 Measured on an Apple M1 Pro with an Android 17 emulator and an iPhone 17 Pro simulator (iOS
 26.2), in October 2026 (the web: November 2026), each tool as it ships. On iOS that means
@@ -252,8 +252,8 @@ from what the page reports: its changes, requests in flight, timers and animatio
 - [Maestro compatibility](docs/maestro-compatibility.md): what is supported, and the
   differences you may notice.
 - [Troubleshooting](docs/troubleshooting.md).
-- Benchmarks: [the app and its flows](bench/app/README.md), [the journey against other
-  tools](bench/journey), [agent tools](bench/agents), [the web](bench/web).
+- Benchmarks: [the app and its flows](https://github.com/hubastard/speedrun-bench/blob/main/app/README.md), [the journey against other
+  tools](https://github.com/hubastard/speedrun-bench/tree/main/journey), [agent tools](https://github.com/hubastard/speedrun-bench/tree/main/agents), [the web](https://github.com/hubastard/speedrun-bench/tree/main/web).
 
 ## Status
 

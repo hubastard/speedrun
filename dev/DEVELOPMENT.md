@@ -199,7 +199,7 @@ what is still slow: `dev/TO_IMPROVE.md`.
 
 1. Android: the SDK with `adb` on PATH, an emulator running (or a device with USB debugging).
    iOS: Xcode (27 tested) and a booted simulator.
-2. To build: JDK 17 (Gradle comes from the wrapper in `agent/android/`, 8.14.3, downloaded on first
+2. To build: JDK 17 (Gradle comes from the wrapper in `agent/android/`, 9.8.2, downloaded on first
    run), Odin and a C compiler (`cc`) on PATH; Xcode for the iOS agent (skipped without it).
    Then, once:
 
@@ -209,6 +209,16 @@ what is still slow: `dev/TO_IMPROVE.md`.
 
 `./speedrun` then needs only `adb` (Android) or Xcode's command-line tools (iOS), and `curl`
 for flows whose scripts make HTTP requests.
+
+The benchmarks and test apps (Speedrun Bench and its flows, the journey, the web and agent
+benchmarks) are `bench/`, a git submodule: the repository
+[hubastard/speedrun-bench](https://github.com/hubastard/speedrun-bench), kept apart so their
+dependencies (Expo, Appium, Playwright, Cypress) stay out of this repository's dependency
+graph and security alerts. `git clone --recursive`, or `git submodule update --init` in a
+clone; building speedrun needs none of it. A change there (a new screen and its flow for a
+fix) is a commit in `bench/`, pushed to that repository, then a commit here that moves the
+submodule to it (`git add bench`): each speedrun commit names the benchmarks it was tested
+with.
 
 ## CI (GitHub Actions)
 
@@ -247,13 +257,18 @@ for flows whose scripts make HTTP requests.
   Java and the Gradle build took 5 of its minutes. The Android emulator has a Pixel 7's
   screen (`profile: pixel_7`): the default, 320x640, put the journey's product options under
   the page's sticky footer.
-- `.github/workflows/bench-app.yml`: when Speedrun Bench's sources change on `main`, builds
-  it for an Android emulator and an iOS simulator and uploads both to the `bench-app`
-  pre-release, named after the sources' hash (`bench/app/bench.sh hash`).
-  `bench.sh install <platform>` and the Journey workflow download the app matching the
-  checkout instead of building it (no Node needed), and build it only when none matches.
+- In the speedrun-bench repository, `bench-app.yml`: when Speedrun Bench's sources change on
+  its `main`, builds the app for an Android emulator and an iOS simulator and uploads both to
+  that repository's `bench-app` pre-release, named after the sources' hash
+  (`bench/app/bench.sh hash`). `bench.sh install <platform>` and the Journey workflow
+  download the app matching the checkout instead of building it (no Node needed), and build
+  it only when none matches. (Before the split, the release was this repository's: older
+  commits still find their builds there.)
+- `.github/workflows/bench-web.yml` (by hand): the web benchmark on Linux, every tool in
+  Chrome and Firefox (`bench/web`).
 
-Both pin Odin (`ODIN_VERSION`) to the version speedrun is developed with.
+The workflows check out the bench submodule (`submodules: true`), and pin Odin
+(`ODIN_VERSION`) to the version speedrun is developed with.
 
 ## Run
 

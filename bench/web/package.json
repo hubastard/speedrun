@@ -1,9 +1,0 @@
-{
-  "name": "speedrun-bench-web",
-  "private": true,
-  "description": "Playwright and Cypress, for the web benchmark (see README.md)",
-  "devDependencies": {
-    "@playwright/test": "1.64.1",
-    "cypress": "16.1.1"
-  }
-}

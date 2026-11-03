@@ -1,0 +1,3 @@
+[submodule "bench"]
+	path = bench
+	url = https://github.com/hubastard/speedrun-bench.git

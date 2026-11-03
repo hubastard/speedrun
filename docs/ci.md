@@ -38,7 +38,7 @@ speedrun test -p ios --device "$UDID" flows/ --format junit --output report.xml
 On Speedrun's own CI (GitHub Actions, `macos-26` runner), the iOS job went from about 10
 minutes to about 6 (9.6–11.1 minutes in its last 6 runs before, 4.7–6.7 in its first 5 with
 it), with one more flow than before. In the first run with it, Speedrun's agent started in
-33 s instead of 61 s, and the [benchmark journey](../bench/journey) ran in 51 s instead of
+33 s instead of 61 s, and the [benchmark journey](https://github.com/hubastard/speedrun-bench/tree/main/journey) ran in 51 s instead of
 76 s.
 On a 10-core Mac, with a never-booted iPhone 17 Pro (iOS 26.2):
 
