@@ -39,6 +39,9 @@ final class Input {
     private(set) var lastActionNs = DispatchTime.now().uptimeNanoseconds
     /// The last action was a swipe: its content stops at lift-up (no fling).
     private(set) var lastWasSwipe = false
+    /// The last TYPE found a field with keyboard focus, or the keyboard up (a React Native field
+    /// grouped with its label reports no focus): false, the keys went to whatever had it.
+    private(set) var typedIntoFocus = true
 
     func mark() {
         lastActionNs = DispatchTime.now().uptimeNanoseconds
@@ -127,6 +130,11 @@ final class Input {
     @discardableResult
     func type(_ text: String, screen: Screen, firstRate: Int, restRate: Int, waitCapMs: Int) throws -> Bool {
         let field = onMain { Self.focusedField(screen) }
+        if field != nil {
+            typedIntoFocus = true
+        } else {
+            typedIntoFocus = onMain { screen.foregroundApp().keyboards.firstMatch.exists }
+        }
         var text = text
         // No more DELs than the field holds characters: its value's length (the placeholder's
         // when it shows one), an upper bound wherever the cursor is. None from an empty field.

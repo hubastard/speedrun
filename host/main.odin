@@ -39,6 +39,7 @@ Op :: enum u8 {
 	Perms       = 22, // Android agent: the permissions an app requests, and their state
 	Taps        = 23, // iOS agent: repeated taps as one gesture
 	Hit         = 24, // iOS agent: the node of the last screen read a touch at a point reaches
+	Focus       = 25, // Android agent: the editable field with the input focus
 }
 
 KEYCODE_BACK :: 4
@@ -277,6 +278,17 @@ op_location :: proc(c: ^Conn, providers: []string, latitude, longitude: string, 
 }
 
 // Android: the app's name as the launcher shows it, "" when unknown. In `alloc`.
+// The editable field with the input focus, and its bounds (Android).
+op_focus :: proc(c: ^Conn) -> (found: bool, bounds: [4]i32, ok: bool) {
+	body: []byte
+	body, _, ok = call(c, []byte{u8(Op.Focus)})
+	if !ok do return
+	r := Reader{b = body, ok = true}
+	found = rd_u8(&r) != 0
+	for k in 0 ..< 4 do bounds[k] = i32(rd_u32(&r))
+	return found, bounds, r.ok
+}
+
 op_label :: proc(c: ^Conn, app: string, alloc: mem.Allocator) -> (label: string, ok: bool) {
 	body: []byte
 	body, _, ok = call(c, str_request(.Label, app, context.temp_allocator))
@@ -444,7 +456,8 @@ op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32, fling := false, can
 }
 
 // Key events into the focused field; `skipped` characters had no key sequence.
-op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Result, skipped: u32, ok: bool) {
+// `focused`: a text field had the input focus (false: the keys went to whatever had it).
+op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Result, skipped: u32, focused: bool, ok: bool) {
 	body: []byte
 	body, _, ok = call(c, str_request(.Type, text, alloc))
 	if !ok do return
@@ -452,7 +465,8 @@ op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Re
 	if !ok do return
 	r := Reader{b = body[9:], ok = true} // after prep_us, inject_us, inject_path
 	skipped = rd_u32(&r)
-	return res, skipped, r.ok
+	focused = rd_u8(&r) != 0
+	return res, skipped, focused, r.ok
 }
 
 // `count` DEL presses.

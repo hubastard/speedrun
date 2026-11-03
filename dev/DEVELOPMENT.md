@@ -909,6 +909,19 @@ Known differences in how, not what:
   process), iOS libproc's thread info (`com.facebook.react.JavaScript`, or
   `.runtime.JavaScript`; a simulator's apps are processes of the Mac): `JsThread.kt`, and
   `JsThread` in `Settle.swift`. Other apps have no such thread and settle as before.
+- A tap on a text field, or on an element holding exactly one (a test tag on a wrapper, as in
+  issue #8), is checked for the focus: when the field is still unfocused and the screen
+  exactly as it was (`hash` unchanged), the tap was lost (another field kept the focus, and
+  `inputText` typed there), and it is tapped again at the same point, once. Android asks the
+  agent's `FOCUS` op where the input focus is (~2 ms, after every such tap) and reads the
+  screen only when it is not where the field was; iOS reads only after a tap whose settle saw
+  no change. No retap after any change: a field that opens a picker takes no focus. Android's
+  "the tap changed nothing yet" wait leaves such taps out. `TYPE` reports whether a field had
+  the input focus (Android: `findFocus(FOCUS_INPUT)`, else a focused editable node in the
+  active window; iOS: an element with keyboard focus, else the keyboard up, as a React Native
+  field grouped with its label reports none); without one, the step ends WARNED (the
+  runner's `warning`). Bench: Transitions' reference field, under a see-through layer that
+  takes the first touch only; the native lab form's code field, its test tag on a box.
 - `SPEEDRUN_CONDITION_TIMEOUT_MS` replaces the 7 s of a `when:` check (not of an
   assertion or a lookup): flows that dismiss popups "if they show" after every action
   otherwise wait 7 s after each. A condition's own `timeout` (a field Maestro does not

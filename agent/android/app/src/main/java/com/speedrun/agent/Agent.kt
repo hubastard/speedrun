@@ -97,11 +97,13 @@ internal object AgentLog {
  *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
- *                                               u32 skipped
+ *                                               u32 skipped, u8 focused
  *        key events into the focused field (virtual keyboard map, like `adb shell input
  *        text`). Text with a character no key produces (most non-ASCII) is inserted at the
  *        focused field's cursor instead, whole (insertText). skipped = characters not typed:
- *        those with no key sequence when no editable field has the input focus.
+ *        those with no key sequence when no editable field has the input focus. focused = 1
+ *        when an editable field had the input focus as typing began (0: the keys went to
+ *        whatever had it).
  *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        count DEL key presses.
  *  12 MARK                                   -> (empty)
@@ -119,6 +121,8 @@ internal object AgentLog {
  *        the permissions the app requests (Permissions): flags bit 0 granted, bit 1
  *        runtime; app_op_mode for MANAGE_EXTERNAL_STORAGE (0 allowed, 2 errored, 3 default),
  *        255 for the others. ok 0 = not readable here: use dumpsys.
+ *  25 FOCUS                                   -> u8 found, i32 left, top, right, bottom
+ *        the editable field with the input focus (inputFocus), and its bounds.
  *  21 LABEL    str package                     -> str label ("" when unknown)
  *        the app's name in the device's language (AppLabel).
  *  20 LOCATION str "providers lat lon interval_ms"
@@ -172,6 +176,7 @@ private object Op {
     const val LOCATION = 20
     const val LABEL = 21
     const val PERMS = 22
+    const val FOCUS = 25
 }
 
 // SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
@@ -360,6 +365,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.LOCATION -> location(readStr(input))
             Op.LABEL -> writeStr(AppLabel.of(readStr(input)) ?: "")
             Op.PERMS -> writePermissions(readStr(input))
+            Op.FOCUS -> writeFocus()
             Op.LAUNCHED -> body.writeByte(if (launched(readStr(input), input.readInt())) 1 else 0)
             else -> throw IOException("unknown op $op")
         }
@@ -760,6 +766,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun type(text: String) {
         var skipped = 0
+        val focused = inputFocus() != null
         timedAction {
             val keys = ArrayList<Array<KeyEvent>>()
             for (ch in text) {
@@ -778,6 +785,40 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             injectKeys(keys)
         }
         body.writeInt(skipped)
+        body.writeByte(if (focused) 1 else 0)
+    }
+
+    /**
+     * The editable field with the input focus: the view system's input focus, else a focused
+     * editable node in the active window (where the input-focus lookup finds none, as in a
+     * view that draws its own nodes). Null when there is none, or the window went away.
+     */
+    private fun inputFocus(): AccessibilityNodeInfo? = try {
+        val node = ua.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (node != null && node.isEditable) node
+        else {
+            var found: AccessibilityNodeInfo? = null
+            val nodes = ArrayDeque<AccessibilityNodeInfo>()
+            ua.rootInActiveWindow?.let { nodes.addLast(it) }
+            while (nodes.isNotEmpty() && found == null) {
+                val n = nodes.removeLast()
+                if (n.isFocused && n.isEditable) found = n
+                else for (i in 0 until n.childCount) nodes.addLast(n.getChild(i) ?: continue)
+            }
+            found
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun writeFocus() {
+        val node = inputFocus()
+        body.writeByte(if (node != null) 1 else 0)
+        if (node != null) node.getBoundsInScreen(bounds) else bounds.setEmpty()
+        body.writeInt(bounds.left)
+        body.writeInt(bounds.top)
+        body.writeInt(bounds.right)
+        body.writeInt(bounds.bottom)
     }
 
     /**

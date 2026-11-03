@@ -91,6 +91,7 @@ Runner :: struct {
 	depth:                int,
 	path:                 string, // of the command being run
 	debug:                bool, // SPEEDRUN_DEBUG: print every hierarchy read and shell command
+	warning:              string, // the running command succeeded, with this to say: WARNED
 	trace:                Trace, // what debug prints, kept for a failed flow's logs/debug.log
 	view:                 View, // console output (console.odin)
 	reads, read_ms_total: f64,
@@ -462,6 +463,7 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "", mutated: ^bool = nil) -
 		append(&r.evals, nil)
 		saved_rec, saved_node := r.log_rec, r.log_node
 		r.log_rec, r.log_node = seq, node
+		r.warning = ""
 		mutating, err := exec(r, &c)
 		// The agent's connection lost (it crashed, or closed it on an error, as a just-booted
 		// CI simulator has shown): connected again, the agent started again if it has to be,
@@ -485,6 +487,8 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "", mutated: ^bool = nil) -
 		rec.duration_ms = us(t) / 1000
 		msg, failed := err.?
 		switch {
+		case !failed && r.warning != "":
+			rec.status, rec.error = "WARNED", r.warning
 		case !failed:
 			rec.status = "COMPLETED"
 		case msg == SKIPPED:
@@ -494,6 +498,7 @@ run_list :: proc(r: ^Runner, cmds: []Cmd, section := "", mutated: ^bool = nil) -
 		case:
 			rec.status, rec.error = "FAILED", msg
 		}
+		r.warning = ""
 		if mutating do r.last_interaction = time.tick_now()
 		if mutating && rec.status == "COMPLETED" && mutated != nil do mutated^ = true
 		first_line, _, _ := strings.partition(rec.error, "\n")
@@ -859,8 +864,12 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 }
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
-	res, skipped, ok := op_type(r.c, text, r.alloc)
+	res, skipped, focused, ok := op_type(r.c, text, r.alloc)
 	if !ok do return AGENT_LOST
+	if !focused {
+		note(r, "no text field had the input focus")
+		r.warning = "No text field had the input focus, so the text may have gone nowhere: did the tap on the field before it land?"
+	}
 	if res.inject_path == .None do return nil
 	if skipped > 0 {
 		return fmt.aprintf("Could not type \"%s\": %d characters have no key sequence, and no editable field has the input focus to insert them into", text, skipped, allocator = r.alloc)
@@ -935,6 +944,9 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	}
 	center: [2]i32 // the element's center when tapped (the tap can land off it: uncovered_point)
 	in_sheet := false // iOS: the element is in a system sheet or alert (sheet_retries)
+	on_field := false // the element is a text field or holds one (field_of)
+	to_focus := false // a text field the tap should focus (the focus check after the tap)
+	field_at: [4]i32 // that field's bounds when tapped
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
 		ok: bool
@@ -1000,6 +1012,12 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		n := r.h.nodes[el]
 		center = {n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2}
 		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
+		f := field_of(r, el)
+		on_field = f >= 0
+		if on_field && r.dev.platform != .Web && .Focused not_in r.h.nodes[f].flags {
+			to_focus = true
+			field_at = {r.h.nodes[f].left, r.h.nodes[f].top, r.h.nodes[f].right, r.h.nodes[f].bottom}
+		}
 		if r.dev.platform == .IOS {
 			for k := r.h.nodes[el].parent; k >= 0 && !in_sheet; k = r.h.nodes[k].parent {
 				in_sheet = r.h.nodes[k].class == "Sheet" || r.h.nodes[k].class == "Alert"
@@ -1019,6 +1037,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	// The screen was read since the last tap: the checks below share that read (one costs
 	// ~180 ms on iOS).
 	read_since_tap := false
+	retapped := false
 	for attempt := 0; attempt < (2 if d.retry else 1); attempt += 1 {
 		// iOS: repeated taps (doubleTapOn) as one gesture, else they land ~230 ms apart.
 		if r.dev.platform != .Android && d.repeat > 1 && !d.long_press {
@@ -1063,9 +1082,9 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// Back, on the closing screen, went nowhere; a tab, on a closing modal). So a tap after
 		// which the screen holds the same elements saying the same (where they are left out: a
 		// ticker moves on every read) waits for a change until SETTLE_NO_CHANGE_MS after it, as
-		// a tap that drew nothing does. A field the tap focuses needs no JavaScript: left out.
-		if r.dev.platform == .Android && status == .Settled && d.repeat == 1 && !d.long_press &&
-		   !strings.has_suffix(tapped.class, "EditText") {
+		// a tap that drew nothing does. A field the tap focuses needs no JavaScript: left out
+		// (the focus check below sees to it).
+		if r.dev.platform == .Android && status == .Settled && d.repeat == 1 && !d.long_press && !on_field {
 			if !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
 			if r.h.content == content_before {
@@ -1112,6 +1131,36 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				// predate its focus flag): that is no miss.
 				if same && moved && (typing_before || !typing(r)) {
 					x, y = nx + x - center.x, ny + y - center.y
+					if !tap_at(r, x, y, frame) do return AGENT_LOST
+					settle(r, d.settle_ms) or_return
+					read_since_tap = false
+					retapped = true
+				}
+			}
+		}
+		// A tap on a text field (or on an element around one: a test tag on its wrapper) gives
+		// it the focus, and inputText types where the focus is. A tap after which the screen is
+		// exactly as it was, the field still unfocused (another field keeping the focus: issue
+		// #8), was lost: tap again at the same point, once. Not after any change (a field that
+		// opens a picker takes no focus). Android asks the agent where the focus is (~2 ms) and
+		// reads the screen only when it is not where the field was (a field can also move out
+		// of the keyboard's way); iOS reads only after a settle that saw no change, or a read
+		// that did not either (its reads take longer).
+		if to_focus && !retapped && d.point == "" && d.repeat == 1 && !d.long_press && attempt == 0 && !d.once {
+			check := status == .No_Change || (read_since_tap && r.h.content == content_before)
+			if r.dev.platform == .Android {
+				found, at, ok := op_focus(r.c)
+				if !ok do return AGENT_LOST
+				check = !found || at[0] >= field_at[2] || at[2] <= field_at[0] || at[1] >= field_at[3] || at[3] <= field_at[1]
+				if check do note(r, "the input focus is not where the tapped field was (%s)", fmt.tprintf("at %d,%d-%d,%d", at[0], at[1], at[2], at[3]) if found else "nowhere")
+			}
+			if check {
+				if !read_since_tap && !read_screen(r) do return AGENT_LOST
+				read_since_tap = true
+				el := select(r, d.sel) or_return
+				f := field_of(r, el) if el >= 0 else -1
+				if f >= 0 && .Focused not_in r.h.nodes[f].flags && r.h.hash == before {
+					note(r, "the tap left the text field unfocused and the screen as it was: tapping it again")
 					if !tap_at(r, x, y, frame) do return AGENT_LOST
 					settle(r, d.settle_ms) or_return
 					read_since_tap = false
@@ -1204,6 +1253,28 @@ window_texts :: proc(r: ^Runner, el: int) -> map[u64]struct{} {
 		}
 	}
 	return set
+}
+
+// A text field on Android or iOS: what inputText types into once it has the focus.
+@(private = "file")
+text_field :: proc(n: H_Node) -> bool {
+	switch n.class {
+	case "TextField", "SecureTextField", "TextView", "SearchField": return true
+	}
+	return strings.has_suffix(n.class, "EditText")
+}
+
+// The text field node `el` is, or the only one shown inside it (a test tag on a field's
+// wrapper); -1 when none, or several.
+@(private = "file")
+field_of :: proc(r: ^Runner, el: int) -> int {
+	if text_field(r.h.nodes[el]) do return el
+	found := -1
+	for k in subtree(r, el) do if k != el && r.h.nodes[k].kept && text_field(r.h.nodes[k]) {
+		if found >= 0 do return -1
+		found = k
+	}
+	return found
 }
 
 // A keyboard is up or a text field has the focus, in the last read.

@@ -27,7 +27,8 @@
 //   7 SWIPE  i32 x1, y1, x2, y2, duration_ms, flags -> same
 //        flags & 1 (fling): a swipe gliding over duration_ms; otherwise a drag that stops when
 //        the touch lifts (Input.drag; duration_ms unused)
-//   8 TYPE   str text                       -> same, u32 skipped (always 0)
+//   8 TYPE   str text                       -> same, u32 skipped (always 0), u8 focused (a field
+//                                              had keyboard focus or the keyboard was up)
 //   9 ERASE  i32 count                      -> same   (count deletes, at most the focused
 //                                                     field's length; inject_path 255: none)
 //   4 KEY    i32 android_keycode            -> same   (ENTER, DEL, HOME, POWER; others no-op)

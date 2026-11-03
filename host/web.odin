@@ -794,6 +794,7 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 		web_type(w, text)
 		wr_action(b, u32(time.duration_microseconds(time.tick_since(t))), text != "")
 		wr_u32(b, 0)
+		wr_u8(b, 1) // focused: not checked on the web
 	case u8(Op.Erase):
 		count := rd_req_i32(client, &ok)
 		if !ok do return .Lost

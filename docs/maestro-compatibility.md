@@ -69,6 +69,13 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   lookup and the tap (a screen still laying out), nothing changed after the tap, and the
   element is still there, unchanged, on the same screen, Speedrun taps it again where it is
   now, once. `retryTapIfNoChange: false` on the command turns that off: exactly one tap.
+- **A tap on a text field that did not give it the focus is tapped again.** When the screen is
+  exactly as it was after the tap and the field (or the one inside the tapped element) still
+  doesn't have the focus, the tap was lost: Speedrun taps once more, so `inputText` types
+  into that field and not into the one that had the focus. `retryTapIfNoChange: false` turns
+  that off too.
+- **`inputText` when no text field has the focus ends as a warning** that says so, at that
+  step: the text may have gone nowhere. The flow goes on.
 - **Android animations are turned off** for every run and session, as is usual for UI tests,
   and put back as they were when it ends.
 - **iOS apps started by `launchApp` animate 10x faster.** This speeds up screen transitions

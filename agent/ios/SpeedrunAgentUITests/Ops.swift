@@ -39,6 +39,7 @@ final class Ops {
             let text = try conn.readStr()
             try input.type(text, screen: screen, out: &out)
             out.u32(0) // skipped: none, any character can be typed
+            out.u8(input.typedIntoFocus ? 1 : 0)
         case 9: // ERASE
             let count = try conn.readI32()
             try input.type(String(repeating: "\u{8}", count: Int(max(0, min(count, 10_000)))), screen: screen, out: &out)
