@@ -29,6 +29,9 @@ const install = () => {
 	// What moves or resizes elements, the animations a tap must not land in the middle of. A
 	// fade or a color change leaves every element where it is.
 	const GEOMETRY = /^(transform|translate|scale|rotate|top|left|right|bottom|inset|width|height|min-|max-|margin|padding|flex|grid|font-size|line-height|border-width|offset)/
+	const TRANSFORM = /^(transform|translate|scale|rotate)/
+	// A timer due within this of an animation's end is that animation's cleanup.
+	const CLEANUP_SLACK_MS = 34
 
 	const state = {
 		changed: now(), // the last change the page made
@@ -56,7 +59,7 @@ const install = () => {
 
 	// Short timers (setTimeout up to TIMER_BUSY_MS) as activity until they run or are cleared:
 	// those an event handler or a promise sets, not those a timer sets (a polling loop, a
-	// JavaScript animation would never let the page settle).
+	// JavaScript animation would never let the page settle) or a layout observer (below).
 	const setTimeout_ = window.setTimeout, clearTimeout_ = window.clearTimeout
 	let inTimer = false
 	window.setTimeout = function (fn, delay, ...rest) {
@@ -76,6 +79,20 @@ const install = () => {
 		state.timers.delete(id)
 		return clearTimeout_.call(this, id)
 	}
+	// Nor those a layout observer sets: a resize handler's debounce (Material UI's tabs move
+	// their indicator 166 ms after a layout) is the page's reaction to its own layout.
+	if (window.ResizeObserver) {
+		const ResizeObserver_ = window.ResizeObserver
+		window.ResizeObserver = class ResizeObserver extends ResizeObserver_ {
+			constructor(callback) {
+				super(function () {
+					const outer = inTimer
+					inTimer = true
+					try { return callback.apply(this, arguments) } finally { inTimer = outer }
+				})
+			}
+		}
+	}
 
 	// ---- what the page does ----
 	// A node that has kept changing for RESTLESS_MS, never still for PAUSE_MS (a ticking
@@ -84,21 +101,42 @@ const install = () => {
 	// each second) counts each time.
 	const RESTLESS_MS = 500, PAUSE_MS = 250
 	const changing = new WeakMap() // node -> [since, last]
+	// Whether a change to node n at t counts (n is not restless).
+	const counts = (n, t) => {
+		let s = changing.get(n)
+		if (!s || t - s[1] > PAUSE_MS) s = [t, t]
+		else s[1] = t
+		changing.set(n, s)
+		return t - s[0] < RESTLESS_MS
+	}
 	const mutated = (records) => {
 		const t = now()
-		let counts = false
-		for (const r of records) {
-			const n = r.target.nodeType === 1 ? r.target : r.target.parentNode || r.target
-			let s = changing.get(n)
-			if (!s || t - s[1] > PAUSE_MS) s = [t, t]
-			else s[1] = t
-			changing.set(n, s)
-			if (t - s[0] < RESTLESS_MS) counts = true
-		}
-		if (counts) changed()
+		let any = false
+		for (const r of records) if (counts(r.target.nodeType === 1 ? r.target : r.target.parentNode || r.target, t)) any = true
+		if (any) changed()
 	}
 	new MutationObserver(mutated).observe(document, { subtree: true, childList: true, characterData: true, attributes: true })
-	for (const type of ['input', 'change', 'scroll', 'focusin', 'focusout', 'transitionstart', 'transitionend', 'animationstart', 'animationend', 'load', 'DOMContentLoaded'])
+	// Elements that moved without a change to the page's nodes: an image without a set size
+	// that loaded, a font that swapped in, a stylesheet that arrived (Chrome's layout shifts).
+	// An image's load is no change of its own: one with a set size moves nothing (an avatar
+	// from another server arriving after the screen came up).
+	try {
+		new PerformanceObserver((list) => {
+			const t = now()
+			let any = false
+			for (const e of list.getEntries()) {
+				if (!e.sources || !e.sources.length) any = true
+				else for (const s of e.sources) if (!s.node || (!animating(s.node) && counts(s.node, t))) any = true
+			}
+			if (any) changed()
+		}).observe({ type: 'layout-shift' })
+	} catch (e) {}
+	const loaded = (e) => {
+		const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : ''
+		if (tag === 'iframe' || tag === 'frame' || !tag) changed()
+	}
+	document.addEventListener('load', loaded, { capture: true, passive: true })
+	for (const type of ['input', 'change', 'scroll', 'focusin', 'focusout', 'transitionstart', 'transitionend', 'animationstart', 'animationend', 'DOMContentLoaded'])
 		document.addEventListener(type, changed, { capture: true, passive: true })
 	window.addEventListener('resize', changed, { passive: true })
 	window.addEventListener('popstate', changed, { passive: true })
@@ -129,31 +167,101 @@ const install = () => {
 		}
 	}
 
-	// Work the page still has under way: requests in their first REQUEST_BUSY_MS, finite CSS
-	// animations and transitions still running (an endless one, a spinner, never ends).
+	// Work the page still has under way: requests in their first REQUEST_BUSY_MS, short timers,
+	// finite CSS animations and transitions still running (an endless one, a spinner, never
+	// ends) that move other elements (reflows). One that moves only its own element and what it
+	// holds (a transform, a field's label floating up, a drawer sliding in, a button's ripple)
+	// is waited for only when a tap aims there (steady). A timer that ends with such an
+	// animation is its cleanup (a transition library's, removing the ripple): no work either.
+	// What is under way ('' when nothing): 'request', 'animation <property>', 'timer <ms>'.
 	const busy = (t) => {
-		for (const start of state.requests.values()) if (t - start < REQUEST_BUSY_MS) return true
-		for (const [set, due] of state.timers.values()) if (set >= state.mark && due + 50 > t) return true
-		if (document.getAnimations) {
-			for (const a of document.getAnimations()) {
-				if (a.playState !== 'running' || !moves(a)) continue
-				const timing = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null
-				if (timing && Number.isFinite(timing.endTime)) return true
-			}
+		for (const start of state.requests.values()) if (t - start < REQUEST_BUSY_MS) return 'request'
+		let pending = 0
+		for (const [set, due] of state.timers.values()) if (set >= state.mark && due + 50 > t) pending++
+		if (!pending && !document.getAnimations) return ''
+		const ends = [] // when the animations that do not count end
+		for (const a of document.getAnimations ? document.getAnimations() : []) {
+			if (a.playState !== 'running') continue
+			const timing = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null
+			if (!timing || !Number.isFinite(timing.endTime)) continue
+			if (reflows(a)) return 'animation ' + animated(a).join(' ')
+			const start = a.startTime === null ? t : a.startTime
+			ends.push(start + timing.endTime / (Math.abs(a.playbackRate) || 1))
 		}
-		return false
+		for (const [set, due] of state.timers.values()) {
+			if (set < state.mark || due + 50 <= t) continue
+			if (!ends.some((end) => Math.abs(end - due) <= CLEANUP_SLACK_MS)) return 'timer ' + Math.round(due - set)
+		}
+		return ''
 	}
-	// An animation that moves or resizes what it animates.
-	const moves = (a) => {
-		if (a.transitionProperty) return GEOMETRY.test(a.transitionProperty) || a.transitionProperty === 'all'
+	// The properties an animation animates.
+	const animated = (a) => {
+		if (a.transitionProperty) return [a.transitionProperty]
+		const out = []
 		try {
 			for (const k of a.effect.getKeyframes()) for (const p in k) {
 				if (p === 'offset' || p === 'easing' || p === 'composite' || p === 'computedOffset') continue
-				if (GEOMETRY.test(p.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()))) return true
+				out.push(p.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()))
 			}
-		} catch (e) { return true }
+		} catch (e) { return ['all'] }
+		return out
+	}
+	// An animation that moves or resizes what it animates.
+	const moves = (a) => animated(a).some((p) => GEOMETRY.test(p) || p === 'all')
+	// An animation that moves other elements a tap could aim at: one of the layout's properties
+	// (not a transform, which leaves the layout as it is) on an element in the flow (not
+	// absolutely positioned), whose reflow reaches something clickable. A reflow stops at the
+	// nearest absolutely positioned container; one that pointer-events: none leaves out holds
+	// only decoration (a text field's outline, its notch opening for the label).
+	const reflows = (a) => {
+		if (!animated(a).some((p) => (GEOMETRY.test(p) && !TRANSFORM.test(p)) || p === 'all')) return false
+		const el = a.effect && a.effect.target
+		if (!el || !el.isConnected) return !el
+		if (positioned(el)) return false
+		for (let p = el.parentElement; p; p = p.parentElement) {
+			if (positioned(p)) return getComputedStyle(p).pointerEvents !== 'none'
+		}
+		return true
+	}
+	const positioned = (el) => {
+		const position = getComputedStyle(el).position
+		return position === 'absolute' || position === 'fixed'
+	}
+	// Node n moves by an animation of its own (left alone by layout shifts: busy and steady
+	// judge the animation).
+	const animating = (n) => {
+		const el = n.nodeType === 1 ? n : n.parentElement
+		if (!el || !el.getAnimations) return false
+		for (const a of el.getAnimations()) if (a.playState === 'running' && moves(a)) return true
 		return false
 	}
+
+	// STEADY: resolves true once element i of the last read and its containers have stopped
+	// moving (the animations that do not count as the page's work: they move only what they
+	// animate), at once false when none moves; after `timeout` ms at most. A tap mid-slide
+	// lands where the element was.
+	const steady = (i, timeout) => new Promise((resolve) => {
+		const moving = []
+		for (let el = state.last[i]; el && el.getAnimations; el = el.parentElement) {
+			for (const a of el.getAnimations()) {
+				if (a.playState !== 'running' || !moves(a)) continue
+				const timing = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null
+				if (timing && Number.isFinite(timing.endTime)) moving.push(a.finished.catch(() => {}))
+			}
+		}
+		if (!moving.length) return resolve(false)
+		// Then a frame, for the layout to show where it rests (or a timer's: a page the browser
+		// does not draw has no frames).
+		let done = false
+		const finish = () => {
+			if (done) return
+			done = true
+			requestAnimationFrame(() => resolve(true))
+			setTimeout_(() => resolve(true), 50)
+		}
+		Promise.all(moving).then(finish)
+		setTimeout_(finish, timeout)
+	})
 
 	// ---- reading the page (maestro-web.js's traverse) ----
 	const nodeText = (node, tag) => {
@@ -306,21 +414,23 @@ const install = () => {
 	// MARK: the next settle measures from now.
 	const mark = () => { state.mark = now(); return state.mark }
 
-	// SETTLE: resolves with "status,uiDoneMs,waitedMs,frames" (status 0 settled, 1 no change,
+	// SETTLE: resolves with "status,uiDoneMs,waitedMs,frames,why" (status 0 settled, 1 no change,
 	// 2 timeout), checked after each change and on each frame. Settled: the page changed since
-	// the mark, then nothing changed for `quiet` ms with no work under way. No change: nothing
+	// the mark, then nothing changed for `quiet` ms with no work under way (why: the last work
+	// it waited for, busy's). No change: nothing
 	// changed and nothing is under way `noChange` ms after the mark. `changedBefore`: a change
 	// the page cannot see happened (a navigation to this document).
 	// Quiet: a frame drawn since the last change (and `quiet` ms at most since it).
 	const settle = (quiet, noChange, timeout, changedBefore) => new Promise((resolve) => {
 		const start = state.mark
 		const startFrame = state.frame
-		let frames = 0, timer = 0, raf = 0, done = false
+		let frames = 0, timer = 0, raf = 0, done = false, why = ''
 		const check = () => {
 			if (done) return
 			const t = now()
 			const sawChange = changedBefore || state.changed > start
 			const working = busy(t)
+			if (working) why = working
 			const drawn = state.frame > state.changedFrame || t - state.changed >= quiet
 			let status = -1
 			if (sawChange && !working && drawn) status = 0
@@ -329,15 +439,16 @@ const install = () => {
 			if (status < 0) return
 			done = true
 			cancelAnimationFrame(raf)
-			clearTimeout(timer)
+			clearTimeout_(timer)
 			state.settled = now()
-			resolve(status + ',' + Math.max(0, Math.round(state.changed - start)) + ',' + Math.round(t - start) + ',' + frames)
+			resolve(status + ',' + Math.max(0, Math.round(state.changed - start)) + ',' + Math.round(t - start) + ',' + frames + ',' + why)
 		}
 		const frame = () => { frames++; check(); if (!done) raf = requestAnimationFrame(frame) }
 		// A timer as well: frames stop in a page the browser does not draw (a hidden window).
-		const tick = () => { check(); if (!done) timer = setTimeout(tick, 16) }
+		// (The page's own setTimeout counts timers as its work: the original.)
+		const tick = () => { check(); if (!done) timer = setTimeout_(tick, 16) }
 		raf = requestAnimationFrame(frame)
-		timer = setTimeout(tick, 16)
+		timer = setTimeout_(tick, 16)
 		check()
 	})
 
@@ -352,6 +463,28 @@ const install = () => {
 		const tag = el.tagName.toLowerCase()
 		if ((tag === 'input' || tag === 'textarea') && !el.readOnly && !el.disabled) return (el.value || '').length
 		return -1
+	}
+
+	// Selects all the focused field's text (eraseText of all of it: one Backspace then); false
+	// when it cannot.
+	const selectField = () => {
+		let el = document.activeElement, doc = document
+		while (el && el.tagName && el.tagName.toLowerCase() === 'iframe') {
+			try { doc = el.contentDocument; el = doc.activeElement } catch (e) { return false }
+		}
+		if (!el) return false
+		try {
+			if (el.isContentEditable) {
+				const range = doc.createRange()
+				range.selectNodeContents(el)
+				const sel = doc.getSelection()
+				sel.removeAllRanges()
+				sel.addRange(range)
+				return true
+			}
+			el.select()
+			return true
+		} catch (e) { return false }
 	}
 
 	// A tap on an <option> (synthetic coordinates): select it, as Maestro's tapOnSyntheticElement.
@@ -377,7 +510,7 @@ const install = () => {
 	})
 
 	Object.defineProperty(window, '__speedrun', {
-		value: { document, tree, hit, css, mark, settle, fieldLength, tapOption, changed, waitChange, reveal },
+		value: { document, tree, hit, css, mark, settle, fieldLength, selectField, tapOption, changed, waitChange, reveal, steady },
 		enumerable: false,
 		configurable: true,
 	})

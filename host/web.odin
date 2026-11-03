@@ -55,6 +55,7 @@ WEB_OP_GEO :: 29 // str "latitude longitude" -> empty
 WEB_OP_RECORD :: 30 // u8 on -> (off) u32 count, count * (u32 ms, u32 len, jpeg)
 WEB_OP_CHANGE :: 31 // i32 timeout_ms -> u8 changed: waits for the page to change after the last read
 WEB_OP_REVEAL :: 32 // i32 index in the last read -> u8 ok: scrolls it into view
+WEB_OP_STEADY :: 33 // i32 index in the last read, i32 timeout_ms -> u8 waited: until it stops moving
 
 Web_Page :: struct {
 	session: string, // its DevTools session
@@ -808,6 +809,13 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 		v, _ := web_eval(w, fmt.tprintf("%s.reveal(%d)", WEB_AGENT, i), false)
 		revealed, _ := v.(json.Boolean)
 		wr_u8(b, 1 if revealed else 0)
+	case WEB_OP_STEADY:
+		i := rd_req_i32(client, &ok)
+		timeout := rd_req_i32(client, &ok)
+		if !ok do return .Lost
+		v, _ := web_eval(w, fmt.tprintf("%s.steady(%d, %d)", WEB_AGENT, i, timeout), true, time.Duration(timeout) * time.Millisecond + 5 * time.Second)
+		waited, _ := v.(json.Boolean)
+		wr_u8(b, 1 if waited else 0)
 	case WEB_OP_RECORD:
 		on: [1]byte
 		if !recv_all(client, on[:]) do return .Lost
@@ -1031,13 +1039,20 @@ web_type :: proc(w: ^Web, text: string) {
 	web_wait(w, last)
 }
 
-// eraseText: Backspace `count` times, at most as many as the focused field holds. False: an
-// empty field, nothing to erase.
+// eraseText: Backspace `count` times, at most as many as the focused field holds; all of it
+// selected and one Backspace when it holds no more. False: an empty field, nothing to erase.
 @(private = "file")
 web_erase :: proc(w: ^Web, count: int) -> bool {
 	v, _ := web_eval(w, WEB_AGENT + ".fieldLength()", false)
 	n := int(json_num(v))
 	if n == 0 do return false
+	if n > 0 && n <= count {
+		all, _ := web_eval(w, WEB_AGENT + ".selectField()", false)
+		if selected, _ := all.(json.Boolean); selected {
+			web_wait(w, web_key_events(w, {"Backspace", "Backspace", 8, ""}))
+			return true
+		}
+	}
 	if n > 0 do n = min(n, count)
 	else do n = count
 	last := 0
@@ -1089,12 +1104,13 @@ web_settle :: proc(w: ^Web, quiet, no_change, timeout: i32, b: ^[dynamic]byte) {
 		// A navigation that began while the old document sat still: settle on the new one.
 		if w.navigating do continue
 		parts := strings.split(v.(json.String) or_else "", ",", context.temp_allocator)
-		if len(parts) == 4 {
+		if len(parts) == 5 {
 			st, _ := strconv.parse_int(parts[0])
 			ui, _ := strconv.parse_int(parts[1])
 			fr, _ := strconv.parse_int(parts[3])
 			status, ui_done, frames = u8(st), u32(ui) * 1000, u32(fr)
 			if navigated && status == u8(Settle_Status.No_Change) do status = u8(Settle_Status.Settled)
+			if web_debug do fmt.eprintfln("web settle %s (last waited for: %s)", v.(json.String) or_else "", parts[4] if parts[4] != "" else "changes")
 		}
 		break
 	}
@@ -1381,6 +1397,18 @@ op_web_reveal :: proc(c: ^Conn, index: int) -> (revealed, ok: bool) {
 	req: [5]byte
 	req[0] = WEB_OP_REVEAL
 	put_i32(req[1:5], i32(index))
+	body: []byte
+	body, _, ok = call(c, req[:])
+	return ok && len(body) > 0 && body[0] == 1, ok
+}
+
+// Waits up to `timeout_ms` for node `index` of the last read and its containers to stop moving;
+// true when it waited (the element is to be found again, where it rests).
+op_web_steady :: proc(c: ^Conn, index: int, timeout_ms: i32) -> (waited, ok: bool) {
+	req: [9]byte
+	req[0] = WEB_OP_STEADY
+	put_i32(req[1:5], i32(index))
+	put_i32(req[5:9], timeout_ms)
 	body: []byte
 	body, _, ok = call(c, req[:])
 	return ok && len(body) > 0 && body[0] == 1, ok

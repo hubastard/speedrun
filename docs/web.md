@@ -50,10 +50,15 @@ Each run starts with a fresh profile: no cookies, storage or cache from an earli
 
 A step starts when the page has finished reacting to the one before, which Speedrun learns
 from the page itself: changes to the page, input, scrolls, requests still in flight, short
-timers that have not run yet, and animations that move or resize something. It does not
-compare screenshots or poll: a lookup waiting for an element reads the page again the moment
-it changes. Things that never stop (a ticking counter, a spinner, an autoplaying carousel)
-don't hold a step up.
+timers that have not run yet, elements that shifted, and animations that push other
+elements around (a panel growing open). It does not compare screenshots or poll: a lookup
+waiting for an element reads the page again the moment it changes. Things that never stop (a
+ticking counter, a spinner, an autoplaying carousel) don't hold a step up.
+
+An animation that moves only its own element (a menu growing in, a drawer sliding in, a
+field's label floating up, a button's ripple) holds up only a tap aimed at that element or
+something in it: the tap waits for it to come to rest, then lands where it is. A tap that
+something else would take (a dialog still fading out over the page) waits for it to go.
 
 ## What each command does in the browser
 

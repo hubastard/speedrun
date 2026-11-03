@@ -39,22 +39,33 @@ what is still slow: `dev/TO_IMPROVE.md`.
   pipe there and Playwright's flags, in its own session). An agent thread in the speedrun
   process serves the same binary protocol as the device agents on 127.0.0.1 (a random port,
   the per-run token first), so the runner, sessions and MCP drive the browser as a device,
-  plus web ops (25-32: navigate, clear an origin's data, CSS matches, launch arguments as
-  globals, geolocation, screencast, wait for a change, scroll into view). `agent.js` is added
+  plus web ops (25-33: navigate, clear an origin's data, CSS matches, launch arguments as
+  globals, geolocation, screencast, wait for a change, scroll into view, wait for an element
+  to stop moving). `agent.js` is added
   to every new document (`Page.addScriptToEvaluateOnNewDocument`) and set up again through
   `WEB_AGENT` when a window keeps its object across documents (`window.open`'s about:blank,
   which Chrome runs no script for). It reads the page with Maestro's rules (maestro-web.js)
-  and settles from what the page reports: DOM mutations, input, scrolls, focus, requests in
+  and settles from what the page reports: DOM mutations, input, scrolls, focus, layout
+  shifts (Chrome's `layout-shift` entries; an image's load alone is no change), requests in
   flight (fetch and XHR wrapped), short timers an event set (setTimeout wrapped; not those a
-  timer sets, so polling loops do not count) and running animations that move or resize; a
-  settle ends one frame after the last change, and a lookup waits for the next change
-  (`waitChange`) rather than polling. Nodes that change continuously (restless, as on iOS)
-  stop counting. Page targets are auto-attached paused (`Target.setAutoAttach`
+  timer or a ResizeObserver callback sets, so polling loops and resize debounces do not
+  count, nor one due with an animation that does not count: a transition library's cleanup)
+  and running animations that move other elements (a layout property on an in-flow element).
+  An animation that moves only its own element (a transform, or anything absolutely
+  positioned: a drawer, a menu, a field's label, a button's ripple) is left to the tap: before
+  each tap the runner asks `steady` for the target and its containers, and the hit test
+  (Chrome's, which honors pointer-events) decides whether something else would take it. On
+  the Real World App (Material UI) this took the 7 journeys from 16 s to 4.4 s. A settle ends
+  one frame after the last change, and a lookup waits for the next change (`waitChange`)
+  rather than polling. Nodes that change continuously (restless, as on iOS) stop counting.
+  The agent's own timers use the page's original setTimeout (the wrapped one would count
+  them as the page's work). Page targets are auto-attached paused (`Target.setAutoAttach`
   `waitForDebuggerOnStart`) so the script is in before the page runs; a pop-up becomes the
   driven page. Dialogs are accepted. Chrome: `SPEEDRUN_CHROME`, the headless shell or the
   installed Chrome, else Chrome for Testing downloaded into the cache. A killed run leaves
   its profile folder (`speedrun-chrome-<pid>-*` in the temp folder); the next run deletes
-  those whose pid is gone. `SPEEDRUN_WEB_DEBUG=1` prints every DevTools message.
+  those whose pid is gone. `SPEEDRUN_WEB_DEBUG=1` prints every DevTools message and, per
+  settle, the work it last waited for.
 - `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
   `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
   - `main.odin`: command line and the latency benchmark. Its steps locate their target with

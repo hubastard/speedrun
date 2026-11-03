@@ -30,6 +30,7 @@ SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a
 DISABLED_POLL_MS           :: 100 // tap: a disabled element read again this often until it turns on
 DISABLED_WAIT_MS           :: 3_000 // tap: how long at most, then it taps anyway
 UNLISTED_COVER_WAIT_MS     :: 1_500 // tap (iOS): a cover the hit test finds and the tree does not list
+STEADY_WAIT_MS             :: 1_500 // tap (web): the element still moving, at most
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
 GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
@@ -983,6 +984,18 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
+		// Web: the page's settle leaves out animations that move only what they animate (a menu
+		// growing in, a drawer sliding in): one moving the element or a container of it is waited
+		// for here, and the element found again where it rests.
+		if r.dev.platform == .Web {
+			t := time.tick_now()
+			waited, ok := op_web_steady(r.c, el, STEADY_WAIT_MS)
+			if !ok do return AGENT_LOST
+			if waited {
+				note(r, "moving: waited %.0f ms", us(t) / 1000)
+				el = find_element(r, d.sel, c.optional, -1) or_return
+			}
+		}
 		if d.point == "" do el, x, y = uncovered_point(r, d.sel, el, c.optional) or_return
 		n := r.h.nodes[el]
 		center = {n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2}
@@ -1275,6 +1288,17 @@ under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) 
 	if !ok do return false, false, AGENT_LOST
 	h := r.h.nodes[hit] if hit >= 0 && hit < len(r.h.nodes) else H_Node{class = "(not listed)", left = frame[0], top = frame[1], right = frame[2], bottom = frame[3]}
 	note(r, "%s; a touch at the element reaches #%d %s %d,%d-%d,%d (the element: #%d)", "a spinner shows" if spinner else "no spinner listed", hit, h.class, h.left, h.top, h.right, h.bottom, el)
+	// Web: the browser's hit test is the page's own (it skips what pointer-events: none leaves
+	// out, a button's ripple over its label). What it reaches instead of the element is a cover
+	// uncovered_point taps around (a sticky header, a toast) when the read lists it and it is
+	// smaller than half the window; else an overlay (a dialog fading out, a loading veil),
+	// waited for.
+	if r.dev.platform == .Web {
+		if reaches(r, el, hit, frame) do return false, spinner, nil
+		listed_cover := hit >= 0 && hit < len(r.h.nodes) && r.h.nodes[hit].kept &&
+			2 * i64(h.right - h.left) * i64(h.bottom - h.top) < i64(r.w) * i64(r.h_px)
+		return !listed_cover, spinner, nil
+	}
 	// Without a spinner, something the tree lists over the element (a toast, a sticky
 	// header) is left to uncovered_point, which taps the part that shows: only a cover the
 	// tree does not show is waited for.
