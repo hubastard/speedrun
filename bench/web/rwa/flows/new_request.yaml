@@ -1,0 +1,18 @@
+url: http://localhost:3000/signin
+name: Request money
+---
+- runFlow: shared/start.yaml
+- runFlow: shared/sign_in.yaml
+- tapOn: New
+- tapOn: Kristian Bradtke
+- tapOn:
+    id: amount
+- inputText: "95"
+- tapOn:
+    id: transaction-create-description-input
+- inputText: Fancy Hotel
+- tapOn: Request
+- assertVisible: Transaction Submitted!
+- tapOn: Return To Transactions
+- tapOn: Mine
+- assertVisible: Fancy Hotel

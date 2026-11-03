@@ -1,0 +1,12 @@
+[36m
+Waiting for flows to complete...[0m
+[92m[Passed][39m Request money (620ms)
+[92m[Passed][39m Sign up, sign in, onboarding (976ms)
+[92m[Passed][39m Sign in and out (295ms)
+[92m[Passed][39m Add a bank account (444ms)
+[92m[Passed][39m Edit user settings (595ms)
+[92m[Passed][39m Send a payment (529ms)
+[92m[Passed][39m Like and comment on a transaction (495ms)
+
+[92m[1m7/7 Flows Passed in 4s[0m
+

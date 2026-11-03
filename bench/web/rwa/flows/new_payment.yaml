@@ -1,0 +1,22 @@
+url: http://localhost:3000/signin
+name: Send a payment
+---
+- runFlow: shared/start.yaml
+- runFlow: shared/sign_in.yaml
+- tapOn: New
+- tapOn:
+    id: user-list-search-input
+- inputText: Kristian
+- tapOn: Kristian Bradtke
+- tapOn:
+    id: amount
+- inputText: "35"
+- tapOn:
+    id: transaction-create-description-input
+- inputText: Sushi dinner
+- tapOn: Pay
+- assertVisible: Transaction Submitted!
+- assertVisible: $1,474.53
+- tapOn: Return To Transactions
+- tapOn: Mine
+- assertVisible: Sushi dinner

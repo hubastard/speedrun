@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › todomvc/playwright/tests/todo.spec.ts:5:5 › Add, complete, filter and clear todos (418ms)
+
+  1 passed (792ms)

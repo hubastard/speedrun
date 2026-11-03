@@ -1,7 +1,7 @@
 <h1 align="center">Speedrun</h1>
 
 <p align="center">
-  <b>The fastest end-to-end test runner for mobile apps.</b><br>
+  <b>The fastest end-to-end test runner for mobile apps and the web.</b><br>
   Black-box UI tests for Android, iOS and the web, written in plain YAML.
 </p>
 
@@ -35,7 +35,8 @@ appId: com.example.app
 
 - **Fast.** A tap that opens a screen takes about 0.3 s, and a run starts in 1–3 s. The same
   user journey takes 20 s with Speedrun on Android, 59 s with Appium, 66 s with
-  maestro-runner and 127 s with Maestro ([benchmark](#benchmark)).
+  maestro-runner and 127 s with Maestro. In the browser, Cypress's own demo app's tests take
+  4.2 s with Speedrun, 5.9 s with Playwright and 11.3 s with Cypress ([benchmark](#benchmark)).
 - **Waits for the app, not the clock.** Each step starts the moment the app has finished
   changing: no sleeps, no comparing screenshots. Screens that never stop moving (spinners,
   tickers, carousels) don't hold it up.
@@ -187,8 +188,24 @@ of three runs after a warm-up, start-up included ([bench/journey](bench/journey)
   8.2 s and 12.5 s, [Argent](https://github.com/software-mansion/argent) 13.0 s and 11.8 s,
   and Speedrun's answers cost the agent the fewest tokens ([bench/agents](bench/agents)).
 
+**On the web**, the same tests written for each tool, the median of three runs after a warm-up,
+start-up included ([bench/web](bench/web)): Playwright's TodoMVC demo, and seven tests from
+the suite of Cypress's [Real World App](https://github.com/cypress-io/cypress-realworld-app),
+a payments app in React and Material UI:
+
+| Tool | TodoMVC | Real World App, 7 tests |
+|---|---:|---:|
+| **Speedrun** | **0.66 s**, passed | **4.2 s**, 7/7 passed |
+| Playwright 1.64 | 1.30 s, passed | 5.9 s, 7/7 passed |
+| Cypress 16.1 | 3.66 s, passed | 11.3 s, 7/7 passed |
+| Maestro 2.11 | failed | 3/6 passed in 30 min, then stopped |
+
+Every tool ran a headless Chromium browser (Cypress its default, Electron), at the same window
+size, one test at a time, with its default settings. Playwright's `fill` puts a field's text in at once,
+while Speedrun types it a key at a time.
+
 Measured on an Apple M1 Pro with an Android 17 emulator and an iPhone 17 Pro simulator (iOS
-26.2), in October 2026, each tool as it ships. On iOS that means Speedrun runs the app's
+26.2), in October 2026 (the web: November 2026), each tool as it ships. On iOS that means Speedrun runs the app's
 animations 10x faster, as it always does, and the other tools at normal speed; with the agent
 tools all at normal speed, on iOS Speedrun took 11.3 s, agent-device 12.5 s and Argent 11.8 s.
 Speedrun's iOS suite and journey runs also had the simulator's Reduce Motion on
@@ -230,7 +247,7 @@ from what the page reports: its changes, requests in flight, timers and animatio
   differences you may notice.
 - [Troubleshooting](docs/troubleshooting.md).
 - Benchmarks: [the app and its flows](bench/app/README.md), [the journey against other
-  tools](bench/journey), [agent tools](bench/agents).
+  tools](bench/journey), [agent tools](bench/agents), [the web](bench/web).
 
 ## Status
 

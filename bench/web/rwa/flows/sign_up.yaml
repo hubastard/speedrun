@@ -1,0 +1,52 @@
+url: http://localhost:3000/signup
+name: Sign up, sign in, onboarding
+---
+- runScript: shared/seed.js
+- launchApp:
+    clearState: true
+- tapOn:
+    id: firstName
+- inputText: Bob
+- tapOn:
+    id: lastName
+- inputText: Ross
+- tapOn:
+    id: username
+- inputText: PainterJoy90
+- tapOn:
+    id: password
+- inputText: s3cret
+- tapOn:
+    id: confirmPassword
+- inputText: s3cret
+- tapOn:
+    css: "[data-test=signup-submit]"
+- tapOn:
+    id: username
+- inputText: PainterJoy90
+- tapOn:
+    id: password
+- inputText: s3cret
+- tapOn:
+    css: "[data-test=signin-submit]"
+- assertVisible: Get Started with Real World App
+- tapOn:
+    css: "[data-test=user-onboarding-next]"
+- assertVisible: Create Bank Account
+- tapOn:
+    id: bankaccount-bankName-input
+- inputText: The Best Bank
+- tapOn:
+    id: bankaccount-routingNumber-input
+- inputText: "987654321"
+- tapOn:
+    id: bankaccount-accountNumber-input
+- inputText: "123456789"
+- tapOn: Save
+- assertVisible: Finished
+- tapOn:
+    css: "[data-test=user-onboarding-next]"
+- assertNotVisible: Finished
+- tapOn: Logout
+- assertVisible:
+    id: username
