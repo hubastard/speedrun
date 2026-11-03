@@ -287,7 +287,7 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 	case "web":
 		d.platform = .Web
 	case "":
-		if device == WEB_DEVICE {
+		if device == WEB_DEVICE || device == WEB_FIREFOX {
 			d.platform = .Web
 		} else if device != "" {
 			udid, _, _, warm := ios_info(ios_port)
@@ -306,7 +306,13 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 	case:
 		return fmt.tprintf("--platform takes android, ios or web, not %s", platform)
 	}
-	if d.platform == .Web do return ""
+	if d.platform == .Web {
+		web_firefox = device == WEB_FIREFOX
+		if device != "" && device != WEB_DEVICE && device != WEB_FIREFOX {
+			return fmt.tprintf("The web runs in chromium (Chrome) or firefox, not %s.", device)
+		}
+		return ""
+	}
 	if d.platform == .Android {
 		adb_serial = device
 		return ""

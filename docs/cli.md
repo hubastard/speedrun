@@ -20,7 +20,7 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 | `--flatten-debug-output` | Write them straight into that folder, without a dated subfolder. |
 | `--test-output-dir <dir>` | The same, taking precedence over `--debug-output` (or `testOutputDir` in the config). |
 | `-p`, `--platform android\|ios\|web` | Platform (default: the browser when every flow is a [web flow](web.md), else a connected Android device, else the booted simulator). |
-| `--device`, `--udid <id>[,<id>...]` | Device serial (`adb devices`) or simulator UDID (`xcrun simctl list devices booted`); `chromium` for the browser. |
+| `--device`, `--udid <id>[,<id>...]` | Device serial (`adb devices`) or simulator UDID (`xcrun simctl list devices booted`); `chromium` (Chrome) or `firefox` for the browser. |
 | `--headless` | Web: no browser window. |
 | `--screen-size <W>x<H>` | Web: the window's size (default 1024x768 headless). |
 | `--shard-split <n>` | Split the flows across n devices. |
@@ -85,6 +85,7 @@ speedrun mcp                    # the session's verbs as an MCP server, on stdin
 | `SPEEDRUN_IDLE_S` | iOS: seconds of inactivity before the agent stops (default 600). |
 | `SPEEDRUN_DEBUG=1` | Print every screen read and shell command with its time. |
 | `SPEEDRUN_CHROME` | Web: the Chrome or Chromium to run (default: see [Web](web.md#chrome)). |
+| `SPEEDRUN_FIREFOX` | Web: the Firefox to run with `--device firefox` (default: see [Web](web.md#firefox)). |
 | `SPEEDRUN_NO_UPDATE_CHECK=1` | Do not ask GitHub whether a newer release is out. |
 | `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |

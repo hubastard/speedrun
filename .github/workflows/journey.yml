@@ -1,8 +1,9 @@
 # Runs the benchmark journey (bench/journey/journey.yaml) with speedrun on an Android emulator
 # and an iOS simulator after every push to main: a regression check on Speedrun Bench, the
 # prebuilt app for these sources (bench-app.yml publishes it), else built here. On iOS, the
-# simulator is booted with `speedrun fast-boot`, and a flow then clears the app's state. The JUnit
-# reports and speedrun's debug output are kept as artifacts.
+# simulator is booted with `speedrun fast-boot`, and a flow then clears the app's state. On the
+# web, speedrun's web flows (dev/flows/web) and the Real World App's journeys (bench/web) run in
+# Chrome and in Firefox. The JUnit reports and speedrun's debug output are kept as artifacts.
 name: Journey
 
 on:
@@ -13,15 +14,15 @@ on:
       platform:
         description: The platform to run the journey on
         type: choice
-        options: [both, android, ios]
-        default: both
+        options: [all, android, ios, web]
+        default: all
 
 env:
   ODIN_VERSION: dev-2026-09
 
 jobs:
   android:
-    if: inputs.platform != 'ios'
+    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'android'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -126,7 +127,7 @@ jobs:
           if-no-files-found: ignore
 
   ios:
-    if: inputs.platform != 'android'
+    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'ios'
     runs-on: macos-26
     timeout-minutes: 75
     steps:
@@ -225,4 +226,69 @@ jobs:
             journey-ios.xml
             sign-in-ios.xml
             debug-ios
+          if-no-files-found: ignore
+
+  web:
+    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'web'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Odin
+        run: |
+          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/$ODIN_VERSION/odin-linux-amd64-$ODIN_VERSION.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          dirname "$(find "$RUNNER_TEMP" -maxdepth 3 -name odin -type f | head -1)" >> "$GITHUB_PATH"
+
+      # The web needs no device agent: no JDK or Gradle.
+      - name: Build speedrun
+        env:
+          SPEEDRUN_NO_ANDROID: 1
+        run: ./build.sh
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # The app only: Playwright and Cypress are for the benchmark (bench-web.yml).
+      - name: Set up the Real World App
+        working-directory: bench/web
+        run: |
+          corepack enable
+          ./setup.sh rwa
+
+      - name: Serve the web test site and the Real World App
+        run: |
+          python3 -m http.server 8781 --bind 127.0.0.1 --directory dev/flows/web/site > "$RUNNER_TEMP/site.log" 2>&1 &
+          (cd bench/web/rwa/app && nohup yarn start:ci > "$RUNNER_TEMP/rwa.log" 2>&1 &)
+          for i in $(seq 180); do
+            if curl -s -o /dev/null http://127.0.0.1:8781/ && curl -s -o /dev/null http://127.0.0.1:3001/ && curl -s -o /dev/null http://127.0.0.1:3000/; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/rwa.log"
+          exit 1
+
+      # Speedrun downloads each browser on its first run: Chrome for Testing's headless shell,
+      # Mozilla's Firefox.
+      - name: Run in Chrome
+        run: |
+          ./speedrun test --headless --device chromium dev/flows/web/ --format junit --output web-chrome.xml --debug-output debug-web-chrome --flatten-debug-output
+          ./speedrun test --headless --device chromium --screen-size 1280x1000 bench/web/rwa/flows --format junit --output rwa-chrome.xml --debug-output debug-rwa-chrome --flatten-debug-output
+
+      - name: Run in Firefox
+        if: success() || failure()
+        run: |
+          ./speedrun test --headless --device firefox dev/flows/web/ --format junit --output web-firefox.xml --debug-output debug-web-firefox --flatten-debug-output
+          ./speedrun test --headless --device firefox --screen-size 1280x1000 bench/web/rwa/flows --format junit --output rwa-firefox.xml --debug-output debug-rwa-firefox --flatten-debug-output
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: journey-web
+          path: |
+            web-*.xml
+            rwa-*.xml
+            debug-web-*
+            debug-rwa-*
           if-no-files-found: ignore

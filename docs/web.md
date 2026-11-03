@@ -1,7 +1,7 @@
 # Web
 
-Speedrun tests websites in Chrome with the same flow format as apps. A flow with `url:` in
-its config is a web flow: `launchApp` opens that page.
+Speedrun tests websites in Chrome or Firefox with the same flow format as apps. A flow with
+`url:` in its config is a web flow: `launchApp` opens that page.
 
 ```yaml
 url: https://example.com/login
@@ -17,6 +17,8 @@ url: https://example.com/login
 speedrun test --headless login.yaml        # a web flow runs in the browser on its own
 speedrun test --headless flows/            # a folder of web flows
 speedrun test -p web flows/                # web, explicitly (a visible window without --headless)
+speedrun test --headless --device firefox flows/                     # in Firefox
+speedrun test --headless --device chromium,firefox --shard-all 2 flows/   # every flow in both
 ```
 
 When every flow of a run is a web flow, Speedrun runs them in the browser, as Maestro does.
@@ -28,7 +30,8 @@ When every flow of a run is a web flow, Speedrun runs them in the browser, as Ma
 | `--headless` | No window (as on CI). Without it, Chrome opens a window you can watch. |
 | `--screen-size <W>x<H>` | The window's size (default 1024x768 headless, as Maestro). |
 | `-p`, `--platform web` | Run in the browser (the device name `chromium` does the same). |
-| `--shard-split <n>`, `--shard-all <n>` | Split the flows across n browsers, each its own Chrome. |
+| `--device firefox` | Run in Firefox instead of Chrome (`--device chromium`, the default). |
+| `--shard-split <n>`, `--shard-all <n>` | Split the flows across n browsers, each its own Chrome. With `--device chromium,firefox`, the shards take the browsers in turn: `--shard-all 2` runs every flow in both. |
 | `--animations fast` | The page's animations (CSS transitions and animations, Web Animations) run 10x faster; `off` also tells the page `prefers-reduced-motion` and runs them 100x faster. The default, `normal`, leaves the page as it is. Its timers keep their time. |
 
 ## Chrome
@@ -46,6 +49,25 @@ no Selenium, no Node. Which Chrome:
   `~/.cache/speedrun/chrome`), with `curl` and `unzip`.
 
 Each run starts with a fresh profile: no cookies, storage or cache from an earlier run.
+
+## Firefox
+
+`--device firefox` runs the flows in Firefox, driven over
+[WebDriver BiDi](https://w3c.github.io/webdriver-bidi/), the W3C protocol Firefox speaks
+since it dropped Chrome's: still no WebDriver binary, no Selenium, no Node. Which Firefox:
+
+- `SPEEDRUN_FIREFOX`, when set: a Firefox executable.
+- On macOS, the Firefox installed in `/Applications`, else
+- the newest Firefox release from Mozilla, downloaded on first use into Speedrun's cache
+  (`~/Library/Caches/speedrun/firefox`, on Linux `~/.cache/speedrun/firefox`), with `curl`
+  (and `hdiutil` on macOS, `tar` on Linux). On Linux Speedrun always uses its own copy: a
+  distribution's Firefox is often a snap, which cannot use a profile in the temporary folder.
+
+Everything on this page works in Firefox as in Chrome, with the same flows. Firefox starts
+more slowly (about a second more per run), and typing takes a little longer per key.
+Speedrun starts it with system access to the browser's own settings, which it uses for
+`setDarkMode` and `clearState` (WebDriver BiDi has no command for either); Firefox accepts
+one client at a time, and Speedrun's connects as soon as Firefox opens its port.
 
 ## How it waits
 
@@ -111,7 +133,7 @@ A few differences from Maestro's:
 
 ## Not supported yet
 
-- Firefox and Safari: Chrome only, as Maestro.
+- Safari (Maestro runs only Chrome).
 - `startRecording` in the browser.
 - Content of frames from another site (a payment form in a cross-origin `<iframe>`);
   same-site frames work.

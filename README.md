@@ -45,8 +45,8 @@ appId: com.example.app
   before tapping it, so the same flow passes on a small phone.
 - **Black-box.** Any build of your app, release builds included, through the platform's
   accessibility layer. Tested on native and React Native apps.
-- **One file.** The Android and iOS agents are built in, and it drives Chrome itself: no JVM,
-  no WebDriver or drivers to install, no SDK in your app.
+- **One file.** The Android and iOS agents are built in, and it drives Chrome and Firefox
+  itself: no JVM, no WebDriver or drivers to install, no SDK in your app.
 - **Ready for CI.** JUnit and HTML reports, sharding across devices, tags, and a debug folder
   with screenshots and logs for every failure. It answers the "isn't responding" dialogs a
   freshly booted emulator puts up, reconnects to its agent if the agent crashes, and boots iOS
@@ -93,8 +93,8 @@ appId: com.example.app
    speedrun test flows/ --format junit --output report.xml      # a whole suite, for CI
    ```
 
-   A website's flow names its page with `url:` instead of `appId:`, and runs in Chrome:
-   `speedrun test --headless web-login.yaml` ([Web](docs/web.md)).
+   A website's flow names its page with `url:` instead of `appId:`, and runs in Chrome, or in
+   Firefox with `--device firefox`: `speedrun test --headless web-login.yaml` ([Web](docs/web.md)).
 
 In a terminal you see each step live, with its time. When a step fails, Speedrun shows what
 was on screen, and where it saved the screenshot and logs.
@@ -224,8 +224,8 @@ from what the page reports: its changes, requests in flight, timers and animatio
   web (CI runners included). The install script picks the right package.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
-- **Web:** Chrome. Speedrun uses the one installed, or downloads Chrome for Testing on the
-  first run ([Web](docs/web.md#chrome)); macOS or Linux.
+- **Web:** Chrome or Firefox. Speedrun uses the one installed, or downloads it on the first
+  run ([Chrome](docs/web.md#chrome), [Firefox](docs/web.md#firefox)); macOS or Linux.
 - **iOS:** Xcode and a booted simulator (on CI, boot it with
   [`speedrun fast-boot`](docs/ci.md#ios-boot-the-simulator-with-speedrun-fast-boot)). Real iOS devices
   are not supported yet. A release's iOS agent is built with one Xcode (its release notes name
@@ -240,7 +240,7 @@ from what the page reports: its changes, requests in flight, timers and animatio
 - [Command line](docs/cli.md): options, environment variables, exit status.
 - [Running on CI](docs/ci.md): reports, sharding, failure artifacts, `speedrun fast-boot` for
   iOS simulators.
-- [Web](docs/web.md): testing websites in Chrome, with the same flows.
+- [Web](docs/web.md): testing websites in Chrome and Firefox, with the same flows.
 - [Sessions](docs/sessions.md): drive an app a command at a time, from an AI agent or a
   terminal, and save the steps as a flow.
 - [Maestro compatibility](docs/maestro-compatibility.md): what is supported, and the

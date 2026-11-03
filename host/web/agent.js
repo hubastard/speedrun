@@ -131,13 +131,32 @@ const install = () => {
 			if (any) changed()
 		}).observe({ type: 'layout-shift' })
 	} catch (e) {}
+	// Firefox reports no layout shifts: there an image's load counts, as it may move others.
+	const shifts = !!(window.PerformanceObserver && PerformanceObserver.supportedEntryTypes &&
+		PerformanceObserver.supportedEntryTypes.includes('layout-shift'))
 	const loaded = (e) => {
 		const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : ''
-		if (tag === 'iframe' || tag === 'frame' || !tag) changed()
+		if (tag === 'iframe' || tag === 'frame' || !tag || (!shifts && tag === 'img')) changed()
 	}
 	document.addEventListener('load', loaded, { capture: true, passive: true })
 	for (const type of ['input', 'change', 'scroll', 'focusin', 'focusout', 'transitionstart', 'transitionend', 'animationstart', 'animationend', 'DOMContentLoaded'])
 		document.addEventListener(type, changed, { capture: true, passive: true })
+	// --animations fast or off in a browser with no playback rate of its own to set (Firefox):
+	// each animation sped up as it starts (web_firefox.odin sets the rate before this runs).
+	const rate = window.__speedrunAnimationRate
+	if (rate > 1) {
+		const sped = new WeakSet()
+		const speed = (a) => { if (!sped.has(a)) { sped.add(a); a.playbackRate *= rate } }
+		const speedUp = (e) => { if (e.target && e.target.getAnimations) for (const a of e.target.getAnimations()) speed(a) }
+		for (const type of ['transitionrun', 'animationstart'])
+			document.addEventListener(type, speedUp, { capture: true, passive: true })
+		const animate = Element.prototype.animate
+		Element.prototype.animate = function (...args) {
+			const a = animate.apply(this, args)
+			speed(a)
+			return a
+		}
+	}
 	window.addEventListener('resize', changed, { passive: true })
 	window.addEventListener('popstate', changed, { passive: true })
 	window.addEventListener('hashchange', changed, { passive: true })

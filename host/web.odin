@@ -1,6 +1,7 @@
 // The web "device": Chrome, driven over the DevTools protocol through a pipe (Chrome's
 // --remote-debugging-pipe: requests on its fd 3, answers and events on its fd 4, each message
-// JSON ended by a NUL), with no WebDriver, Selenium or Node in between. Flows run on it through
+// JSON ended by a NUL), with no WebDriver, Selenium or Node in between; or Firefox (device
+// "firefox"), driven over WebDriver BiDi on a WebSocket (web_firefox.odin). Flows run on it through
 // the same agent operations as on Android and iOS: an agent thread in this process serves them
 // on 127.0.0.1 (a port of its own, the per-run token first, as the other agents), and turns each
 // into DevTools calls and calls into web/agent.js, which runs in every document of the page.
@@ -64,7 +65,11 @@ Web_Page :: struct {
 
 Web :: struct {
 	pid:          posix.pid_t,
-	to, from:     posix.FD, // the pipe's ends on this side: to Chrome's fd 3, from its fd 4
+	to, from:     posix.FD, // the pipe's ends on this side: to Chrome's fd 3, from its fd 4 (Firefox: its WebSocket, both)
+	firefox:      bool, // Firefox over WebDriver BiDi (web_firefox.odin), not Chrome over DevTools
+	ws_raw:       [dynamic]byte, // Firefox: read from the WebSocket, not yet a whole frame
+	ws_message:   [dynamic]byte, // Firefox: a message's frames so far
+	nav_events:   int, // Firefox: the driven page's documents loaded or failed (bidi_navigate)
 	profile:      string, // the temporary user data folder
 	product:      string, // "HeadlessChrome/156.0..." (Browser.getVersion)
 	headless:     bool,
@@ -103,17 +108,26 @@ web: ^Web // this process's browser (one device per process)
 web_start :: proc(d: ^Device) -> string {
 	if web != nil do return ""
 	web_debug = os.get_env("SPEEDRUN_WEB_DEBUG", context.temp_allocator) != ""
-	exe, err := web_chrome(web_headless)
+	exe, err: string
+	if web_firefox do exe, err = firefox_executable()
+	else do exe, err = web_chrome(web_headless)
 	if err != "" do return err
 	w := new(Web, runtime.heap_allocator())
 	w.alloc = runtime.heap_allocator()
 	w.headless = web_headless
+	w.firefox = web_firefox
 	w.inbox.allocator = w.alloc
 	w.pages.allocator = w.alloc
 	w.frames.allocator = w.alloc
-	if e := web_spawn(w, exe); e != "" do return e
+	w.ws_raw.allocator = w.alloc
+	w.ws_message.allocator = w.alloc
+	if e := firefox_spawn(w, exe) if w.firefox else web_spawn(w, exe); e != "" {
+		web = w
+		web_stop()
+		return e
+	}
 	web = w
-	if e := web_open(w); e != "" {
+	if e := bidi_open(w) if w.firefox else web_open(w); e != "" {
 		web_stop()
 		return e
 	}
@@ -128,7 +142,7 @@ web_start :: proc(d: ^Device) -> string {
 	_ = new_agent_token(bound.port)
 	w.thread = thread.create_and_start_with_poly_data(w, web_serve)
 	size := web_size if web_size != {} else WEB_DEFAULT_SIZE
-	d.udid = WEB_DEVICE
+	d.udid = WEB_FIREFOX if w.firefox else WEB_DEVICE
 	d.name = strings.clone(fmt.tprintf("%s%s", strings.trim_prefix(w.product, "Headless"), fmt.tprintf(", headless %dx%d", size[0], size[1]) if w.headless else ""))
 	return ""
 }
@@ -140,14 +154,21 @@ web_stop :: proc() {
 	if w == nil do return
 	web = nil
 	w.quit = true
+	if w.firefox && w.to > 0 {
+		posix.close(w.to)
+		w.to, w.from = 0, 0
+	}
 	if w.pid > 0 {
-		posix.kill(w.pid, .SIGTERM)
+		// Firefox: its process group, its content processes too (it was started in a session of
+		// its own, so the group is its pid).
+		group := -w.pid if w.firefox else w.pid
+		posix.kill(group, .SIGTERM)
 		status: c.int
 		for _ in 0 ..< 50 {
 			if posix.waitpid(w.pid, &status, {.NOHANG}) != 0 do break
 			time.sleep(20 * time.Millisecond)
 		}
-		posix.kill(w.pid, .SIGKILL)
+		posix.kill(group, .SIGKILL)
 		posix.waitpid(w.pid, &status, {.NOHANG})
 		w.pid = 0
 	}
@@ -220,15 +241,16 @@ web_spawn :: proc(w: ^Web, exe: string) -> string {
 	return ""
 }
 
-// Profiles left by runs that were killed (`speedrun-chrome-<pid>-*`, the pid gone): Chrome
-// exits when the pipe closes, the folder stays.
-@(private = "file")
+// Profiles left by runs that were killed (`speedrun-chrome-<pid>-*`, `speedrun-firefox-<pid>-*`,
+// the pid gone): Chrome exits when the pipe closes, the folder stays.
+@(private)
 web_sweep_profiles :: proc() {
 	tmp, _ := os.temp_directory(context.temp_allocator)
 	entries, err := os.read_all_directory_by_path(tmp, context.temp_allocator)
 	if err != nil do return
 	for e in entries {
 		rest := strings.trim_prefix(e.name, "speedrun-chrome-")
+		if rest == e.name do rest = strings.trim_prefix(e.name, "speedrun-firefox-")
 		if rest == e.name do continue
 		pid_s, _, _ := strings.partition(rest, "-")
 		pid, ok := strconv.parse_int(pid_s)
@@ -284,7 +306,7 @@ web_page_attached :: proc(w: ^Web, session, target: string) {
 
 // The media features a page is told (one call sets them all): the color scheme a flow set,
 // and reduced motion with --animations off. Empty: none.
-@(private = "file")
+@(private)
 web_media :: proc(w: ^Web) -> string {
 	features := make([dynamic]string, context.temp_allocator)
 	if dark, set := w.dark.?; set {
@@ -296,7 +318,7 @@ web_media :: proc(w: ^Web) -> string {
 }
 
 // The driven page.
-@(private = "file")
+@(private)
 web_page :: proc(w: ^Web) -> Web_Page {
 	return w.pages[len(w.pages) - 1] if len(w.pages) > 0 else {}
 }
@@ -328,7 +350,7 @@ jq :: proc(s: string, alloc := context.temp_allocator) -> string {
 }
 
 // Sends a request; its id.
-@(private = "file")
+@(private)
 web_send :: proc(w: ^Web, method, params: string, session := "") -> int {
 	w.next_id += 1
 	msg: string
@@ -338,6 +360,10 @@ web_send :: proc(w: ^Web, method, params: string, session := "") -> int {
 		msg = fmt.tprintf(`{{"id":%d,"method":"%s","params":%s}}`, w.next_id, method, params)
 	}
 	if web_debug do fmt.eprintf("web -> %s\n", msg[:min(len(msg), 300)])
+	if w.firefox {
+		ws_send(w, msg)
+		return w.next_id
+	}
 	out := make([]byte, len(msg) + 1, context.temp_allocator) // each message ends with a NUL
 	copy(out, msg)
 	data := out
@@ -356,7 +382,7 @@ web_send :: proc(w: ^Web, method, params: string, session := "") -> int {
 // Reads what Chrome sent, waiting up to timeout_ms for something (0: what is there already),
 // and handles every whole message but answers (kept in the inbox for web_wait). False once
 // Chrome is gone.
-@(private = "file")
+@(private)
 web_pump :: proc(w: ^Web, timeout_ms: int) -> bool {
 	if w.dead != "" do return false
 	fds := [1]posix.pollfd{{fd = w.from, events = {.IN}}}
@@ -370,13 +396,18 @@ web_pump :: proc(w: ^Web, timeout_ms: int) -> bool {
 			w.dead = "it exited"
 			return false
 		}
-		append(&w.inbox, ..buf[:got])
+		if w.firefox {
+			append(&w.ws_raw, ..buf[:got])
+			if !ws_decode(w) do return false
+		} else {
+			append(&w.inbox, ..buf[:got])
+		}
 	}
 	return true
 }
 
 // The next whole message in the inbox, removed from it; ok false when there is none.
-@(private = "file")
+@(private)
 web_next :: proc(w: ^Web) -> (msg: json.Object, ok: bool) {
 	for {
 		end := -1
@@ -395,7 +426,7 @@ web_next :: proc(w: ^Web) -> (msg: json.Object, ok: bool) {
 
 // Waits for the answer to request `id`, handling the events that come first. result: its
 // "result"; err: its error's message, or why none came.
-@(private = "file")
+@(private)
 web_wait :: proc(w: ^Web, id: int, timeout := WEB_CALL_TIMEOUT) -> (result: json.Object, err: string) {
 	start := time.tick_now()
 	for {
@@ -408,24 +439,30 @@ web_wait :: proc(w: ^Web, id: int, timeout := WEB_CALL_TIMEOUT) -> (result: json
 					m, _ := e["message"].(json.String)
 					return nil, m if m != "" else "error"
 				}
+				// WebDriver BiDi's: "type": "error", the error's name and a message.
+				if t, _ := msg["type"].(json.String); t == "error" {
+					name, _ := msg["error"].(json.String)
+					m, _ := msg["message"].(json.String)
+					return nil, fmt.tprintf("%s: %s", name, m) if m != "" else name
+				}
 				r, _ := msg["result"].(json.Object)
 				return r, ""
 			}
 			web_event(w, msg)
 		}
 		left := timeout - time.tick_since(start)
-		if left <= 0 do return nil, "no answer from Chrome"
-		if !web_pump(w, int(min(left, 200 * time.Millisecond) / time.Millisecond)) do return nil, fmt.tprintf("Chrome stopped (%s)", w.dead)
+		if left <= 0 do return nil, fmt.tprintf("no answer from %s", web_browser_name(w))
+		if !web_pump(w, int(min(left, 200 * time.Millisecond) / time.Millisecond)) do return nil, fmt.tprintf("%s stopped (%s)", web_browser_name(w), w.dead)
 	}
 }
 
-@(private = "file")
+@(private)
 web_call :: proc(w: ^Web, method, params: string, session := "", timeout := WEB_CALL_TIMEOUT) -> (json.Object, string) {
 	return web_wait(w, web_send(w, method, params, session), timeout)
 }
 
 // A request to the driven page.
-@(private = "file")
+@(private)
 web_page_call :: proc(w: ^Web, method, params: string, timeout := WEB_CALL_TIMEOUT) -> (json.Object, string) {
 	return web_call(w, method, params, web_page(w).session, timeout)
 }
@@ -440,8 +477,9 @@ json_num :: proc(v: json.Value) -> f64 {
 
 // Evaluates JavaScript in the driven page (its main world), the value returned as JSON; with
 // `await`, a promise's value. err: the exception's description, or the call's error.
-@(private = "file")
+@(private)
 web_eval :: proc(w: ^Web, expr: string, await: bool, timeout := WEB_CALL_TIMEOUT) -> (value: json.Value, err: string) {
+	if w.firefox do return bidi_eval(w, expr, await, timeout)
 	params := fmt.tprintf(`{{"expression":%s,"returnByValue":true,"awaitPromise":%v}}`, jq(expr), await)
 	r, e := web_page_call(w, "Runtime.evaluate", params, timeout)
 	if e != "" do return nil, e
@@ -458,15 +496,23 @@ web_eval :: proc(w: ^Web, expr: string, await: bool, timeout := WEB_CALL_TIMEOUT
 
 // An evaluation that failed because the page's document went (a navigation): it is run again
 // in the next one.
-@(private = "file")
+@(private)
 web_gone :: proc(err: string) -> bool {
 	return strings.contains(err, "context was destroyed") || strings.contains(err, "navigated or closed") ||
 		strings.contains(err, "Cannot find context") || strings.contains(err, "__speedrun is not defined") ||
-		strings.contains(err, "Cannot read properties of undefined") || strings.contains(err, "Promise was collected")
+		strings.contains(err, "Cannot read properties of undefined") || strings.contains(err, "Promise was collected") ||
+		// Firefox's
+		strings.contains(err, "no such frame") || strings.contains(err, "__speedrun is undefined") ||
+		strings.contains(err, "can't access property") || strings.contains(err, "DiscardedBrowsingContext") ||
+		strings.contains(err, "AbortError")
 }
 
-@(private = "file")
+@(private)
 web_event :: proc(w: ^Web, msg: json.Object) {
+	if w.firefox {
+		bidi_event(w, msg)
+		return
+	}
 	method, _ := msg["method"].(json.String)
 	params, _ := msg["params"].(json.Object)
 	session, _ := msg["sessionId"].(json.String)
@@ -519,7 +565,7 @@ web_event :: proc(w: ^Web, msg: json.Object) {
 
 // Waits until the driven page's main frame has a document loaded (DOMContentLoaded) and the
 // agent script answers. False after timeout.
-@(private = "file")
+@(private)
 web_document_ready :: proc(w: ^Web, timeout: time.Duration) -> bool {
 	start := time.tick_now()
 	for time.tick_since(start) < timeout {
@@ -638,16 +684,16 @@ rd_req_str :: proc(client: net.TCP_Socket, ok: ^bool) -> string {
 	return string(s)
 }
 
-@(private = "file")
+@(private)
 wr_u8 :: proc(b: ^[dynamic]byte, v: u8) {append(b, v)}
 
-@(private = "file")
+@(private)
 wr_u16 :: proc(b: ^[dynamic]byte, v: u16) {append(b, u8(v >> 8), u8(v))}
 
-@(private = "file")
+@(private)
 wr_u32 :: proc(b: ^[dynamic]byte, v: u32) {append(b, u8(v >> 24), u8(v >> 16), u8(v >> 8), u8(v))}
 
-@(private = "file")
+@(private)
 wr_str :: proc(b: ^[dynamic]byte, s: string) {
 	n := min(len(s), 0xFFFF)
 	// Not cut inside a character.
@@ -674,7 +720,7 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 	case u8(Op.Quit):
 		return .Quit
 	case u8(Op.Info):
-		wr_str(b, WEB_DEVICE)
+		wr_str(b, WEB_FIREFOX if w.firefox else WEB_DEVICE)
 		wr_str(b, w.product)
 		wr_str(b, "")
 	case u8(Op.Screen), u8(Op.Tree):
@@ -755,7 +801,8 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 		if !ok do return .Lost
 		if set == 1 || set == 2 {
 			w.dark = set == 2
-			for p in w.pages do web_call(w, "Emulation.setEmulatedMedia", web_media(w), p.session)
+			if w.firefox do bidi_appearance(w)
+			else do for p in w.pages do web_call(w, "Emulation.setEmulatedMedia", web_media(w), p.session)
 		}
 		v, _ := web_eval(w, "matchMedia('(prefers-color-scheme: dark)').matches", false)
 		dark, _ := v.(json.Boolean)
@@ -807,8 +854,12 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 		lat, _ := strconv.parse_f64(lat_s)
 		lon, _ := strconv.parse_f64(lon_s)
 		w.geo = [2]f64{lat, lon}
-		web_call(w, "Browser.grantPermissions", `{"permissions":["geolocation"]}`)
-		for p in w.pages do web_call(w, "Emulation.setGeolocationOverride", fmt.tprintf(`{{"latitude":%f,"longitude":%f,"accuracy":1}}`, lat, lon), p.session)
+		if w.firefox {
+			for p in w.pages do bidi_geo(w, p.target)
+		} else {
+			web_call(w, "Browser.grantPermissions", `{"permissions":["geolocation"]}`)
+			for p in w.pages do web_call(w, "Emulation.setGeolocationOverride", fmt.tprintf(`{{"latitude":%f,"longitude":%f,"accuracy":1}}`, lat, lon), p.session)
+		}
 	case WEB_OP_CHANGE:
 		timeout := rd_req_i32(client, &ok)
 		if !ok do return .Lost
@@ -841,7 +892,7 @@ web_op :: proc(w: ^Web, client: net.TCP_Socket, op: u8, b: ^[dynamic]byte) -> Op
 }
 
 // The next settle measures from now (each action marks before it acts, as the device agents).
-@(private = "file")
+@(private)
 web_mark :: proc(w: ^Web) {
 	_, _ = web_eval(w, WEB_AGENT + ".mark()", false)
 }
@@ -907,7 +958,10 @@ web_hit :: proc(w: ^Web, x, y: i32, b: ^[dynamic]byte) {
 
 @(private = "file")
 web_screenshot :: proc(w: ^Web) -> []byte {
-	r, err := web_page_call(w, "Page.captureScreenshot", `{"format":"png"}`)
+	r: json.Object
+	err: string
+	if w.firefox do r, err = web_call(w, "browsingContext.captureScreenshot", fmt.tprintf(`{{"context":%s}}`, jq(web_page(w).target)))
+	else do r, err = web_page_call(w, "Page.captureScreenshot", `{"format":"png"}`)
 	if err != "" do return nil
 	data, _ := r["data"].(json.String)
 	png, derr := base64.decode(data, allocator = context.temp_allocator)
@@ -918,7 +972,7 @@ web_screenshot :: proc(w: ^Web) -> []byte {
 // ---- input -------------------------------------------------------------------------------
 
 // The viewport's size, in the page's units.
-@(private = "file")
+@(private)
 web_viewport :: proc(w: ^Web) -> (vw, vh: i32) {
 	v, _ := web_eval(w, "[innerWidth, innerHeight]", false)
 	list, _ := v.(json.Array)
@@ -929,7 +983,7 @@ web_viewport :: proc(w: ^Web) -> (vw, vh: i32) {
 // A point outside the viewport (an element partly on screen, its center off it) is brought in
 // by scrolling the window, at once, as Maestro scrolls to it (smoothly, then 3 s); the point's
 // place after that.
-@(private = "file")
+@(private)
 web_reach :: proc(w: ^Web, x, y: i32) -> (i32, i32) {
 	if x >= WEB_SYNTHETIC && y >= WEB_SYNTHETIC do return x, y
 	vw, vh := web_viewport(w)
@@ -951,6 +1005,10 @@ web_click :: proc(w: ^Web, x, y: i32, count: int, hold: i32, interval: i32 = 0) 
 		return
 	}
 	x, y := web_reach(w, x, y)
+	if w.firefox {
+		bidi_click(w, x, y, count, hold, interval)
+		return
+	}
 	s := web_page(w).session
 	web_send(w, "Input.dispatchMouseEvent", fmt.tprintf(`{{"type":"mouseMoved","x":%d,"y":%d}}`, x, y), s)
 	last := 0
@@ -976,7 +1034,7 @@ Web_Key :: struct {
 }
 
 // Android key codes (flow.odin's names) as the browser's keys.
-@(private = "file")
+@(private)
 web_key_for :: proc(code: i32) -> (Web_Key, bool) {
 	switch code {
 	case 66:  return {"Enter", "Enter", 13, "\r"}, true
@@ -1000,6 +1058,7 @@ web_key_for :: proc(code: i32) -> (Web_Key, bool) {
 // Sends the key down and up; the id of the last request.
 @(private = "file")
 web_key_events :: proc(w: ^Web, k: Web_Key) -> int {
+	if w.firefox do return bidi_keys(w, {bidi_key_value(k)})
 	s := web_page(w).session
 	down := fmt.tprintf(`{{"type":"%s","key":%s,"code":%s,"windowsVirtualKeyCode":%d,"nativeVirtualKeyCode":%d%s}}`,
 		"keyDown" if k.text != "" else "rawKeyDown", jq(k.key), jq(k.code), k.key_code, k.key_code,
@@ -1029,6 +1088,10 @@ web_key :: proc(w: ^Web, code: i32) -> bool {
 @(private = "file")
 web_type :: proc(w: ^Web, text: string) {
 	if text == "" do return
+	if w.firefox {
+		bidi_type(w, text)
+		return
+	}
 	s := web_page(w).session
 	last := 0
 	for r in text {
@@ -1068,6 +1131,12 @@ web_erase :: proc(w: ^Web, count: int) -> bool {
 	}
 	if n > 0 do n = min(n, count)
 	else do n = count
+	if w.firefox {
+		keys := make([]string, n, context.temp_allocator)
+		for &k in keys do k = bidi_key_value({"Backspace", "Backspace", 8, ""})
+		web_wait(w, bidi_keys(w, keys))
+		return true
+	}
 	last := 0
 	for _ in 0 ..< n do last = web_key_events(w, {"Backspace", "Backspace", 8, ""})
 	web_wait(w, last)
@@ -1081,9 +1150,13 @@ web_erase :: proc(w: ^Web, count: int) -> bool {
 web_scroll :: proc(w: ^Web, x, y, dx, dy: i32) {
 	vw, vh := web_viewport(w)
 	x, y := clamp(x, 0, max(vw - 1, 0)), clamp(y, 0, max(vh - 1, 0))
-	s := web_page(w).session
-	web_send(w, "Input.dispatchMouseEvent", fmt.tprintf(`{{"type":"mouseMoved","x":%d,"y":%d}}`, x, y), s)
-	web_wait(w, web_send(w, "Input.dispatchMouseEvent", fmt.tprintf(`{{"type":"mouseWheel","x":%d,"y":%d,"deltaX":%d,"deltaY":%d}}`, x, y, -dx, -dy), s))
+	if w.firefox {
+		bidi_wheel(w, x, y, -dx, -dy)
+	} else {
+		s := web_page(w).session
+		web_send(w, "Input.dispatchMouseEvent", fmt.tprintf(`{{"type":"mouseMoved","x":%d,"y":%d}}`, x, y), s)
+		web_wait(w, web_send(w, "Input.dispatchMouseEvent", fmt.tprintf(`{{"type":"mouseWheel","x":%d,"y":%d,"deltaX":%d,"deltaY":%d}}`, x, y, -dx, -dy), s))
+	}
 	_, _ = web_eval(w, "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))", true)
 }
 
@@ -1142,6 +1215,7 @@ web_settle :: proc(w: ^Web, quiet, no_change, timeout: i32, b: ^[dynamic]byte) {
 @(private = "file")
 web_navigate :: proc(w: ^Web, url: string) -> string {
 	web_mark(w)
+	if w.firefox do return bidi_navigate(w, url)
 	r, err := web_page_call(w, "Page.navigate", fmt.tprintf(`{{"url":%s}}`, jq(url)), WEB_LOAD_TIMEOUT)
 	if err != "" do return err
 	if e, failed := r["errorText"].(json.String); failed && e != "" do return fmt.tprintf("could not open %s: %s", url, e)
@@ -1159,6 +1233,7 @@ web_clear :: proc(w: ^Web, url: string) -> bool {
 	if i := strings.index_any(rest, "/?#"); i >= 0 do host = rest[:i]
 	if host == "" do return true
 	origin := fmt.tprintf("%s://%s", scheme, host)
+	if w.firefox do return bidi_clear(w, origin)
 	// Through the page: Chrome answers this on the browser's own session with an internal error.
 	_, err := web_page_call(w, "Storage.clearDataForOrigin", fmt.tprintf(`{{"origin":%s,"storageTypes":"all"}}`, jq(origin)))
 	return err == ""
@@ -1175,6 +1250,10 @@ web_globals :: proc(w: ^Web, pairs: string) {
 		fmt.sbprintf(&b, "window[%s] = %s;\n", jq(k), jq(v))
 	}
 	src := strings.to_string(b)
+	if w.firefox {
+		bidi_globals(w, src)
+		return
+	}
 	page := web_page(w)
 	if w.globals_id != "" {
 		web_call(w, "Page.removeScriptToEvaluateOnNewDocument", fmt.tprintf(`{{"identifier":%s}}`, jq(w.globals_id)), page.session)
@@ -1195,6 +1274,10 @@ web_globals :: proc(w: ^Web, pairs: string) {
 // kept until stopped; then `u32 count`, each `u32 ms, u32 len, jpeg`.
 @(private = "file")
 web_record :: proc(w: ^Web, on: bool, b: ^[dynamic]byte) {
+	if w.firefox {
+		if !on do wr_u32(b, 0) // WebDriver BiDi has no screencast
+		return
+	}
 	if on {
 		for f in w.frames do delete(f.jpeg, w.alloc)
 		clear(&w.frames)
@@ -1264,7 +1347,7 @@ web_platform :: proc() -> string {
 	}
 }
 
-@(private = "file")
+@(private)
 web_cache_dir :: proc() -> string {
 	home := os.get_env("HOME", context.temp_allocator)
 	when ODIN_OS == .Darwin {
@@ -1304,7 +1387,7 @@ web_cached :: proc(kind: string) -> string {
 	return best
 }
 
-@(private = "file")
+@(private)
 version_newer :: proc(a, b: string) -> bool {
 	pa, pb := strings.split(a, ".", context.temp_allocator), strings.split(b, ".", context.temp_allocator)
 	for i in 0 ..< min(len(pa), len(pb)) {

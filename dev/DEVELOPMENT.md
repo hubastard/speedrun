@@ -66,6 +66,35 @@ what is still slow: `dev/TO_IMPROVE.md`.
   its profile folder (`speedrun-chrome-<pid>-*` in the temp folder); the next run deletes
   those whose pid is gone. `SPEEDRUN_WEB_DEBUG=1` prints every DevTools message and, per
   settle, the work it last waited for.
+- `host/web_firefox.odin` — Firefox (`--device firefox`) over WebDriver BiDi, the same web
+  ops and the same `agent.js`, `Web.firefox` choosing the branch in `web.odin` where the
+  protocols differ. Firefox has no pipe: it opens a WebSocket port (`-remote-debugging-port
+  0`, the port read from its log, "WebDriver BiDi listening on ws://127.0.0.1:N"), and a
+  minimal client (`ws_connect`, `ws_send`, `ws_decode`, masked frames out, pings answered)
+  decodes frames into the same NUL-separated inbox `web_next` reads. BiDi answers carry
+  `"type": "error"` with a name and a message; events have no session, the context is in
+  their params. `agent.js` goes in as a preload script (`script.addPreloadScript`, before
+  the page's scripts in every document); `script.evaluate` returns typed remote values
+  (`bidi_value` makes them plain JSON). Clicks, keys (WebDriver's codes for Enter and the
+  like) and the wheel are one `input.performActions` each. Navigation state follows
+  `navigationStarted`, `domContentLoaded`, `fragmentNavigated` and `navigationFailed`; the
+  back-forward cache is off in the profile (a page it restores sends no domContentLoaded:
+  each command after a Back waited 10 s). Firefox's first tab is a blank page of the
+  browser's own that page scripts cannot run in, and a headless window's page has no focus
+  (`:focus` never matches, a `<select>` shows no options): each run opens a tab of its own,
+  closes the first and activates it. Firefox starts with `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1`
+  for what BiDi lacks, run in the browser window's own context (`moz:scope: chrome`):
+  `setDarkMode` sets `layout.css.prefers-color-scheme.content-override` (0 dark, 1 light,
+  light in the profile from the start, as Chrome's headless default), and `clearState`
+  calls `Services.clearData.deleteDataFromPrincipal` for the origin (a new user context per
+  flow took 170 ms more). Firefox allows one session ("Maximum number of active sessions"
+  for a second client). It has no layout-shift entries, so there an image's load counts as
+  a change, and no page-wide animation rate, so `--animations fast`/`off` set
+  `__speedrunAnimationRate` for `agent.js` to speed each animation as it starts. A run costs
+  about 1.2 s more than Chrome's: the port opens after ~0.5 s and `session.new` takes ~0.7 s
+  (no preference shortened either). Inside Claude Code's sandbox only the Firefox in
+  /Applications starts (others print "Could not find profile folder": the sandbox denies
+  `~/Library/Application Support/Firefox`); Playwright's Firefox fails there the same way.
 - `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
   `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
   - `main.odin`: command line and the latency benchmark. Its steps locate their target with

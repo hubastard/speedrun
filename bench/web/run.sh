@@ -3,7 +3,9 @@
 # then RUNS timed runs (default 3). A run's time is the wall clock of the tool's command, its
 # start-up included. The table goes to results/<app>.md: the median of the runs that passed
 # (a failed run stops early), the pass count, and each run's time (✗: failed).
-#   ./run.sh todomvc|rwa [tool...]     tools: speedrun playwright cypress maestro
+#   ./run.sh todomvc|rwa [tool...]     tools: speedrun playwright cypress maestro, and in Firefox
+#                                      speedrun-firefox playwright-firefox cypress-firefox
+# OUT=<name>: the table goes to results/<name>.md instead (the runs' output keeps its names).
 # maestro runs only when named: on the Real World App, one run took over 30 minutes.
 # Needs ../../speedrun (./build.sh), ./setup.sh run once, and maestro to run it. The app's
 # servers are started on 127.0.0.1 and stopped at the end (left alone if already up).
@@ -13,6 +15,7 @@ cd "$(dirname "$0")"
 APP="${1:?usage: ./run.sh todomvc|rwa [tool...]}"
 shift
 RUNS="${RUNS:-3}"
+OUT="${OUT:-$APP}"
 SPEEDRUN="$(cd ../.. && pwd)/speedrun"
 export MAESTRO_CLI_NO_ANALYTICS=1 MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true CYPRESS_CRASH_REPORTS=0
 case "$APP" in
@@ -49,13 +52,16 @@ fi
 run_tool() {
   case "$1" in
     speedrun) "$SPEEDRUN" test --headless --screen-size "$SIZE" "$FLOWS" ;;
-    playwright) npx playwright test -c "$APP/playwright" ;;
+    playwright) npx playwright test -c "$APP/playwright" --project=chromium ;;
     cypress) npx cypress run --project "$APP/cypress" ;;
+    speedrun-firefox) "$SPEEDRUN" test --headless --device firefox --screen-size "$SIZE" "$FLOWS" ;;
+    playwright-firefox) npx playwright test -c "$APP/playwright" --project=firefox ;;
+    cypress-firefox) npx cypress run --project "$APP/cypress" --browser firefox ;;
     maestro) maestro test --headless --screen-size "$SIZE" "$FLOWS" ;;
   esac
 }
 
-: > "results/$APP.txt.new"
+: > "results/$OUT.txt.new"
 for tool in "${TOOLS[@]}"; do
   times=()
   passed_times=()
@@ -66,7 +72,7 @@ for tool in "${TOOLS[@]}"; do
     status=0
     run_tool "$tool" > "results/$APP-$tool-$i.log" 2>&1 || status=$?
     t1=$(now)
-    secs=$(echo "$t1 - $t0" | bc)
+    secs=$(perl -e "printf '%.3f', $t1 - $t0")
     if [ "$i" = 0 ]; then
       echo "== $tool: warm-up ${secs} s, exit $status"
       continue
@@ -84,7 +90,7 @@ for tool in "${TOOLS[@]}"; do
   if [ "$passed" -gt 0 ]; then
     median=$(printf '%s\n' "${passed_times[@]}" | sort -n | awk '{ a[NR] = $1 } END { m = NR % 2 ? a[(NR + 1) / 2] : (a[NR / 2] + a[NR / 2 + 1]) / 2; printf "%.2f s", m }')
   fi
-  echo "$tool|$median|$passed/$RUNS|${times[*]}" >> "results/$APP.txt.new"
+  echo "$tool|$median|$passed/$RUNS|${times[*]}" >> "results/$OUT.txt.new"
 done
 
 {
@@ -92,7 +98,7 @@ done
   echo "|---|---:|---:|---|"
   while IFS='|' read -r tool median passed runs; do
     echo "| $tool | $median | $passed | $runs |"
-  done < "results/$APP.txt.new"
-} > "results/$APP.md"
-rm "results/$APP.txt.new"
-cat "results/$APP.md"
+  done < "results/$OUT.txt.new"
+} > "results/$OUT.md"
+rm "results/$OUT.txt.new"
+cat "results/$OUT.md"

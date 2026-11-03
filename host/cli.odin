@@ -252,7 +252,7 @@ run_test :: proc(o: ^Test_Options) -> int {
 	debug_dir := debug_output_path(o, &plan)
 	single := len(o.inputs) == 1 && os.is_file(o.inputs[0])
 	// As Maestro: flows that are all web flows (`url:`) run in the browser.
-	if o.platform == "" && (len(o.devices) == 0 || o.devices[0] == WEB_DEVICE) && all_web_flows(&plan) do o.platform = "web"
+	if o.platform == "" && (len(o.devices) == 0 || o.devices[0] == WEB_DEVICE || o.devices[0] == WEB_FIREFOX) && all_web_flows(&plan) do o.platform = "web"
 
 	shards := max(o.shard_split, o.shard_all, 1)
 	if shards > 1 && o.worker_result == "" {
@@ -537,8 +537,10 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 	all := connected_devices(o.platform)
 	devices: [dynamic]Shard_Device
 	if o.platform == "web" {
-		// A browser per shard, each its own Chrome.
-		for _ in 0 ..< requested do append(&devices, Shard_Device{WEB_DEVICE, "web"})
+		// A browser per shard, each its own Chrome or Firefox; with --device chromium,firefox,
+		// the shards take them in turn (--shard-all 2: every flow in both browsers).
+		browsers := o.devices[:] if len(o.devices) > 0 else []string{WEB_DEVICE}
+		for k in 0 ..< requested do append(&devices, Shard_Device{browsers[k % len(browsers)], "web"})
 	} else if len(o.devices) > 0 {
 		for id in o.devices {
 			found := false

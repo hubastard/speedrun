@@ -1,0 +1,85 @@
+# The web benchmark (bench/web) on a Linux runner, run by hand: Speedrun, Playwright and Cypress
+# in Chrome and in Firefox, on TodoMVC and Cypress's Real World App. Each tool runs once to warm
+# up, then RUNS times; the tables go to the run's summary and every run's output is kept.
+# Each tool runs its own browser builds: Speedrun Chrome for Testing's headless shell and
+# Mozilla's latest Firefox, Playwright its own Chromium and Firefox, Cypress Electron and the
+# runner's Firefox.
+name: Web benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Timed runs per tool (after one warm-up)
+        default: '3'
+
+env:
+  ODIN_VERSION: dev-2026-09
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Odin
+        run: |
+          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/$ODIN_VERSION/odin-linux-amd64-$ODIN_VERSION.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          dirname "$(find "$RUNNER_TEMP" -maxdepth 3 -name odin -type f | head -1)" >> "$GITHUB_PATH"
+
+      - name: Build speedrun
+        env:
+          SPEEDRUN_NO_ANDROID: 1
+        run: ./build.sh
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # Playwright's browsers' libraries, and what Cypress needs on Linux (its Electron, Xvfb).
+      - name: Set up the tools and the apps
+        working-directory: bench/web
+        run: |
+          corepack enable
+          sudo apt-get update -q
+          sudo apt-get install -y -q libgtk-3-0t64 libgbm-dev libnotify-dev libnss3 libxss1 libasound2t64 libxtst6 xauth xvfb
+          ./setup.sh
+          npx playwright install-deps chromium firefox
+
+      - name: Browser versions
+        run: |
+          {
+            echo "### Browsers"
+            echo "- Firefox for Cypress: $(firefox --version 2>/dev/null || echo none)"
+            echo "- Playwright: $(cd bench/web && npx playwright --version)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: TodoMVC
+        working-directory: bench/web
+        env:
+          RUNS: ${{ inputs.runs }}
+        run: ./run.sh todomvc speedrun playwright cypress speedrun-firefox playwright-firefox cypress-firefox
+
+      - name: Real World App
+        if: success() || failure()
+        working-directory: bench/web
+        env:
+          RUNS: ${{ inputs.runs }}
+        run: ./run.sh rwa speedrun playwright cypress speedrun-firefox playwright-firefox cypress-firefox
+
+      - name: Summary
+        if: always()
+        working-directory: bench/web
+        run: |
+          {
+            echo "### Wall clock (median of passed runs), 1 warm-up then ${{ inputs.runs }} runs"
+            for app in todomvc rwa; do [ -f "results/$app.md" ] && { cat "results/$app.md"; echo; }; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bench-web
+          path: bench/web/results
