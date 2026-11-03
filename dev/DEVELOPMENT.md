@@ -908,7 +908,34 @@ Known differences in how, not what:
   `mqt_js`, `mqt_v_js` with the new architecture; only the shell agent can see the app's
   process), iOS libproc's thread info (`com.facebook.react.JavaScript`, or
   `.runtime.JavaScript`; a simulator's apps are processes of the Mac): `JsThread.kt`, and
-  `JsThread` in `Settle.swift`. Other apps have no such thread and settle as before.
+  `JsThread` in `Settle.swift`. Other apps have no such thread and settle as before. All
+  the process's JavaScript threads are followed, their CPU time added up (an Expo dev client
+  runs two runtimes, its launcher's and the app's), and SPEEDRUN_DEBUG's settle notes say how
+  much JavaScript ran meanwhile (`JavaScript ran N ms`, the settle response's `js_ran_us`).
+  JavaScript can still pause between the steps of a navigation, and a settle end in such a
+  pause (issue #20: 212 ms after the tap, JavaScript idle, then busy for a second), so on
+  Android two more checks follow it:
+  - Another screen over the element (`screen_over`): what covers its center sits in a
+    screen-sized container that is not one of the element's, with the bounds of the element's
+    own, and drawn over it. The tree keeps the closing screen (the agent reports views hidden
+    from accessibility), but its order says nothing about what is on top: Android lists
+    siblings by place, and the closing list came *before* the form. Each node carries its
+    drawing order among its siblings (`AccessibilityNodeInfo.getDrawingOrder`, the node
+    format's last field, 0 on iOS and the web): where the two containers' branches part, the
+    higher one is drawn over. The tap waits for that screen to go (`SCREEN_OVER_WAIT_MS`),
+    settles, finds the element again. Bench: Transitions' second pick, which starts closing
+    the list after 150 ms of idle JavaScript.
+  - A slow first read after a settle (over 150 ms and 4x the median of the reads before it,
+    in an app whose JavaScript threads ran): the main thread was at work again, so settle
+    again and read again, once. Issues #19 and #20 had 418-821 ms reads where they took ~45;
+    the bench suite hits it ~8 times (a keyboard still closing, a dialog going), ~100 ms each.
+- Taps and drags are a finger on the touchscreen: each MotionEvent gets a pointer of tool
+  type `TOOL_TYPE_FINGER` and the touchscreen's device id, as `adb shell input` and UiAutomator
+  send them. `MotionEvent.obtain(down, time, action, x, y, meta)` leaves the tool type unknown
+  (and the device 0), which Compose turns into `PointerType.Unknown`: an app's Compose text
+  fields never took the focus from such taps, while its buttons did (issue #8; not reproduced
+  in the bench's native lab, even with that app's Compose BOM 2026.05.01 and Material 3
+  1.5.0-alpha18, which the lab now uses, its first field focused on entry).
 - A tap on a text field, or on an element holding exactly one (a test tag on a wrapper, as in
   issue #8), is checked for the focus: when the field is still unfocused and the screen
   exactly as it was (`hash` unchanged), the tap was lost (another field kept the focus, and

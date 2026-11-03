@@ -69,7 +69,8 @@ internal object AgentLog {
  *   2 TREE                                   -> u32 count, count * node
  *        the active window, every node (invisible ones too), pre-order
  *        node = u16 depth, i32 l, i32 t, i32 r, i32 b, u8 flags,
- *               str text, str desc, str id, str class, str hint, str error
+ *               str text, str desc, str id, str class, str hint, str error, u16 drawing
+ *        drawing: the view's drawing order among its siblings (higher: drawn over them)
  *        flags: 1 clickable, 2 enabled, 4 focused, 8 scrollable, 16 checked,
  *               32 visible to user, 64 selected
  *  10 SCREEN                                 -> u32 count, count * node
@@ -133,13 +134,14 @@ internal object AgentLog {
  *   5 SETTLE i32 quiet_ms, i32 no_change_ms, i32 timeout_ms
  *                                            -> u8 status, u32 ui_done_us, u32 waited_us,
  *                                               u8 method, u32 frames, u32 probes, u32 probe_max_us,
- *                                               u32 events, u32 js_us
+ *                                               u32 events, u32 js_us, u32 js_ran_us
  *        status: 0 = UI changed then went quiet, 1 = nothing changed, 2 = timeout
  *        method: 0 = window switches, frame stats and the active window's accessibility
  *                events, plus the idle probe; 1 = accessibility-event fallback; 3 = either,
  *                then the tree with an endless animation left out (Restless)
  *        frames/events = change signals seen of each kind; js_us = how long a busy JavaScript
- *        thread held it off (4. below)
+ *        thread held it off (4. below); js_ran_us = CPU time the JavaScript threads used while
+ *        it ran (0 for an app without one)
  *        times are measured from the last action (TAP, KEY, SWIPE, TYPE, ERASE, PRESS, MARK).
  *
  * Settle (method 0): the UI is settled when
@@ -466,6 +468,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         str(n.className)
         str(n.hintText)
         str(n.error)
+        tree.writeShort(n.drawingOrder.coerceIn(0, 0xffff))
     }
 
     /**
@@ -493,6 +496,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             str("android.widget.Toast")
             str(null)
             str(null)
+            tree.writeShort(0)
         }
         return texts.size
     }
@@ -656,8 +660,38 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun tap(x: Float, y: Float) = timedAction {
         val downTime = SystemClock.uptimeMillis()
-        injectMotion(MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0))
-        injectMotion(MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
+        injectMotion(touch(downTime, downTime, MotionEvent.ACTION_DOWN, x, y))
+        injectMotion(touch(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
+    }
+
+    /**
+     * A one-finger touch event, as a finger on the touchscreen makes it and `adb shell input`
+     * and UiAutomator inject it: the pointer's tool type a finger, the device the touchscreen.
+     * MotionEvent.obtain(downTime, eventTime, action, x, y, metaState) leaves the tool type
+     * unknown and the device 0, which Compose turns into PointerType.Unknown: buttons took
+     * such taps, but an app's Compose text fields never took the focus from them (issue #8).
+     */
+    private fun touch(down: Long, at: Long, action: Int, x: Float, y: Float): MotionEvent {
+        val coords = pointerCoords[0]
+        coords.clear()
+        coords.x = x
+        coords.y = y
+        coords.pressure = 1f
+        coords.size = 1f
+        return MotionEvent.obtain(down, at, action, 1, fingerProperties, pointerCoords, 0, 0, 1f, 1f,
+            touchscreen, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+    }
+
+    private val fingerProperties = arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER })
+    private val pointerCoords = arrayOf(MotionEvent.PointerCoords())
+
+    // The device's touchscreen, as `adb shell input` picks it (0 when there is none).
+    private val touchscreen by lazy {
+        try {
+            InputDevice.getDeviceIds().firstOrNull { InputDevice.getDevice(it)?.supportsSource(InputDevice.SOURCE_TOUCHSCREEN) == true } ?: 0
+        } catch (e: Exception) {
+            0
+        }
     }
 
     private fun injectMotion(e: MotionEvent, sync: Boolean = false) {
@@ -686,16 +720,16 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val early = lastEventTime + 1 - SystemClock.uptimeMillis()
             if (early > 0) Thread.sleep(early)
             val down = SystemClock.uptimeMillis()
-            injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x1, y1, 0))
+            injectMotion(touch(down, down, MotionEvent.ACTION_DOWN, x1, y1))
             val steps = maxOf(1, duration / SWIPE_STEP_MS)
             for (i in 1..steps) {
                 val f = i.toFloat() / steps
                 val at = down + (duration * f).toLong()
                 val wait = at - SystemClock.uptimeMillis()
                 if (wait > 0) Thread.sleep(wait)
-                injectMotion(MotionEvent.obtain(down, maxOf(at, SystemClock.uptimeMillis()), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f, 0))
+                injectMotion(touch(down, maxOf(at, SystemClock.uptimeMillis()), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f))
             }
-            injectMotion(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x2, y2, 0))
+            injectMotion(touch(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x2, y2))
             return@timedAction
         }
         // Timestamps end now, so the app sees the gesture's speed without us waiting it out,
@@ -704,10 +738,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         if (early > 0) Thread.sleep(early)
         val down = SystemClock.uptimeMillis() - duration - hold
         fun move(f: Float, sync: Boolean = false) = injectMotion(
-            MotionEvent.obtain(down, down + (duration * f).toLong(), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f, 0),
+            touch(down, down + (duration * f).toLong(), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f),
             sync,
         )
-        injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x1, y1, 0))
+        injectMotion(touch(down, down, MotionEvent.ACTION_DOWN, x1, y1))
         // Two MOVEs just past touch slop, each handled by the app before the next (about a
         // frame each): a scrolling parent intercepts the gesture on the first, or on the
         // second when the view under the finger keeps it from intercepting until the finger
@@ -730,8 +764,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             // pointer as stopped and drops the drag's samples. Lifting SWIPE_HOLD_MS after the
             // drag stops would do it too, but ScrollView (React Native's lists) reads the
             // velocity before adding the UP to its tracker; RecyclerView adds it first.
-            injectMotion(MotionEvent.obtain(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2, 0))
-            injectMotion(MotionEvent.obtain(down, down + duration + SWIPE_HOLD_MS - 5, MotionEvent.ACTION_MOVE, x2, y2, 0))
+            injectMotion(touch(down, down + duration + 10, MotionEvent.ACTION_MOVE, x2, y2))
+            injectMotion(touch(down, down + duration + SWIPE_HOLD_MS - 5, MotionEvent.ACTION_MOVE, x2, y2))
         }
         Thread.sleep(SWIPE_LIFT_GAP_MS)
         val up = maxOf(SystemClock.uptimeMillis(), down + duration + hold)
@@ -739,14 +773,14 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         // Flutter end a cancelled drag where it is). The still pointer alone did not do it on
         // a starved emulator (CI): a React Native list sometimes flung 100+ rows in one drag.
         val end = if (cancel) MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP
-        injectMotion(MotionEvent.obtain(down, up, end, x2, y2, 0))
+        injectMotion(touch(down, up, end, x2, y2))
     }
 
     private fun press(x: Float, y: Float, holdMs: Int) = timedAction {
         val down = SystemClock.uptimeMillis()
-        injectMotion(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
+        injectMotion(touch(down, down, MotionEvent.ACTION_DOWN, x, y))
         Thread.sleep(holdMs.coerceIn(0, 60_000).toLong()) // the app's long-press timer runs in real time
-        injectMotion(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
+        injectMotion(touch(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
     }
 
     // 2x the 8 dp touch slop.
@@ -1081,6 +1115,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         var steadyReads = 0         // tree reads in a row that agreed with the one before
         var jsFrom = 0L             // when a busy JavaScript thread first held this settle off
         var jsLast = 0L             // and last did
+        val jsStart = js.runtime()  // the JavaScript threads' CPU time so far (-1: none known)
 
         fun poll(): Boolean { // returns true if something changed
             val w = activeWindowId()
@@ -1192,6 +1227,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(minOf(probeMaxUs, Int.MAX_VALUE.toLong()).toInt())
         body.writeInt(events)
         body.writeInt(if (jsFrom != 0L) ((jsLast - jsFrom) / 1000).toInt() else 0)
+        val jsEnd = js.runtime()
+        body.writeInt(if (jsStart >= 0 && jsEnd >= jsStart) ((jsEnd - jsStart) / 1000).toInt() else 0)
     }
 
     /** Fallback: Android coalesces content-change events (~100 ms), hence the larger window. */
@@ -1236,6 +1273,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(if (last > start) ((last - start) / 1000).toInt() else 0)
         body.writeInt(((now - start) / 1000).toInt())
         body.writeByte(method)
+        body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)

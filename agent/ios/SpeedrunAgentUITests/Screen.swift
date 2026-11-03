@@ -1,7 +1,8 @@
 // SCREEN: the hierarchy flows' selectors match against on iOS: the foreground app, then
 // SpringBoard's status bars, each a root at depth 0, every node with this attribute mapping:
 //   text = title, or value when the title is empty; desc = label; id = identifier;
-//   hint = placeholder; checked = a checkbox, switch or toggle whose value is "1".
+//   hint = placeholder; checked = a checkbox, switch or toggle whose value is "1";
+//   drawing order 0 (unknown: the hit test says what is on top).
 // Frames are in points. The status bars cost as much as the app's own snapshot and change
 // with the clock or the battery only, so they are re-read every 5 s. The app's part comes
 // from SETTLE's last snapshot when no action happened since and it is under 1 s old: settle
@@ -384,6 +385,7 @@ final class Screen {
         w.u8(flags)
         w.str(text); w.str(s.label); w.str(s.identifier); w.str(Self.typeName(s.elementType))
         w.str(s.placeholderValue ?? ""); w.str("")
+        w.u16(0) // drawing order: unknown (iOS orders by place; its hit test says what is on top)
         count += 1
         let o = s as? NSObject
         elements.append(o?.responds(to: Self.accessibilityElementSel) == true ? o?.perform(Self.accessibilityElementSel)?.takeUnretainedValue() as? NSObject : nil)

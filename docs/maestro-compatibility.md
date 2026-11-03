@@ -64,7 +64,8 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 - **In a React Native app, settled includes its JavaScript thread being idle** (2 s at most).
   A screen that is closing can still take taps after the screen under it shows (React
   Navigation's JavaScript stack before version 7), until JavaScript catches up; a tap during
-  that time would reach the closing screen, or nothing.
+  that time would reach the closing screen, or nothing. On Android, a tap on an element that
+  such a screen still covers waits for it to go too (2 s at most).
 - **A tap that missed a moving element is tapped again.** When the element moved between the
   lookup and the tap (a screen still laying out), nothing changed after the tap, and the
   element is still there, unchanged, on the same screen, Speedrun taps it again where it is

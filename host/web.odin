@@ -960,6 +960,7 @@ web_read_nodes :: proc(w: ^Web, b: ^[dynamic]byte, unsettled: bool) {
 			for _ in 0 ..< 4 do wr_u32(b, 0)
 			wr_u8(b, 0)
 			for _ in 0 ..< 6 do wr_str(b, "")
+			wr_u16(b, 0)
 			continue
 		}
 		depth, _ := strconv.parse_int(f[0])
@@ -971,6 +972,7 @@ web_read_nodes :: proc(w: ^Web, b: ^[dynamic]byte, unsettled: bool) {
 		fl, _ := strconv.parse_int(f[5])
 		wr_u8(b, u8(fl))
 		for k in 6 ..= 11 do wr_str(b, f[k])
+		wr_u16(b, 0) // drawing order: unknown
 	}
 	if unsettled do wr_u8(b, 1 if flag == "1" else 0)
 }
@@ -1236,6 +1238,7 @@ web_settle :: proc(w: ^Web, quiet, no_change, timeout: i32, b: ^[dynamic]byte) {
 	wr_u32(b, u32(time.duration_microseconds(time.tick_since(start))))
 	wr_u8(b, u8(Settle_Method.Page))
 	wr_u32(b, frames)
+	wr_u32(b, 0)
 	wr_u32(b, 0)
 	wr_u32(b, 0)
 	wr_u32(b, 0)

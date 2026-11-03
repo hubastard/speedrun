@@ -30,6 +30,7 @@ SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a
 DISABLED_POLL_MS           :: 100 // tap: a disabled element read again this often until it turns on
 DISABLED_WAIT_MS           :: 3_000 // tap: how long at most, then it taps anyway
 UNLISTED_COVER_WAIT_MS     :: 1_500 // tap (iOS): a cover the hit test finds and the tree does not list
+SCREEN_OVER_WAIT_MS        :: 2_000 // tap (Android): another screen over the element (screen_over), at most
 STEADY_WAIT_MS             :: 1_500 // tap (web): the element still moving, at most
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
@@ -95,6 +96,9 @@ Runner :: struct {
 	trace:                Trace, // what debug prints, kept for a failed flow's logs/debug.log
 	view:                 View, // console output (console.odin)
 	reads, read_ms_total: f64,
+	read_ms_recent:       [8]f64, // the last reads' durations (slow_read)
+	settled_unread:       bool, // a settle ended and the screen was not read since
+	react_native:         bool, // a settle saw the app's JavaScript threads run
 	read_call:            int, // c.calls after the last read_screen (screen_current)
 	read_at:              time.Tick,
 	marks:                [dynamic]u64, // per node of the latest read: what it is, says, and its frame (untouched)
@@ -979,6 +983,23 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
+		// Android: under another screen (screen_over), one closing that the app has not removed
+		// yet, which takes the touches: wait for it to go (up to SCREEN_OVER_WAIT_MS; then tap
+		// anyway), settle, and find the element again.
+		if over := screen_over(r, el) if r.dev.platform == .Android else -1; over >= 0 {
+			o := r.h.nodes[over]
+			note(r, "#%d %s under another screen: #%d %s %d,%d-%d,%d", el, r.h.nodes[el].class, over, o.class, o.left, o.top, o.right, o.bottom)
+			t := time.tick_now()
+			for time.tick_since(t) < SCREEN_OVER_WAIT_MS * time.Millisecond {
+				time.sleep(50 * time.Millisecond)
+				if !read_screen(r) do return AGENT_LOST
+				el = select(r, d.sel) or_return
+				if el < 0 || screen_over(r, el) < 0 do break
+			}
+			note(r, "under another screen: waited %.0f ms", us(t) / 1000)
+			settle(r, no_change_ms = 0) or_return
+			el = find_element(r, d.sel, c.optional, -1) or_return
+		}
 		// Disabled (a button that turns on once a form is filled or a request ends): a tap on
 		// it does nothing, so wait for it to turn on, as a user would (up to DISABLED_WAIT_MS,
 		// within the lookup's time; then tap anyway: a flow can tap a button that stays off, to
@@ -1300,6 +1321,62 @@ typing :: proc(r: ^Runner) -> bool {
 covered_by :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
 	return cover_at(r, el, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
+}
+
+// Android: another screen over the element, as a closing screen lies over the one under it
+// until the app removes it (React Navigation's JavaScript stack keeps it mounted, taking the
+// touches, issues #19 and #20): something at the element's center that is not one of its
+// containers, in a screen-sized container that is not one of them either, with the bounds of
+// the element's own screen-sized container, and drawn over it: where the two containers'
+// branches part, the other's has the higher drawing order (the tree's order says nothing:
+// Android lists siblings by their place on screen). A see-through layer over the whole window
+// (a portal's host) holds nothing at the point; a sticky footer is in the element's own screen;
+// the keyboard and a dialog are other windows. -1: none.
+@(private = "file")
+screen_over :: proc(r: ^Runner, el: int) -> int {
+	half := i64(r.w) * i64(r.h_px) / 2
+	big :: proc(n: H_Node, half: i64) -> bool {return i64(n.right - n.left) * i64(n.bottom - n.top) >= half}
+	holds :: proc(r: ^Runner, p, k: int) -> bool {
+		for q := r.h.nodes[k].parent; q >= 0; q = r.h.nodes[q].parent do if q == p do return true
+		return false
+	}
+	screen_of :: proc(r: ^Runner, k: int, half: i64) -> int {
+		for p := r.h.nodes[k].parent; p >= 0; p = r.h.nodes[p].parent do if big(r.h.nodes[p], half) do return p
+		return -1
+	}
+	own := screen_of(r, el, half)
+	if own < 0 do return -1
+	n, b := r.h.nodes[el], r.h.nodes[own]
+	x, y := n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+	end := el + 1
+	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
+	for c, k in r.h.nodes {
+		if (k >= el && k < end) || !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		if big(c, half) || holds(r, k, el) do continue
+		other := screen_of(r, k, half)
+		if other < 0 || other == own || holds(r, other, el) do continue
+		a := r.h.nodes[other]
+		if abs(int(a.left - b.left)) > 8 || abs(int(a.top - b.top)) > 8 || abs(int(a.right - b.right)) > 8 || abs(int(a.bottom - b.bottom)) > 8 do continue
+		if drawn_over(r, other, own) do return other
+	}
+	return -1
+}
+
+// Node `a` is drawn over node `b` (Android): of their branches where they part, a's has the
+// higher drawing order. False in different windows, or when one holds the other.
+@(private = "file")
+drawn_over :: proc(r: ^Runner, a, b: int) -> bool {
+	path :: proc(r: ^Runner, k: int) -> [dynamic]int {
+		p: [dynamic]int
+		p.allocator = context.temp_allocator
+		for q := k; q >= 0; q = r.h.nodes[q].parent do inject_at(&p, 0, q)
+		return p
+	}
+	pa, pb := path(r, a), path(r, b)
+	i := 0
+	for i < len(pa) && i < len(pb) && pa[i] == pb[i] do i += 1
+	if i == 0 || i >= len(pa) || i >= len(pb) do return false
+	return r.h.nodes[pa[i]].drawing > r.h.nodes[pb[i]].drawing
 }
 
 // A spinner or a progress bar: iOS's activity and progress indicators, Android's ProgressBar.
@@ -2183,7 +2260,9 @@ settle_status :: proc(r: ^Runner, timeout_ms: Maybe(int) = nil, no_change_ms: i3
 	if t, has := timeout_ms.?; has do timeout = i32(t)
 	res, ok := op_settle(r.c, SETTLE_QUIET_MS, no_change_ms, timeout)
 	if !ok do return {status = .Timeout}, AGENT_LOST
-	note(r, "settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events%s", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events, fmt.tprintf(", JavaScript busy %d ms", res.js_us / 1000) if res.js_us > 0 else "")
+	r.settled_unread = true
+	if res.js_ran_us > 0 do r.react_native = true
+	note(r, "settle %v%s: ui done %d ms, waited %d ms, %d frames, %d probes (max %d ms), %d events%s%s", res.status, " (an endless animation left out)" if res.method == .Restless else "", res.ui_done_us / 1000, res.waited_us / 1000, res.frames, res.probes, res.probe_max_us / 1000, res.events, fmt.tprintf(", JavaScript busy %d ms", res.js_us / 1000) if res.js_us > 0 else "", fmt.tprintf(", JavaScript ran %d ms", res.js_ran_us / 1000) if res.js_ran_us >= 1000 else "")
 	return res, nil
 }
 
@@ -3076,7 +3155,22 @@ script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 
 // Reads every window into r.h and applies the bounds filter.
 read_screen :: proc(r: ^Runner) -> bool {
+	after_settle := r.settled_unread
+	r.settled_unread = false
 	if !read_screen_once(r) do return false
+	// Android, React Native: the first read after a settle, much slower than reads have been,
+	// was served by a main thread at work again. JavaScript can pause between the steps of a
+	// navigation, the settle ending in such a pause, then send the next one: the read shows the
+	// next screen while the closing one still takes the touches (issues #19 and #20, reads of
+	// 418-821 ms where they took ~45). So settle again, and read again, once.
+	if after_settle && r.dev.platform == .Android && r.react_native {
+		if slow, ms, usual := slow_read(r); slow {
+			note(r, "a slow read after the settle (%.0f ms, against %.0f ms): the app is still at work, settling again", ms, usual)
+			if settle(r, no_change_ms = 0) != nil do return false
+			r.settled_unread = false
+			if !read_screen_once(r) do return false
+		}
+	}
 	// On iOS the notification alert is answered on hierarchy reads.
 	if r.dev.platform == .IOS && r.notifications != "" {
 		tapped, ok := answer_notification_alert(r)
@@ -3131,6 +3225,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		n.flags = transmute(Flags)rd_u8(&rd)
 		n.text, n.desc, n.id, n.class = rd_str(&rd, alloc), rd_str(&rd, alloc), rd_str(&rd, alloc), rd_str(&rd, alloc)
 		n.hint, n.error = rd_str(&rd, alloc), rd_str(&rd, alloc)
+		n.drawing = rd_u16(&rd)
 		if !rd.ok do return false
 		n.children.allocator = alloc
 		d := int(n.depth)
@@ -3180,6 +3275,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	if !any_kept do for &n in r.h.nodes do n.kept = true
 	for &n, k in r.h.nodes do if n.kept && n.parent >= 0 do append(&r.h.nodes[n.parent].children, k)
 	for root in r.h.roots do if r.h.nodes[root].kept do append(&r.h.order, ..subtree(r, root))
+	r.read_ms_recent[int(r.reads) % len(r.read_ms_recent)] = us(t) / 1000
 	r.reads += 1
 	r.read_ms_total += us(t) / 1000
 	if r.debug {
@@ -3190,6 +3286,25 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	trace_read(r, us(t) / 1000)
 	r.read_call, r.read_at = r.c.calls, time.tick_now()
 	return true
+}
+
+// The last read took over SLOW_READ_MIN_MS and SLOW_READ_FACTOR times the median of the reads
+// before it (5 at least).
+SLOW_READ_MIN_MS :: 150
+SLOW_READ_FACTOR :: 4
+
+@(private = "file")
+slow_read :: proc(r: ^Runner) -> (slow: bool, ms, usual: f64) {
+	n := int(r.reads)
+	if n < 6 do return false, 0, 0
+	k := len(r.read_ms_recent)
+	ms = r.read_ms_recent[(n - 1) % k]
+	before: [dynamic]f64
+	before.allocator = context.temp_allocator
+	for i in 2 ..= min(n, k) do append(&before, r.read_ms_recent[(n - i) % k])
+	slice.sort(before[:])
+	usual = before[len(before) / 2]
+	return ms > SLOW_READ_MIN_MS && ms > SLOW_READ_FACTOR * usual, ms, usual
 }
 
 // The screen as last read is still current: nothing asked of the agent since (no action, no

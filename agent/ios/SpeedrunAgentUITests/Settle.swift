@@ -37,7 +37,7 @@ final class Settle {
     /// Response: u8 status (0 settled, 1 no change, 2 timeout), u32 ui_done_us, u32 waited_us,
     /// u8 method (2: quiescence + signature), u32 quiescence waits, u32 signatures,
     /// u32 longest quiescence wait in us, u32 events (0), u32 how long a busy JavaScript thread
-    /// held it off in us. Main thread.
+    /// held it off in us, u32 the JavaScript threads' CPU time while it ran in us. Main thread.
     func run(quietMs: Int, noChangeMs: Int, timeoutMs: Int, out: inout Writer) throws {
         let start = input.lastActionNs
         let deadline = start + UInt64(max(timeoutMs, 0)) * 1_000_000
@@ -51,6 +51,7 @@ final class Settle {
         var animations = !input.lastWasSwipe
         var jsFrom: UInt64 = 0 // when a busy JavaScript thread first held this settle off
         var jsLast: UInt64 = 0 // and last did
+        let jsStart = js.runtime() // the JavaScript threads' CPU time so far (nil: none known)
 
         func jsBusy(_ now: UInt64) -> Bool {
             if jsFrom != 0 && now &- jsFrom >= Self.jsWaitMaxNs { return false }
@@ -101,11 +102,17 @@ final class Settle {
         out.u32(longest)
         out.u32(0)
         out.u32(jsFrom != 0 ? UInt32(clamping: (jsLast &- jsFrom) / 1000) : 0)
+        if let jsStart, let jsEnd = js.runtime(), jsEnd >= jsStart {
+            out.u32(UInt32(clamping: (jsEnd - jsStart) / 1000))
+        } else {
+            out.u32(0)
+        }
     }
 }
 
-/// The JavaScript thread of the React Native app in front ("com.facebook.react.JavaScript", or
-/// "com.facebook.react.runtime.JavaScript" without the bridge), its CPU time read with libproc:
+/// The JavaScript threads of the React Native app in front ("com.facebook.react.JavaScript", or
+/// "com.facebook.react.runtime.JavaScript" without the bridge; an Expo dev client runs two),
+/// their CPU time read with libproc and added up:
 /// a simulator's apps are processes of this Mac, as the agent is. React Native's tree shows the
 /// next screen as soon as JavaScript commits it, while the one it replaces can stay mounted
 /// (React Navigation's JavaScript stack before version 7 removes a closing card only when its
@@ -122,7 +129,7 @@ final class JsThread {
     private static let lookUpAgainNs: UInt64 = 1_000_000_000
     private static let threadInfoSize = 112 // struct proc_threadinfo
     private var pid: Int32 = 0
-    private var thread: UInt64 = 0 // its handle, as PROC_PIDLISTTHREADS lists it
+    private var threads: [UInt64] = [] // their handles, as PROC_PIDLISTTHREADS lists them
     private var lookedUp: UInt64 = 0
     private var samples: [(at: UInt64, run: UInt64)] = [] // oldest first
     /// JavaScript stayed busy through a whole wait: not waited for again until seen idle.
@@ -132,32 +139,42 @@ final class JsThread {
     func follow(pid: Int32?, now: UInt64) {
         guard let pid, pid > 0 else {
             self.pid = 0
-            thread = 0
+            threads = []
             samples.removeAll()
             return
         }
-        if pid == self.pid && (thread != 0 || now &- lookedUp < Self.lookUpAgainNs) { return }
+        if pid == self.pid && (!threads.isEmpty || now &- lookedUp < Self.lookUpAgainNs) { return }
         self.pid = pid
         lookedUp = now
         samples.removeAll()
-        thread = Self.lookUp(pid) ?? 0
+        threads = Self.lookUp(pid)
     }
 
-    /// Records the thread's CPU time now, when there is one.
-    func sample(now: UInt64) {
-        guard thread != 0 else { return }
-        guard let run = Self.runtime(pid, thread) else {
-            thread = 0
-            samples.removeAll()
-            return
+    /// The threads' CPU time so far in nanoseconds, nil when there are none.
+    func runtime() -> UInt64? {
+        guard !threads.isEmpty else { return nil }
+        var total: UInt64 = 0
+        for thread in threads {
+            guard let run = Self.runtime(pid, thread) else {
+                threads = []
+                samples.removeAll()
+                return nil
+            }
+            total &+= run
         }
+        return total
+    }
+
+    /// Records the threads' CPU time now, when there are some.
+    func sample(now: UInt64) {
+        guard let run = runtime() else { return }
         samples.append((now, run))
         if samples.count > 16 { samples.removeFirst() }
     }
 
     func busy(now: UInt64) -> Bool {
         sample(now: now)
-        guard thread != 0, var end = samples.last else { return false }
+        guard !threads.isEmpty, var end = samples.last else { return false }
         // Over the last windowNs, or the shortest span past minSpanNs when the sample before
         // that is old (a long quiescence wait): a long span would hide work that just began.
         var ref = samples.last(where: { now &- $0.at >= Self.windowNs && now &- $0.at <= 3 * Self.windowNs })
@@ -166,7 +183,7 @@ final class JsThread {
             ref = end
             Thread.sleep(forTimeInterval: Double(Self.minSpanNs) / 1e9)
             sample(now: DispatchTime.now().uptimeNanoseconds)
-            guard thread != 0, let last = samples.last else { return false }
+            guard !threads.isEmpty, let last = samples.last else { return false }
             end = last
         }
         guard let ref, end.at > ref.at else { return false }
@@ -181,19 +198,20 @@ final class JsThread {
         return info.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt64.self) &+ $0.load(fromByteOffset: 8, as: UInt64.self) }
     }
 
-    private static func lookUp(_ pid: Int32) -> UInt64? {
+    private static func lookUp(_ pid: Int32) -> [UInt64] {
         var threads = [UInt64](repeating: 0, count: 1024)
         let n = threads.withUnsafeMutableBytes { proc_pidinfo(pid, procPidListThreads, 0, $0.baseAddress, Int32($0.count)) }
-        guard n > 0 else { return nil }
+        guard n > 0 else { return [] }
         var info = [UInt8](repeating: 0, count: threadInfoSize)
+        var found: [UInt64] = []
         for thread in threads.prefix(Int(n) / 8) {
             let got = info.withUnsafeMutableBytes { proc_pidinfo(pid, procPidThreadInfo, thread, $0.baseAddress, Int32(threadInfoSize)) }
             guard got == Int32(threadInfoSize) else { continue }
             let name = info[48...].prefix(while: { $0 != 0 })
             let s = String(decoding: name, as: UTF8.self)
-            if s == "com.facebook.react.JavaScript" || s == "com.facebook.react.runtime.JavaScript" { return thread }
+            if s == "com.facebook.react.JavaScript" || s == "com.facebook.react.runtime.JavaScript" { found.append(thread) }
         }
-        return nil
+        return found
     }
 }
 

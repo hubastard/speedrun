@@ -16,8 +16,9 @@ private const val JS_BUSY_SHARE = 0.4
 private const val JS_LOOKUP_AGAIN_NS = 1_000_000_000L
 
 /**
- * The JavaScript thread of the React Native app in front (mqt_js, or mqt_v_js with the new
- * architecture), its CPU time read from /proc. React Native's tree shows the next screen as
+ * The JavaScript threads of the React Native app in front (mqt_js, or mqt_v_js with the new
+ * architecture; an Expo dev client runs two, its launcher's and the app's), their CPU time
+ * read from /proc and added up. React Native's tree shows the next screen as
  * soon as JavaScript commits it, while the screen it replaces can stay mounted and take the
  * touches (React Navigation's JavaScript stack before version 7 removes a closing card only
  * when its animation's end reaches JavaScript) and the next one ignore them, until JavaScript
@@ -27,7 +28,7 @@ private const val JS_LOOKUP_AGAIN_NS = 1_000_000_000L
  */
 internal class JsThread {
     private var pkg: String? = null
-    private var file: RandomAccessFile? = null
+    private var files: List<RandomAccessFile> = emptyList()
     private var lookedUp = 0L
     private val buf = ByteArray(64)
     private val times = LongArray(16)
@@ -41,18 +42,29 @@ internal class JsThread {
     /** Follows the app in front (its package, from the active window's root). */
     fun follow(packageName: String?, now: Long) {
         if (packageName == null) return
-        if (packageName == pkg && (file != null || now - lookedUp < JS_LOOKUP_AGAIN_NS)) return
+        if (packageName == pkg && (files.isNotEmpty() || now - lookedUp < JS_LOOKUP_AGAIN_NS)) return
         drop()
         pkg = packageName
         lookedUp = now
-        file = lookUp(packageName)
+        files = lookUp(packageName)
     }
 
-    /** Records the thread's CPU time now, when there is one. */
+    /** The threads' CPU time so far in nanoseconds, -1 when there are none. */
+    fun runtime(): Long {
+        if (files.isEmpty()) return -1
+        var total = 0L
+        for (f in files) {
+            val run = runtime(f)
+            if (run < 0) { drop(); return -1 }
+            total += run
+        }
+        return total
+    }
+
+    /** Records the threads' CPU time now, when there are some. */
     fun sample(now: Long) {
-        val f = file ?: return
-        val run = runtime(f)
-        if (run < 0) { drop(); return }
+        val run = runtime()
+        if (run < 0) return
         times[next] = now
         runs[next] = run
         next = (next + 1) % times.size
@@ -62,7 +74,7 @@ internal class JsThread {
     /** JavaScript ran for more than JS_BUSY_SHARE of the last JS_WINDOW_NS. */
     fun busy(now: Long): Boolean {
         sample(now)
-        if (file == null) return false
+        if (files.isEmpty()) return false
         var k = newestBefore(now - JS_WINDOW_NS) ?: oldestSince(now - JS_MIN_SPAN_NS)
         var at = now
         if (k == null) { // not enough history: measure over JS_MIN_SPAN_NS
@@ -70,7 +82,7 @@ internal class JsThread {
             at = SystemClock.elapsedRealtimeNanos()
             k = (next - 1 + times.size) % times.size
             sample(at)
-            if (file == null) return false
+            if (files.isEmpty()) return false
         }
         val last = (next - 1 + times.size) % times.size
         val span = times[last] - times[k]
@@ -92,8 +104,8 @@ internal class JsThread {
     }
 
     private fun drop() {
-        try { file?.close() } catch (e: Exception) { }
-        file = null
+        for (f in files) try { f.close() } catch (e: Exception) { }
+        files = emptyList()
         count = 0
     }
 
@@ -107,9 +119,9 @@ internal class JsThread {
         if (i == 0) -1 else v
     } catch (e: Exception) { -1 }
 
-    /** The package's main process (its command line is the package name), then its thread. */
-    private fun lookUp(packageName: String): RandomAccessFile? {
-        val procs = File("/proc").listFiles() ?: return null
+    /** The package's main process (its command line is the package name), then its threads. */
+    private fun lookUp(packageName: String): List<RandomAccessFile> {
+        val procs = File("/proc").listFiles() ?: return emptyList()
         val want = packageName.toByteArray()
         for (p in procs) {
             val name = p.name
@@ -117,15 +129,15 @@ internal class JsThread {
             val cmd = try { File(p, "cmdline").readBytes() } catch (e: Exception) { continue }
             if (cmd.size < want.size || !(0 until want.size).all { cmd[it] == want[it] }) continue
             if (cmd.size > want.size && cmd[want.size] != 0.toByte()) continue
-            val tasks = File(p, "task").listFiles() ?: return null
-            for (t in tasks) {
+            val found = ArrayList<RandomAccessFile>()
+            for (t in File(p, "task").listFiles() ?: emptyArray()) {
                 val comm = try { File(t, "comm").readText().trim() } catch (e: Exception) { continue }
                 if (comm == "mqt_js" || comm == "mqt_v_js") {
-                    return try { RandomAccessFile(File(t, "schedstat"), "r") } catch (e: Exception) { null }
+                    try { found += RandomAccessFile(File(t, "schedstat"), "r") } catch (e: Exception) { }
                 }
             }
-            return null
+            return found
         }
-        return null
+        return emptyList()
     }
 }
