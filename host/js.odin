@@ -68,7 +68,7 @@ js_random :: proc(r: ^Runner, kind: Random_Kind, length: int) -> (value: string,
 js_start :: proc(r: ^Runner) -> Err {
 	if r.js == nil {
 		msg: [^]u8
-		platform: cstring = "ios" if r.dev.platform == .IOS else "android"
+		platform: cstring = "ios" if r.dev.platform == .IOS else "web" if r.dev.platform == .Web else "android"
 		r.js = sr_js_new(raw_data(PRELUDE), len(PRELUDE), platform, js_log, js_http, r, &msg)
 		if r.js == nil {
 			e := strings.clone(string(cstring(msg)), r.alloc) if msg != nil else "out of memory"

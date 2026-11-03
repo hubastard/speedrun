@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Popups</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Popups</h1>
+<button id="alert">Show alert</button>
+<button id="confirm">Ask to confirm</button>
+<button id="window">Open window</button>
+<p id="answer"></p>
+<iframe src="frame.html" title="Embedded" style="width: 300px; height: 120px"></iframe>
+<script>
+  document.getElementById('alert').onclick = () => { alert('Hello'); document.getElementById('answer').textContent = 'Alert closed' }
+  document.getElementById('confirm').onclick = () => { document.getElementById('answer').textContent = confirm('Sure?') ? 'Confirmed' : 'Cancelled' }
+  document.getElementById('window').onclick = () => window.open('popup.html', '_blank')
+</script>
+</body></html>

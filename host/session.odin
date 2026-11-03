@@ -22,8 +22,8 @@ import "core:time"
 import "core:unicode"
 
 SESSION_USAGE :: `usage:
-  speedrun session start --app <appId> [--platform android|ios] [--device <id>] [-e KEY=VALUE]...
-                         [--keep-animations]   (default: Android's off, iOS apps 10x faster)
+  speedrun session start --app <appId or URL> [--platform android|ios|web] [--device <id>]
+                         [--headless] [--screen-size WxH] [-e KEY=VALUE]... [--keep-animations]
   speedrun look [--shot]          the screen, a line per element, each with a ref (@7)
   speedrun do '<command>'...      flow commands, as written in a flow file (one per argument);
                                   @7 stands for that element's selector
@@ -60,8 +60,8 @@ in_session := false
 session_conflict :: proc(d: ^Device) -> string {
 	if in_session do return ""
 	info, ok := session_running()
-	if !ok || info.platform != ("ios" if d.platform == .IOS else "android") do return ""
-	id := d.udid if d.platform == .IOS else adb_serial
+	if !ok || info.platform != platform_name(d.platform) do return ""
+	id := d.udid if d.platform != .Android else adb_serial
 	if id != "" && info.device_id != "" && id != info.device_id do return ""
 	return fmt.tprintf("A speedrun session holds %s (app %s): stop it first (speedrun session stop), or drive it with speedrun do and speedrun look.", info.device, info.app)
 }
@@ -190,6 +190,18 @@ session_start :: proc(args: []string) -> int {
 			device = value
 		case (a == "-e" || a == "--env") && value != "":
 			append(&env, value)
+		case a == "--headless":
+			web_headless = true
+			continue
+		case a == "--screen-size" && value != "":
+			ws, x, hs := strings.partition(value, "x")
+			sw, wok := strconv.parse_int(ws)
+			sh, hok := strconv.parse_int(hs)
+			if x == "" || !wok || !hok || sw <= 0 || sh <= 0 {
+				fmt.eprintf("--screen-size takes {{Width}}x{{Height}}, such as 1920x1080, not %s\n", value)
+				return 2
+			}
+			web_size = {sw, sh}
 		case:
 			fmt.eprintf("unknown option or missing value: %s\n%s\n", a, SESSION_USAGE)
 			return 2
@@ -205,6 +217,9 @@ session_start :: proc(args: []string) -> int {
 // Starts the session process and waits until it serves (or says why it did not start).
 start_session :: proc(app, platform, device: string, env: []string, keep_device_animations := false) -> (code: int, text: string) {
 	if app == "" do return 2, "A session needs the app's id (--app): the app its commands are for (launchApp's)."
+	// A web page's URL: the browser.
+	platform := platform
+	if platform == "" && strings.contains(app, "://") do platform = "web"
 	update_check_start()
 	if info, ok := session_running(); ok {
 		if info.app == app && (device == "" || device == info.device_id) {
@@ -226,6 +241,8 @@ start_session :: proc(app, platform, device: string, env: []string, keep_device_
 	append(&cmd, "perl", "-MPOSIX=setsid", "-e", "setsid(); exec @ARGV", exe, "session", "serve", "--app", app)
 	if platform != "" do append(&cmd, "--platform", platform)
 	if device != "" do append(&cmd, "--device", device)
+	if web_headless do append(&cmd, "--headless", "1")
+	if web_size != {} do append(&cmd, "--screen-size", fmt.tprintf("%dx%d", web_size[0], web_size[1]))
 	for e in env do append(&cmd, "-e", e)
 	if keep_device_animations do append(&cmd, "--keep-animations")
 	log := fmt.tprintf("%s/session.log", dir)
@@ -331,6 +348,12 @@ session_serve :: proc(args: []string) -> int {
 		case "--platform": platform = args[i + 1]
 		case "--device":   device = args[i + 1]
 		case "-e":         append(&env, args[i + 1])
+		case "--headless": web_headless = true
+		case "--screen-size":
+			ws, _, hs := strings.partition(args[i + 1], "x")
+			sw, _ := strconv.parse_int(ws)
+			sh, _ := strconv.parse_int(hs)
+			web_size = {sw, sh}
 		}
 		i += 1
 	}
@@ -411,7 +434,7 @@ session_serve :: proc(args: []string) -> int {
 		if adb_serial != "" do name = fmt.aprintf("%s (%s)", name, adb_serial)
 	}
 	s.device = name
-	info := Session_Info{os.get_pid(), bound.port, token, app, "ios" if dev.platform == .IOS else "android", name, device_id}
+	info := Session_Info{os.get_pid(), bound.port, token, app, platform_name(dev.platform), name, device_id}
 	data, _ := json.marshal(info, {}, context.temp_allocator)
 	tmp := fmt.tprintf("%s.tmp", info_path())
 	if os.write_entire_file(tmp, data, {.Read_User, .Write_User}) != nil || os.rename(tmp, info_path()) != nil {
@@ -800,9 +823,16 @@ has_word :: proc(s: string) -> bool {
 	return false
 }
 
-// Something to tap: Android's clickable views; iOS's buttons, cells, links and controls.
+// Something to tap: Android's clickable views; iOS's buttons, cells, links and controls; a
+// page's links, buttons and form controls.
 @(private = "file")
 actionable :: proc(r: ^Runner, n: H_Node) -> bool {
+	if r.dev.platform == .Web {
+		switch n.class {
+		case "a", "button", "summary", "select", "option", "input", "textarea", "label": return true
+		}
+		return false
+	}
 	if r.dev.platform != .IOS do return .Clickable in n.flags
 	switch n.class {
 	case "Button", "Cell", "Link", "Switch", "Toggle", "CheckBox", "Image": return true
@@ -826,7 +856,8 @@ inner_texts :: proc(r: ^Runner, k: int) -> string {
 
 @(private = "file")
 is_field :: proc(class: string) -> bool {
-	return strings.has_suffix(class, "EditText") || class == "TextField" || class == "SecureTextField" || class == "SearchField" || class == "TextView"
+	return strings.has_suffix(class, "EditText") || class == "TextField" || class == "SecureTextField" || class == "SearchField" || class == "TextView" ||
+		class == "input" || class == "textarea"
 }
 
 // `Button "Sign in" #signin checked`: a short class, the label, the id, the state.
@@ -882,6 +913,16 @@ short_class :: proc(class: string, field: bool) -> string {
 	case "ImageButton":                                                    return "Button"
 	case "RadioButton":                                                    return "Radio"
 	case "CheckBox":                                                       return "Checkbox"
+	// A page's elements (web: the class is the tag).
+	case "a":                                                              return "Link"
+	case "button", "summary":                                              return "Button"
+	case "select":                                                         return "Select"
+	case "option":                                                         return "Option"
+	case "h1", "h2", "h3", "h4", "h5", "h6":                               return "Heading"
+	case "p", "span", "label", "strong", "em", "b", "i", "small", "li", "td", "th", "dt", "dd", "code", "pre", "blockquote", "figcaption", "legend":
+		return "Text"
+	case "div", "section", "header", "footer", "nav", "main", "article", "aside", "form", "ul", "ol", "table", "tr", "tbody", "thead", "fieldset", "dl", "body", "iframe", "Viewport":
+		return "View"
 	}
 	return c
 }
@@ -985,7 +1026,7 @@ yaml_string :: proc(s: string) -> string {
 @(private = "file")
 write_screen :: proc(s: ^Session, els: []Element, b: ^strings.Builder) {
 	r := &s.r
-	fmt.sbprintf(b, "%s %dx%d, %d elements\n", "ios" if r.dev.platform == .IOS else "android", r.w, r.h_px, len(els))
+	fmt.sbprintf(b, "%s %dx%d, %d elements\n", platform_name(r.dev.platform), r.w, r.h_px, len(els))
 	for e in els do fmt.sbprintf(b, "%s\n", ref_line(e))
 }
 

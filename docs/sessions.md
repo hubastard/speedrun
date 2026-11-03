@@ -16,6 +16,10 @@ speedrun session stop
 Each command takes as long as it does in a flow: the device stays connected, and Speedrun
 waits for the app to settle after every step, as in a test run.
 
+A website works the same way, in Chrome: give its URL as the app
+(`speedrun session start --app https://example.com --headless`; without `--headless` a window
+shows what the agent does). The MCP tool starts the browser headless unless told otherwise.
+
 As in a test run, the session turns Android's animations off and runs iOS apps' 10x faster,
 and `session stop` puts the device back as it found it. `--keep-animations` on `session
 start` leaves them as they are, for a device you also use by hand while a session runs.

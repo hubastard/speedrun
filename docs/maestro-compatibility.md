@@ -5,8 +5,9 @@ element wins, timeouts, conditions, variables and scripts. Like Maestro, it is s
 unknown command or field is an error, and so is a Maestro feature speedrun does not support
 yet. So a flow that loads runs as written; nothing is skipped silently.
 
-In short: every Maestro command, selector, condition and script for Android and iOS is
-supported, except the AI commands. The lists below are complete.
+In short: every Maestro command, selector, condition and script for Android, iOS and the web
+is supported, except the AI commands (and `startRecording` on the web). The lists below are
+complete.
 
 ## Supported
 
@@ -28,12 +29,13 @@ supported, except the AI commands. The lists below are complete.
 
 `text`, `id`, `index`, `enabled`, `selected`, `checked`, `focused`,
 `width`/`height`/`tolerance`, `below`, `above`, `leftOf`, `rightOf`, `containsChild`,
-`containsDescendants`, `childOf`, `traits`, and on taps `point`, `repeat`, `delay`,
+`containsDescendants`, `childOf`, `traits`, `css` (web), and on taps `point`, `repeat`, `delay`,
 `retryTapIfNoChange`, `waitToSettleTimeoutMs`, `waitUntilVisible`.
 
 ### Flow config and conditions
 
-Flow config: `appId`, `name`, `env`, `tags`, `properties`, `onFlowStart`, `onFlowComplete`.
+Flow config: `appId`, `url` (a [web flow](web.md)), `name`, `env`, `tags`, `properties`,
+`onFlowStart`, `onFlowComplete`.
 Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`, `platform`,
 `true`.
 
@@ -51,10 +53,9 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
 ## Not supported
 
 - AI commands (`assertWithAI`, `assertNoDefectsWithAI`, `extractTextWithAI`) and `--analyze`.
-- Web flows (`url:`, the `css` selector).
+- `startRecording` in web flows.
 - Real iOS devices (iOS simulators are supported; real Android devices are too).
-- `--headless`, `--screen-size`, `--api-url`, `--api-key` and `--reinstall-driver` are
-  accepted and ignored.
+- `--api-url`, `--api-key` and `--reinstall-driver` are accepted and ignored.
 
 ## Differences you may notice
 
@@ -127,6 +128,11 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   when the dialog is about the app the flow launched, Close app for any other app. A
   freshly booted emulator's launcher often shows one, and it would hide the app under test
   ([turning them off on CI](troubleshooting.md)).
+- **Web flows** differ from Maestro's web support in a few ways, all listed in
+  [Web](web.md#finding-elements): text is compared with its white space collapsed, `enabled`
+  and the other states work, launch arguments are set before the page's scripts run, a
+  double tap fires `dblclick`, a long press holds 0.8 s (Maestro: 3 s), and
+  `scrollUntilVisible` scrolls the list the element is in, not only the window.
 - **A lost connection to Speedrun's agent is made again** (the agent started again if it
   crashed), and the step that saw it runs again, up to twice per flow.
 

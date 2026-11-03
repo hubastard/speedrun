@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Forms</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Sign up</h1>
+<form id="form">
+  <label for="name">Name</label><br><input id="name" placeholder="Your name"><br>
+  <input type="email" name="email" placeholder="Email"><br>
+  <textarea aria-label="About you" placeholder="A few words"></textarea><br>
+  <select id="plan"><option>Free</option><option>Pro</option><option>Team</option></select><br>
+  <label><input type="checkbox" id="terms"> I agree to the terms</label><br>
+  <button id="submit" type="submit" disabled>Create account</button>
+</form>
+<p id="result"></p>
+<script>
+  const name = document.getElementById('name'), terms = document.getElementById('terms'), submit = document.getElementById('submit')
+  const update = () => { submit.disabled = !(name.value.trim() && terms.checked) }
+  name.addEventListener('input', update); terms.addEventListener('change', update)
+  document.getElementById('form').onsubmit = (e) => {
+    e.preventDefault()
+    // A response that takes a moment, as a server's would.
+    setTimeout(() => {
+      document.getElementById('result').textContent = 'Thanks, ' + name.value + '! Plan: ' + document.getElementById('plan').value
+    }, 300)
+  }
+</script>
+</body></html>

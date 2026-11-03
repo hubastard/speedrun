@@ -1,0 +1,9 @@
+body { font: 16px/1.4 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; color: #222; background: #fff; }
+@media (prefers-color-scheme: dark) { body { color: #eee; background: #111; } }
+nav a { margin-right: 12px; }
+button, input, select, textarea { font: inherit; margin: 4px 0; }
+.row { padding: 10px; border-bottom: 1px solid #ccc; }
+#panel { position: fixed; top: 80px; left: 0; width: 300px; padding: 20px; background: #def; transform: translateX(-110%); transition: transform 0.3s ease-out; }
+#panel.open { transform: none; }
+#list { height: 300px; overflow-y: auto; border: 1px solid #999; }
+#banner { position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: #333; color: #fff; display: flex; align-items: center; justify-content: center; }

@@ -1,0 +1,26 @@
+# Dark mode, the location, screenshots, and conditions on the platform.
+url: http://127.0.0.1:8781/device.html
+name: Web device
+---
+- launchApp
+- assertLightMode
+- assertVisible: Light scheme
+- toggleDarkMode
+- assertDarkMode
+- assertVisible: Dark scheme
+- setDarkMode: disabled
+- assertVisible: Light scheme
+- setLocation:
+    latitude: 48.8566
+    longitude: 2.3522
+- tapOn: Where am I?
+- assertVisible: At 48.86, 2.35
+- takeScreenshot: device
+- runFlow:
+    when:
+      platform: Web
+    commands:
+      - evalScript: ${output.platform = maestro.platform}
+- assertTrue: ${output.platform == 'web'}
+- setOrientation: LANDSCAPE_LEFT
+- hideKeyboard

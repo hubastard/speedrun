@@ -2,8 +2,9 @@
 
 A flow is a YAML file that describes what a user does in your app: open it, tap, type, scroll,
 and check what is on screen. Speedrun runs it on an Android emulator or device, or an iOS
-simulator. The format is [Maestro](https://maestro.dev)'s, so flows written for Maestro run
-as they are; this page assumes you have never used either.
+simulator, or a website in Chrome (`url:` in place of `appId:`, see [Web](web.md)). The format
+is [Maestro](https://maestro.dev)'s, so flows written for Maestro run as they are; this page
+assumes you have never used either.
 
 ## A first flow
 

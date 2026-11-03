@@ -101,6 +101,7 @@ Settle_Method :: enum u8 {
 	Events,     // accessibility-event fallback
 	Quiescence, // iOS: XCTest's quiescence, checked against the screen's signature
 	Restless,   // Android: still changing, then the tree held still but for an endless animation
+	Page,       // web: the page's own reports (DOM changes, input, scrolls, animations, requests)
 }
 
 Settle_Result :: struct {
@@ -120,6 +121,7 @@ Inject_Path :: enum u8 {
 	UiAutomation_Fast, // hidden UiAutomation overload: syncs input transactions, no animation wait
 	Input_Manager,     // shell-uid agent straight to the input manager: async, no syncs
 	XCTest_Event,      // iOS: an event synthesized through testmanagerd, until delivered
+	DevTools,          // web: an input event sent through Chrome's DevTools, until handled
 	None = 255,        // iOS: nothing to send (deleting from an empty field)
 }
 
@@ -852,6 +854,7 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 		case .UiAutomation_Fast: path_label = "UiAutomation, no animation wait (syncs input transactions)"
 		case .UiAutomation:      path_label = "UiAutomation public API (waits for animations; see logcat tag SpeedrunAgent)"
 		case .XCTest_Event:      path_label = "XCTest synthesized event (iOS)"
+		case .DevTools:          path_label = "Chrome DevTools input event (web)"
 		case .None:              path_label = "none (nothing to send)"
 		case:                    path_label = fmt.tprintf("unknown (%d)", u8(inject_path))
 		}
@@ -865,7 +868,8 @@ run_bench :: proc(conn: ^Conn, target: string, iters: int) -> int {
 
 USAGE :: `usage:
   speedrun test [options] <flow file or folder>...   (speedrun test --help)
-  speedrun session start --app <appId>   a device kept connected, for speedrun do / look
+  speedrun session start --app <appId or URL>   a device (or the browser) kept connected, for
+                                         speedrun do / look
                                          (speedrun session --help)
   speedrun mcp                           the same as a Model Context Protocol server (stdio)
   speedrun update [version]              install the latest release (or the one named) in place
@@ -877,10 +881,11 @@ USAGE :: `usage:
   speedrun --version
   speedrun --licenses
 options:
-  --device <id>       the device: an Android serial ("adb devices") or a booted iOS
-                      simulator's UDID ("xcrun simctl list devices booted")
-  --platform <p>      android or ios (default: a connected Android device, else the one
-                      booted simulator)
+  --device <id>       the device: an Android serial ("adb devices"), a booted iOS
+                      simulator's UDID ("xcrun simctl list devices booted"), or chromium
+  --platform <p>      android, ios or web (default: the browser for flows that are all web
+                      flows, else a connected Android device, else the one booted simulator)
+  --headless          web: no browser window (--screen-size <W>x<H> sets its size)
   --port <n>          the agent's port (default 7777 on Android, on the device: a free port
                       of this machine is forwarded to it; 7778 on iOS)
   --instrument        Android: run the agent as an instrumentation (~60 ms slower per action)
@@ -973,6 +978,14 @@ run_cli :: proc(args: []string) -> int {
 			plain = true
 		case a == "--instrument":
 			dev.instrument = true
+		case a == "--headless":
+			web_headless = true
+		case a == "--screen-size" && value != "":
+			ws, _, hs := strings.partition(value, "x")
+			sw, _ := strconv.parse_int(ws)
+			sh, _ := strconv.parse_int(hs)
+			if sw > 0 && sh > 0 do web_size = {sw, sh}
+			i += 1
 		case (a == "-e" || a == "--env") && value != "":
 			append(&env, value)
 			i += 1
@@ -1012,6 +1025,8 @@ run_cli :: proc(args: []string) -> int {
 		}
 		return 0
 	}
+	// A web flow runs in the browser.
+	if mode == .Flow && platform == "" && len(positional) == 1 && is_web_flow(positional[0]) do platform = "web"
 	if mode != .None {
 		if err := device_select(&dev, platform, device, port_given); err != "" {
 			fmt.eprintln(err)

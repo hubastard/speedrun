@@ -57,6 +57,27 @@ STOP_MAESTRO_DRIVER ::
 Platform :: enum {
 	Android,
 	IOS,
+	Web, // Chrome (web.odin)
+}
+
+// The platform as reports and logs title it.
+platform_title :: proc(p: Platform) -> string {
+	switch p {
+	case .Android: return "Android"
+	case .IOS:     return "iOS"
+	case .Web:     return "Web"
+	}
+	return ""
+}
+
+// The platform as flows (`when: platform:`), --platform and messages name it.
+platform_name :: proc(p: Platform) -> string {
+	switch p {
+	case .Android: return "android"
+	case .IOS:     return "ios"
+	case .Web:     return "web"
+	}
+	return ""
 }
 
 IOS_PORT :: 7778 // default: Android's 7777 is often forwarded to an emulator already
@@ -203,8 +224,12 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 		d.platform = .Android
 	case "ios":
 		d.platform = .IOS
+	case "web":
+		d.platform = .Web
 	case "":
-		if device != "" {
+		if device == WEB_DEVICE {
+			d.platform = .Web
+		} else if device != "" {
 			udid, _, _, warm := ios_info(ios_port)
 			sim := warm && udid == device
 			if !sim do _, sim = is_sim(booted_simulators(), device)
@@ -219,8 +244,9 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 			return "No device: connect an Android device or emulator (adb devices), or boot an iOS simulator."
 		}
 	case:
-		return fmt.tprintf("--platform takes android or ios, not %s", platform)
+		return fmt.tprintf("--platform takes android, ios or web, not %s", platform)
 	}
+	if d.platform == .Web do return ""
 	if d.platform == .Android {
 		adb_serial = device
 		return ""
@@ -313,6 +339,7 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 	posix.sigaction(.SIGINT, &act, nil)
 	posix.sigaction(.SIGTERM, &act, nil)
 	if d.platform == .IOS do return ios_start(d)
+	if d.platform == .Web do return web_start(d)
 
 	present, perr := device_prepare(d)
 	if perr != "" do return perr
@@ -368,6 +395,11 @@ agent_port :: proc(d: ^Device) -> int {
 
 // Stops the agent, removes the port forward and the temp APK. Safe to call twice.
 device_stop :: proc(d: ^Device) {
+	if d.platform == .Web {
+		web_stop()
+		current = nil
+		return
+	}
 	if d.platform == .IOS {
 		ios_restore_motion(d)
 		ios_stop(d)

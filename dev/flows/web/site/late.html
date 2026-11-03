@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Late content</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Late content</h1>
+<button id="load">Load items</button>
+<ul id="items"></ul>
+<button id="open">Open panel</button>
+<div id="panel"><p>Sliding panel</p><button id="inside">Panel button</button></div>
+<p id="status"></p>
+<p>Ticker: <span id="ticker">0</span></p>
+<p>Clicks: <span id="clicks">0</span></p>
+<span id="dbl">Double click me</span> · <span id="hold">Hold me</span>
+<p id="gesture"></p>
+<script>
+  document.getElementById('load').onclick = async () => {
+    const r = await fetch('items.json')
+    const items = await r.json()
+    // The list comes a bit after the response.
+    setTimeout(() => {
+      for (const it of items) { const li = document.createElement('li'); li.textContent = it; document.getElementById('items').append(li) }
+      document.getElementById('status').textContent = 'Loaded ' + items.length + ' items'
+    }, 200)
+  }
+  // A counter that never stops (a price ticker, a timer): changes every 50 ms.
+  setInterval(() => { const t = document.getElementById('ticker'); t.textContent = Number(t.textContent) + 1 }, 50)
+  document.getElementById('open').onclick = () => document.getElementById('panel').classList.add('open')
+  document.getElementById('inside').onclick = () => { document.getElementById('status').textContent = 'Panel button tapped' }
+  document.addEventListener('click', () => { const c = document.getElementById('clicks'); c.textContent = Number(c.textContent) + 1 })
+  document.getElementById('dbl').ondblclick = () => { document.getElementById('gesture').textContent = 'Double clicked' }
+  let t = 0
+  const hold = document.getElementById('hold')
+  hold.onpointerdown = () => { t = performance.now() }
+  hold.onpointerup = () => { if (performance.now() - t > 400) document.getElementById('gesture').textContent = 'Held' }
+</script>
+</body></html>

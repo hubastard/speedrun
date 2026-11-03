@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Speedrun Web Lab</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Speedrun Web Lab</h1>
+<nav>
+  <a href="forms.html">Forms</a>
+  <a href="list.html">Long list</a>
+  <a href="late.html">Late content</a>
+  <a href="popups.html">Popups</a>
+  <a href="device.html">Device</a>
+</nav>
+<p id="greeting"></p>
+<p>Visits: <span id="visits"></span></p>
+<button id="reset">Reset visits</button>
+<script>
+  const n = Number(localStorage.getItem('visits') || 0) + 1
+  localStorage.setItem('visits', n)
+  document.getElementById('visits').textContent = n
+  document.getElementById('reset').onclick = () => { localStorage.clear(); document.getElementById('visits').textContent = 0 }
+  if (window.greeting) document.getElementById('greeting').textContent = 'Hello, ' + window.greeting + '!'
+</script>
+</body></html>

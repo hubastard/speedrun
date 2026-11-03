@@ -1,0 +1,112 @@
+# Web
+
+Speedrun tests websites in Chrome with the same flow format as apps. A flow with `url:` in
+its config is a web flow: `launchApp` opens that page.
+
+```yaml
+url: https://example.com/login
+---
+- launchApp
+- tapOn: Email
+- inputText: user@example.com
+- tapOn: Sign in
+- assertVisible: Welcome
+```
+
+```sh
+speedrun test --headless login.yaml        # a web flow runs in the browser on its own
+speedrun test --headless flows/            # a folder of web flows
+speedrun test -p web flows/                # web, explicitly (a visible window without --headless)
+```
+
+When every flow of a run is a web flow, Speedrun runs them in the browser, as Maestro does.
+
+## Options
+
+| Option | |
+|---|---|
+| `--headless` | No window (as on CI). Without it, Chrome opens a window you can watch. |
+| `--screen-size <W>x<H>` | The window's size (default 1024x768 headless, as Maestro). |
+| `-p`, `--platform web` | Run in the browser (the device name `chromium` does the same). |
+| `--shard-split <n>`, `--shard-all <n>` | Split the flows across n browsers, each its own Chrome. |
+
+## Chrome
+
+Speedrun drives Chrome directly, through the DevTools protocol over a pipe: no WebDriver,
+no Selenium, no Node. Which Chrome:
+
+- `SPEEDRUN_CHROME`, when set: a Chrome or Chromium executable.
+- `--headless`: Chrome's headless shell, the build made for headless runs (as Playwright
+  uses), else
+- the Chrome installed on the machine (`/Applications/Google Chrome.app`, or `google-chrome`
+  or `chromium` on Linux), else
+- [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/), downloaded
+  on first use into Speedrun's cache (`~/Library/Caches/speedrun/chrome`, on Linux
+  `~/.cache/speedrun/chrome`), with `curl` and `unzip`.
+
+Each run starts with a fresh profile: no cookies, storage or cache from an earlier run.
+
+## How it waits
+
+A step starts when the page has finished reacting to the one before, which Speedrun learns
+from the page itself: changes to the page, input, scrolls, requests still in flight, short
+timers that have not run yet, and animations that move or resize something. It does not
+compare screenshots or poll: a lookup waiting for an element reads the page again the moment
+it changes. Things that never stop (a ticking counter, a spinner, an autoplaying carousel)
+don't hold a step up.
+
+## What each command does in the browser
+
+- `launchApp` opens the flow's `url`. With `clearState: true` it first clears what the
+  browser keeps for that site (cookies, storage, caches, service workers). Its `arguments`
+  become globals of the page (`window.greeting` for `greeting: World`), set before the page's
+  own scripts run.
+- `tapOn`, `doubleTapOn`, `longPressOn` click with the mouse (a double click fires
+  `dblclick`; a long press holds 0.8 s). A point outside the window is scrolled into view
+  first.
+- `inputText` types into the focused element: each character a key press, as a keyboard
+  sends them. `eraseText` presses Backspace. `pressKey` takes Enter, Backspace, Delete, Tab,
+  Escape, Space, the arrows, Home, End, Page Up and Page Down; Back goes back in the history.
+- `scrollUntilVisible` brings an element the page already has (off screen, or in the hidden
+  part of a list) into view at once; for rows a list makes only as it scrolls, it scrolls the
+  list under the middle of the window, step by step. `swipe` and `scroll` scroll what is under
+  the swipe with the mouse wheel.
+- `openLink` opens a page in the same tab (`https://` is added when the link has no scheme).
+  `back` goes back in the history.
+- A `<select>`: tap it, then tap one of its options.
+- `setDarkMode`, `toggleDarkMode`, `assertDarkMode`, `assertLightMode`: the page's
+  `prefers-color-scheme`.
+- `setLocation` and `travel`: the page's geolocation, allowed without asking.
+- `takeScreenshot` and `assertScreenshot`: the page, in the window's size.
+- `when: platform: Web` is true in the browser, and `maestro.platform` is `web` in scripts.
+- Browser dialogs (`alert`, `confirm`, `prompt`) are accepted. A link or script that opens
+  a new window or tab moves the flow to it.
+- `stopApp`, `killApp`, `clearKeychain`, `hideKeyboard`, `setPermissions`, `addMedia`,
+  `setOrientation` and airplane mode do nothing in the browser, as in Maestro.
+
+## Finding elements
+
+As in Maestro's web support:
+
+- **`text`** is an element's own text (not its children's), an input's value or else its
+  placeholder, a `<select>`'s chosen option.
+- **`id`** is the element's `id`, else its `aria-label`, `name`, `title`, `for`, or
+  `data-testid`.
+- **`css`** takes a CSS selector: `tapOn: { css: "form button[type=submit]" }`.
+
+A few differences from Maestro's:
+
+- Text is compared as the page shows it: white space collapsed and trimmed. A button written
+  over three lines in the HTML is `Save`, not `"\n  Save\n"`.
+- Elements that a scrolling or clipping box hides are not visible, and taps aim at the part
+  that shows.
+- `enabled`, `checked`, `selected` and `focused` work (Maestro's web hierarchy has no such
+  states).
+
+## Not supported yet
+
+- Firefox and Safari: Chrome only, as Maestro.
+- `startRecording` in the browser.
+- Content of frames from another site (a payment form in a cross-origin `<iframe>`);
+  same-site frames work.
+- Uploading and downloading files.

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Device</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Device</h1>
+<p id="scheme"></p>
+<button id="where">Where am I?</button>
+<p id="location"></p>
+<script>
+  const mq = matchMedia('(prefers-color-scheme: dark)')
+  const show = () => { document.getElementById('scheme').textContent = mq.matches ? 'Dark scheme' : 'Light scheme' }
+  show(); mq.addEventListener('change', show)
+  document.getElementById('where').onclick = () => navigator.geolocation.getCurrentPosition(
+    (p) => { document.getElementById('location').textContent = 'At ' + p.coords.latitude.toFixed(2) + ', ' + p.coords.longitude.toFixed(2) },
+    (e) => { document.getElementById('location').textContent = 'No location: ' + e.message })
+</script>
+</body></html>

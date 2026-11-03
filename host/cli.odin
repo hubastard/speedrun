@@ -30,6 +30,8 @@ Test_Options :: struct {
 	continuous:                 bool,
 	platform:                   string,
 	devices:                    [dynamic]string, // --device a,b
+	headless:                   bool, // web
+	screen_size:                string, // web: WxH
 	// speedrun's own
 	plain:                      bool,
 	timings:                    string,
@@ -53,8 +55,10 @@ Options (the same as maestro test's):
   -e, --env KEY=VALUE        --config <file>             --include-tags / --exclude-tags a,b
   --format junit|html|html-detailed|noop               --output <file>
   --test-suite-name <name>   --debug-output <dir>        --flatten-debug-output
-  --test-output-dir <dir>    -p, --platform android|ios  --device, --udid <id>[,<id>...]
-  --shard-split <n>          --shard-all <n>             -c, --continuous
+  --test-output-dir <dir>    -p, --platform android|ios|web
+  --device, --udid <id>[,<id>...]                        -c, --continuous
+  --shard-split <n>          --shard-all <n>
+  --headless                 --screen-size <W>x<H>       (web)
 speedrun's own:
   --plain (or --no-ansi)     --timings <file.json>       --port <n>       --instrument
   --keep-animations          the device's animations as they are (default: Android's off,
@@ -177,8 +181,19 @@ run_test_cli :: proc(args: []string, global_platform, global_device: string) -> 
 			return 2
 		case "--analyze":
 			fmt.eprintln("--analyze (AI insights) is not supported: ignored.")
-		case "--headless", "--screen-size", "--api-url", "--api-key", "--reinstall-driver", "--no-reinstall-driver", "--verbose":
-		// Web, cloud and driver-install options: nothing to do here.
+		case "--headless":
+			o.headless, web_headless = true, true
+		case "--screen-size":
+			ws, x, hs := strings.partition(value, "x")
+			sw, wok := strconv.parse_int(ws)
+			sh, hok := strconv.parse_int(hs)
+			if x == "" || !wok || !hok || sw <= 0 || sh <= 0 {
+				fmt.eprintf("Invalid value for option '--screen-size': '%s' (use {{Width}}x{{Height}}, such as 1920x1080)\n", value)
+				return 2
+			}
+			o.screen_size, web_size = value, {sw, sh}
+		case "--api-url", "--api-key", "--reinstall-driver", "--no-reinstall-driver", "--verbose":
+		// Cloud and driver-install options: nothing to do here.
 		case "-h", "--help":
 			fmt.println(TEST_USAGE)
 			return 0
@@ -231,6 +246,8 @@ run_test :: proc(o: ^Test_Options) -> int {
 	}
 	debug_dir := debug_output_path(o, &plan)
 	single := len(o.inputs) == 1 && os.is_file(o.inputs[0])
+	// As Maestro: flows that are all web flows (`url:`) run in the browser.
+	if o.platform == "" && (len(o.devices) == 0 || o.devices[0] == WEB_DEVICE) && all_web_flows(&plan) do o.platform = "web"
 
 	shards := max(o.shard_split, o.shard_all, 1)
 	if shards > 1 && o.worker_result == "" {
@@ -262,7 +279,7 @@ run_test :: proc(o: ^Test_Options) -> int {
 		return 1
 	}
 	defer net.close(c.sock)
-	device_id := dev.udid if dev.platform == .IOS else adb_serial
+	device_id := dev.udid if dev.platform != .Android else adb_serial
 
 	if o.worker_result != "" {
 		suite := run_suite(&c, &dev, &plan, o, device_id, debug_dir, max(o.worker_shard, 0))
@@ -496,12 +513,28 @@ connected_devices :: proc(platform: string) -> (out: [dynamic]Shard_Device) {
 	return
 }
 
+// Every flow of the plan is a web flow.
+@(private = "file")
+all_web_flows :: proc(plan: ^Plan) -> bool {
+	n := 0
+	for list in ([][]string{plan.flows[:], plan.sequence[:]}) {
+		for f in list {
+			if !is_web_flow(f) do return false
+			n += 1
+		}
+	}
+	return n > 0
+}
+
 // --shard-split / --shard-all: one speedrun per device, each
 // running its share of the flows as a suite; then their results merged into one report.
 run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: string) -> int {
 	all := connected_devices(o.platform)
 	devices: [dynamic]Shard_Device
-	if len(o.devices) > 0 {
+	if o.platform == "web" {
+		// A browser per shard, each its own Chrome.
+		for _ in 0 ..< requested do append(&devices, Shard_Device{WEB_DEVICE, "web"})
+	} else if len(o.devices) > 0 {
 		for id in o.devices {
 			found := false
 			for d in all do if d.id == id {
@@ -558,6 +591,8 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 			"--debug-output", debug_dir, "--flatten-debug-output")
 		if o.plain do append(&args, "--plain")
 		if o.instrument do append(&args, "--instrument")
+		if o.headless do append(&args, "--headless")
+		if o.screen_size != "" do append(&args, "--screen-size", o.screen_size)
 		if keep_animations do append(&args, "--keep-animations")
 		for e in o.env do append(&args, "-e", fmt.aprintf("%s=%s", e.key, e.value))
 		append(&args, ..chunks[k][:])

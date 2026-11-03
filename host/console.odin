@@ -527,6 +527,7 @@ selector_description :: proc(s: ^Selector) -> string {
 	parts := make([dynamic]string, 0, 4, context.temp_allocator)
 	if t, ok := s.text.?; ok do append(&parts, fmt.tprintf("\"%s\"", t))
 	if t, ok := s.id.?; ok do append(&parts, fmt.tprintf("id: %s", t))
+	if t, ok := s.css.?; ok do append(&parts, fmt.tprintf("CSS: %s", t))
 	if v, ok := s.enabled.?; ok do append(&parts, "enabled" if v else "disabled")
 	if s.below != nil do append(&parts, fmt.tprintf("Below %s", selector_description(s.below)))
 	if s.above != nil do append(&parts, fmt.tprintf("Above %s", selector_description(s.above)))

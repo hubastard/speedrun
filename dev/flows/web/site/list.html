@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Long list</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Long list</h1>
+<div id="lazy" style="height: 420px; overflow-y: auto; border: 1px solid #999"></div>
+<div id="list"></div>
+<p id="picked">Picked: none</p>
+<div style="height: 1500px"></div>
+<button id="bottom">Bottom of the page</button>
+<p id="clicked"></p>
+<div style="height: 200px"></div>
+<div id="banner">Sticky banner</div>
+<script>
+  const list = document.getElementById('list')
+  for (let i = 1; i <= 100; i++) {
+    const row = document.createElement('div')
+    row.className = 'row'
+    row.textContent = 'Row ' + i
+    row.onclick = () => { document.getElementById('picked').textContent = 'Picked: Row ' + i }
+    list.append(row)
+  }
+  // Rows made as the list scrolls near its end, 20 at a time (infinite scroll).
+  const lazy = document.getElementById('lazy')
+  let made = 0
+  const more = () => {
+    for (let k = 0; k < 20 && made < 100; k++) {
+      made++
+      const row = document.createElement('div')
+      row.className = 'row'
+      row.textContent = 'Item ' + made
+      lazy.append(row)
+    }
+  }
+  more()
+  lazy.addEventListener('scroll', () => { if (lazy.scrollTop + lazy.clientHeight > lazy.scrollHeight - 50) more() })
+  document.getElementById('bottom').onclick = () => { document.getElementById('clicked').textContent = 'Bottom clicked' }
+</script>
+</body></html>

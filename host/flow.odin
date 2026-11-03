@@ -14,6 +14,7 @@ import "core:strings"
 
 Selector :: struct {
 	text, id, index:                     Maybe(string), // regexes, index as text (may use ${})
+	css:                                 Maybe(string), // web: a CSS selector
 	enabled, selected, checked, focused: Maybe(bool),
 	width, height, tolerance:            Maybe(int),
 	below, above, left_of, right_of:     ^Selector,
@@ -283,6 +284,7 @@ Cmd :: struct {
 
 Flow :: struct {
 	path, name, app_id:    string,
+	web:                   bool, // `url:` (a web flow)
 	env:                   [dynamic]Env_Pair,
 	tags:                  [dynamic]string, // for --include-tags / --exclude-tags
 	files:                 [dynamic]string, // this file and every runFlow file it loads
@@ -417,6 +419,11 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool, text: Maybe(string) 
 	// other keys (onFlowStart may come first), and only for this file (Maestro resolves a
 	// runFlow file's commands against that file's own appId).
 	if v := yaml_get(cfg, "appId"); v != nil do flow.app_id = str(l, v) or_return
+	// A web flow's `url` is its appId (Maestro: url ?: appId): launchApp opens it.
+	if v := yaml_get(cfg, "url"); v != nil {
+		flow.app_id = str(l, v) or_return
+		flow.web = true
+	}
 	saved_app_id := l.app_id
 	defer l.app_id = saved_app_id
 	l.app_id = flow.app_id
@@ -443,8 +450,7 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool, text: Maybe(string) 
 				flow.on_complete = list
 			}
 		case "url":
-			fail(l, v, "web flows (`url`) are not supported")
-			return
+		// read above
 		case "tags":
 			if v.kind == .Seq {
 				for t in v.items do append(&flow.tags, str(l, t) or_return)
@@ -458,11 +464,20 @@ load_flow_file :: proc(l: ^Loader, path: string, top: bool, text: Maybe(string) 
 		}
 	}
 	if flow.app_id == "" {
-		fail(l, cfg, "the config section needs `appId`")
+		fail(l, cfg, "the config section needs `appId` (or `url`, for a web flow)")
 		return
 	}
 	flow.commands = commands(l, docs[1]) or_return
 	return flow, true
+}
+
+// A web flow: its config names a `url` (Maestro's isWebFlow).
+is_web_flow :: proc(path: string) -> bool {
+	data, err := os.read_entire_file(path, context.temp_allocator)
+	if err != nil do return false
+	docs, yerr, _ := yaml_parse(string(data), context.temp_allocator)
+	if yerr != "" || len(docs) == 0 || docs[0].kind != .Map do return false
+	return yaml_get(docs[0], "url") != nil
 }
 
 @(private = "file")
@@ -1307,9 +1322,7 @@ selector :: proc(l: ^Loader, y: ^Yaml, tap: bool) -> (s: ^Selector, ok: bool) {
 					return
 				}
 			}
-		case "css":
-			fail(l, v, "the `css` selector is for web flows, which are not supported")
-			return
+		case "css":                   s.css = str(l, v) or_return
 		}
 	}
 	// Outside tap commands Maestro accepts and ignores the tap-only fields; so do we.
@@ -1326,7 +1339,8 @@ has_criteria :: proc(s: ^Selector) -> bool {
 	_, f := s.focused.?
 	_, w := s.width.?
 	_, h := s.height.?
-	return t || i || x || e || se || c || f || w || h || s.below != nil || s.above != nil ||
+	_, cs := s.css.?
+	return t || i || x || e || se || c || f || w || h || cs || s.below != nil || s.above != nil ||
 		s.left_of != nil || s.right_of != nil || s.contains_child != nil || s.child_of != nil ||
 		len(s.contains_descendants) > 0 || len(s.traits) > 0
 }

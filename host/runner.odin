@@ -117,6 +117,8 @@ Runner :: struct {
 	reconnects:           int, // the agent's connection lost and made again (run_list)
 	launched:             string, // Android: the app launchApp launched last (answer_error_dialog)
 	launched_label:       string, // its name, read when an error dialog first needs it
+	css_read:             f64, // web: the read (r.reads) css_hits are for
+	css_hits:             map[string][]bool, // web: per CSS selector, the nodes of that read it matches
 }
 
 Rx :: struct {
@@ -181,6 +183,12 @@ run_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options, alloc:
 		return
 	}
 	if flow.name != "" do result.name = strings.clone(flow.name, alloc)
+	if flow.web && dev.platform != .Web {
+		err := fmt.tprintf("%s is a web flow (url: %s): it runs in the browser, with --platform web", flow_file_name(path), flow.app_id)
+		if !opts.silent do fmt.eprintln(err)
+		result.error = strings.clone(err, alloc)
+		return
+	}
 	result.tags = make([]string, len(flow.tags), alloc)
 	for t, k in flow.tags do result.tags[k] = strings.clone(t, alloc)
 	result.properties = make([]Env_Pair, len(flow.properties), alloc)
@@ -349,7 +357,7 @@ write_flow_artifacts :: proc(r: ^Runner, dir: string, passed: bool) {
 			make_dirs(fmt.tprintf("%s/screenshots", dir))
 			write_file(fmt.tprintf("%s/screenshots/final.png", dir), png)
 		}
-		header := fmt.tprintf("speedrun %s, %s: the end of the flow's trace (what SPEEDRUN_DEBUG=1 prints), in local time.\n> and < mark each command's start and end; a read line, a change in what the screen says (in its texts alone: once a second at most, except in the 2 s after an action), its first texts, then those it did not say at the last read line (new:).\n\n", VERSION, "iOS" if r.dev.platform == .IOS else "Android")
+		header := fmt.tprintf("speedrun %s, %s: the end of the flow's trace (what SPEEDRUN_DEBUG=1 prints), in local time.\n> and < mark each command's start and end; a read line, a change in what the screen says (in its texts alone: once a second at most, except in the 2 s after an action), its first texts, then those it did not say at the last read line (new:).\n\n", VERSION, platform_title(r.dev.platform))
 		write_file(fmt.tprintf("%s/logs/debug.log", dir), transmute([]byte)strings.concatenate({header, trace_text(r)}, context.temp_allocator))
 		// iOS: the end of the agent's log (xcodebuild's output: the agent's lines, a crash),
 		// and after a lost agent, the end of the one before the restart: why it was lost.
@@ -528,7 +536,7 @@ pay_due :: proc(r: ^Runner) -> Err {
 		t := time.tick_now()
 		// Android: in slices, each followed by a read, which answers an error dialog hiding
 		// the app (answer_error_dialog).
-		slice := i32(APP_READY_TIMEOUT_MS) if r.dev.platform == .IOS else APP_READY_SLICE_MS
+		slice := i32(APP_READY_TIMEOUT_MS) if r.dev.platform != .Android else APP_READY_SLICE_MS
 		ready: bool
 		for waited: i32 = 0; waited < APP_READY_TIMEOUT_MS && !ready; waited += slice {
 			if waited > 0 && !read_screen(r) do return AGENT_LOST
@@ -538,6 +546,7 @@ pay_due :: proc(r: ^Runner) -> Err {
 		}
 		debug_step(r, "app ready", &t)
 		r.launch_due = "" // kept until here: a command run again after a lost connection waits
+		if !ready && r.dev.platform == .Web do return fmt.aprintf("%s did not load within %d s", app, APP_READY_TIMEOUT_MS / 1000, allocator = r.alloc)
 		if !ready do return fmt.aprintf("%s did not come to the foreground", app, allocator = r.alloc)
 		// Android: with the app's window up, a screen unchanged since the launch was the
 		// app's already (stopApp: false), with nothing to wait for.
@@ -576,6 +585,19 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		// activity is requested). The next command that needs the screen waits for the app's
 		// UI, then settles (exec): a tap during the launch would be ignored, and a swipe could
 		// land on the home screen.
+		// Web (Maestro's CdpWebDriver): the site's data cleared, the arguments set as globals of
+		// the page, then its url opened; stopApp, the keychain and permissions do not apply.
+		if r.dev.platform == .Web {
+			t := time.tick_now()
+			if d.clear_state && !op_web_clear(r.c, app) do return true, AGENT_LOST
+			if len(args) > 0 && !op_web_globals(r.c, args) do return true, AGENT_LOST
+			msg, ok := op_web_navigate(r.c, app, r.alloc)
+			if !ok do return true, AGENT_LOST
+			debug_step(r, "open", &t)
+			if msg != "" do return true, msg
+			r.launch_due = strings.clone(app, r.alloc)
+			return true, nil
+		}
 		if r.dev.platform == .IOS {
 			ios_motion_start(r.dev, args) // in the background, waited for before the launch
 			if d.clear_keychain {
@@ -616,6 +638,11 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		return true, nil
 	case App_Cmd:
 		app := eval(r, d.app_id) or_return
+		if r.dev.platform == .Web {
+			// Web: only clearState does something (stopApp and killApp do not, as in Maestro).
+			if d.op == .Clear_State && !op_web_clear(r.c, app) do return true, AGENT_LOST
+			return true, nil
+		}
 		if r.dev.platform == .IOS {
 			// killApp is stopApp on iOS (no process death there).
 			if d.op == .Clear_State do return true, ios_clear_state(r, app)
@@ -654,6 +681,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			return true, settle(r)
 		case .Hide_Keyboard:
 			if r.dev.platform == .IOS do return true, ios_hide_keyboard(r)
+			if r.dev.platform == .Web do return true, nil // no keyboard on screen (Maestro: a no-op)
 			// BACK, then a failure if (G)board ids are still on screen.
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, AGENT_LOST
 			if e := settle(r); e != nil do return true, e
@@ -686,6 +714,14 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Open_Link:
 		link := eval(r, d.link) or_return
 		if strings.contains(link, " ") do return false, "links with spaces are not supported yet"
+		// Web: the page opens it (Maestro adds https:// to a link without a scheme).
+		if r.dev.platform == .Web {
+			url := link if strings.has_prefix(link, "http") else strings.concatenate({"https://", link}, r.alloc)
+			msg, ok := op_web_navigate(r.c, url, r.alloc)
+			if !ok do return true, AGENT_LOST
+			if msg != "" do return true, msg
+			return true, settle(r)
+		}
 		// iOS opens every link the same way (browser and autoVerify do not apply there).
 		if r.dev.platform == .IOS {
 			if out, ok := simctl("openurl", r.dev.udid, link); !ok do return true, out
@@ -917,6 +953,10 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			// an overlay fading in, which takes touches before iOS lists it; waited for briefly.
 			if !listed do limit = min(limit, UNLISTED_COVER_WAIT_MS * time.Millisecond)
 			for el >= 0 && time.tick_since(t) < limit {
+				// Web: read again once the page changes.
+				if r.dev.platform == .Web {
+					if _, ok := op_web_change(r.c, i64((limit - time.tick_since(t)) / time.Millisecond)); !ok do return AGENT_LOST
+				}
 				if !read_screen(r) do return AGENT_LOST
 				el = select(r, d.sel) or_return
 				if el < 0 do break
@@ -968,7 +1008,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	read_since_tap := false
 	for attempt := 0; attempt < (2 if d.retry else 1); attempt += 1 {
 		// iOS: repeated taps (doubleTapOn) as one gesture, else they land ~230 ms apart.
-		if r.dev.platform == .IOS && d.repeat > 1 && !d.long_press {
+		if r.dev.platform != .Android && d.repeat > 1 && !d.long_press {
 			if _, ok := op_taps(r.c, x, y, i32(d.repeat), i32(d.delay_ms)); !ok do return AGENT_LOST
 		} else do for i in 0 ..< d.repeat {
 			t := time.tick_now()
@@ -1011,7 +1051,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		// which the screen holds the same elements saying the same (where they are left out: a
 		// ticker moves on every read) waits for a change until SETTLE_NO_CHANGE_MS after it, as
 		// a tap that drew nothing does. A field the tap focuses needs no JavaScript: left out.
-		if r.dev.platform != .IOS && status == .Settled && d.repeat == 1 && !d.long_press &&
+		if r.dev.platform == .Android && status == .Settled && d.repeat == 1 && !d.long_press &&
 		   !strings.has_suffix(tapped.class, "EditText") {
 			if !read_screen(r) do return AGENT_LOST
 			read_since_tap = true
@@ -1160,7 +1200,8 @@ typing :: proc(r: ^Runner) -> bool {
 		if !n.kept do continue
 		if n.class == "Keyboard" do return true // iOS
 		if .Focused in n.flags && (strings.has_suffix(n.class, "EditText") || n.class == "TextField" ||
-			n.class == "SecureTextField" || n.class == "TextView" || n.class == "SearchField") {
+			n.class == "SecureTextField" || n.class == "TextView" || n.class == "SearchField" ||
+			n.class == "input" || n.class == "textarea") {
 			return true
 		}
 	}
@@ -1221,7 +1262,7 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 // Android's tree keeps the views' parents (loading_cover).
 @(private = "file")
 under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) {
-	if r.dev.platform != .IOS do return loading_cover(r, el) >= 0, true, nil
+	if r.dev.platform == .Android do return loading_cover(r, el) >= 0, true, nil
 	n := r.h.nodes[el]
 	end := el + 1
 	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
@@ -1272,7 +1313,7 @@ reaches :: proc(r: ^Runner, el, hit: int, frame: [4]i32) -> bool {
 @(private = "file")
 tap_cover :: proc(r: ^Runner, el: int) -> (int, Err) {
 	cover := covered_by(r, el)
-	if cover < 0 || r.dev.platform != .IOS do return cover, nil
+	if cover < 0 || r.dev.platform == .Android do return cover, nil
 	n := r.h.nodes[el]
 	hit, frame, ok := op_hit(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2)
 	if !ok do return -1, AGENT_LOST
@@ -1341,7 +1382,7 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		frame := [4]i32{n.left, n.top, n.right, n.bottom}
 		if _, ok := op_swipe(r.c, cx, cy, tx, ty, SCROLL_DRAG_MS, cancel = vertical); !ok do return idx, x, y, AGENT_LOST
 		// Android injects the drag at once, stamped as if it had just ended (see scroll_until).
-		if r.dev.platform != .IOS do time.sleep(time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond)
+		if r.dev.platform == .Android do time.sleep(time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond)
 		settle(r, no_change_ms = 500) or_return
 		idx = find_element(r, sel, optional, -1) or_return
 		n = r.h.nodes[idx]
@@ -1429,7 +1470,7 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 	// per row or header: a cell before the element's own at the point, as wide as it, overlaps
 	// it, which rows do not: a header. (A view inside the element's cell, a card's
 	// background, is no cover.)
-	if r.dev.platform != .IOS {
+	if r.dev.platform == .Android {
 		cell := el
 		for cell >= 0 {
 			p := r.h.nodes[cell].parent
@@ -1616,7 +1657,7 @@ side_lines :: proc(r: ^Runner, sel: ^Selector, dir: Swipe_Dir) -> (lines: [8]Lin
 @(private = "file")
 scrolls_sideways :: proc(r: ^Runner, sv: int) -> bool {
 	n := r.h.nodes[sv]
-	if r.dev.platform != .IOS {
+	if r.dev.platform == .Android {
 		if strings.contains(n.class, "HorizontalScrollView") || strings.contains(n.class, "ViewPager") do return true
 		if strings.has_suffix(n.class, "ScrollView") || strings.has_suffix(n.class, "ListView") do return false
 		// A RecyclerView, Compose's lazy lists: items side by side, not a column or a grid.
@@ -1671,8 +1712,13 @@ long_press_ms :: proc(r: ^Runner) -> i32 {
 		r.long_press_ms = i32(v)
 		return r.long_press_ms
 	}
+	// Web: pages' long-press handlers wait 400-500 ms (Maestro holds 3 s there).
+	if r.dev.platform == .Web {
+		r.long_press_ms = LONG_PRESS_APP_MS + 300
+		return r.long_press_ms
+	}
 	delay := i32(LONG_PRESS_APP_MS)
-	if r.dev.platform != .IOS {
+	if r.dev.platform == .Android {
 		if v, ok := strconv.parse_int(strings.trim_space(shell(r, "settings get secure long_press_timeout"))); ok {
 			delay = max(delay, i32(v))
 		}
@@ -1703,6 +1749,22 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	lines: [8]Line
 	line, n_lines := 0, 0
 	placed := false // up and down: the drag's start placed in the list (below)
+	// Web: an element the page holds already (off screen, or in a list's hidden part) is
+	// scrolled into view at once; the drags below are for one the page has not made yet (a list
+	// that renders its rows as they come).
+	if r.dev.platform == .Web {
+		if !screen_current(r) && !read_screen(r) do return AGENT_LOST
+		i := select(r, d.sel) or_return
+		if i < 0 || visible_share(r.h.nodes[i], r.w, r.h_px) < max(visibility, 0.1) {
+			all := make([]int, len(r.h.nodes), context.temp_allocator)
+			for &k, j in all do k = j
+			if res := apply(r, d.sel, all) or_return; len(res) > 0 {
+				note(r, "in the page off screen: scrolled into view")
+				if _, ok := op_web_reveal(r.c, res[0]); !ok do return AGENT_LOST
+				settle(r, d.settle_ms, no_change_ms = 0) or_return
+			}
+		}
+	}
 	// Each swipe is a drag that does not fling (the agent's SWIPE without the flag): the
 	// content stops as the touch lifts. A flinging swipe moves it farther, but it drifts on
 	// for 0.5-2 s that a settle would wait out.
@@ -1713,7 +1775,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	// Android's SWIPE injects the drag at once, its events stamped as if it had just ended
 	// (the pointer still for 60 ms before lifting): the next one starts after that, as
 	// gestures overlapping in time can leave a list stuck. iOS's drag plays out in real time.
-	gesture := time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond if r.dev.platform != .IOS else 0
+	gesture := time.Duration(SCROLL_DRAG_MS + 60 + 20) * time.Millisecond if r.dev.platform == .Android else 0
 	moving := false
 	swiped: time.Tick
 	swiped_from: u64 // what the last drag could move when it began (scroll_signature)
@@ -1841,7 +1903,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 				// stride carried an element on the third row of a grid past the center and off
 				// screen).
 				// (iOS: Android keeps its drags from the center, which centered it before.)
-				if r.dev.platform != .IOS {
+				if r.dev.platform == .Android {
 				} else if sideways {
 					stride := i32(abs(int(ex - cx)))
 					tx = cx + clamp(r.w / 2 - (n.left + n.right) / 2, -stride, stride)
@@ -2044,7 +2106,7 @@ condition_limit :: proc(r: ^Runner, cond: Condition) -> (i64, Err) {
 // SPEEDRUN_CONDITION_TIMEOUT_MS), always shortened by the time since the last interaction.
 @(private = "file")
 condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64) -> (met: bool, err: Err) {
-	if p, has := cond.platform.?; has && !strings.equal_fold(p, "ios" if r.dev.platform == .IOS else "android") do return false, nil
+	if p, has := cond.platform.?; has && !strings.equal_fold(p, platform_name(r.dev.platform)) do return false, nil
 	if s, has := cond.script.?; has {
 		v := eval(r, s) or_return
 		if strings.trim_space(v) == "" || strings.equal_fold(v, "false") || v == "undefined" || v == "null" do return false, nil
@@ -2067,6 +2129,25 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 	}
 	if cond.not_visible != nil {
 		end := time.tick_now()._nsec + adjusted(r, limit) * 1_000_000
+		// Web: gone from a page that is quiet (nothing changed since its last settle, nothing
+		// under way: no request, timer or animation) stays gone; Maestro looks for it for 500 ms.
+		if r.dev.platform == .Web {
+			settled := false
+			for {
+				_, found := try_find(r, cond.not_visible, 0) or_return
+				// Still changing: settled once, then read again (a page that changes every few
+				// hundred milliseconds is never quiet for long).
+				if !found && (!r.h.unsettled || settled) do return true, nil
+				if !found {
+					settle(r, no_change_ms = 0) or_return
+					settled = true
+					continue
+				}
+				left := (end - time.tick_now()._nsec) / 1_000_000
+				if left <= 0 do return false, nil
+				if _, ok := op_web_change(r.c, left); !ok do return false, AGENT_LOST
+			}
+		}
 		for {
 			_, found := try_find(r, cond.not_visible, 500) or_return
 			if !found do break
@@ -2135,6 +2216,10 @@ try_find :: proc(r: ^Runner, sel: ^Selector, timeout_ms: i64) -> (idx: int, foun
 		i := select(r, sel) or_return
 		if i >= 0 do return i, true, nil
 		if time.tick_now()._nsec >= end do return -1, false, nil
+		// Web: the next read once the page changes, not before.
+		if r.dev.platform == .Web {
+			if _, ok := op_web_change(r.c, (end - time.tick_now()._nsec) / 1_000_000); !ok do return -1, false, AGENT_LOST
+		}
 	}
 }
 
@@ -2158,6 +2243,8 @@ clip_to_scroll_views :: proc(r: ^Runner) {
 		case "ScrollView", "Table", "CollectionView":
 			c = {n.left, n.top, n.right, n.bottom}
 		}
+		// Web: an element that clips its overflowing content (agent.js marks it scrollable).
+		if r.dev.platform == .Web && .Scrollable in n.flags do c = {n.left, n.top, n.right, n.bottom}
 		clips[k] = c
 	}
 }
@@ -2188,6 +2275,7 @@ filter_description :: proc(s: ^Selector) -> string {
 	parts := make([dynamic]string, 0, 4, context.temp_allocator)
 	if t, ok := s.text.?; ok do append(&parts, fmt.tprintf("Text matching regex: %s", t))
 	if t, ok := s.id.?; ok do append(&parts, fmt.tprintf("Id matching regex: %s", t))
+	if t, ok := s.css.?; ok do append(&parts, fmt.tprintf("CSS: %s", t))
 	if s.below != nil do append(&parts, fmt.tprintf("Below: %s", selector_description(s.below)))
 	if s.above != nil do append(&parts, fmt.tprintf("Above: %s", selector_description(s.above)))
 	if s.left_of != nil do append(&parts, fmt.tprintf("Left of: %s", selector_description(s.left_of)))
@@ -2257,14 +2345,16 @@ apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) 
 	_, hs := s.selected.?
 	_, hc := s.checked.?
 	_, hf := s.focused.?
-	has_basic := text_rx != nil || id_rx != nil || hw || hh || he || hs || hc || hf || len(s.traits) > 0
+	css: []bool
+	if sel, has := s.css.?; has do css = css_matches(r, eval(r, sel) or_return) or_return
+	has_basic := text_rx != nil || id_rx != nil || hw || hh || he || hs || hc || hf || len(s.traits) > 0 || css != nil
 
 	out: [dynamic]int
 	out.allocator = context.temp_allocator
 	if has_basic {
 		// deepestMatchingElement: matches with no matching descendant, in pre-order.
 		memo := make([]i8, len(r.h.nodes), context.temp_allocator) // 0 unknown, 1 a match in its subtree, 2 none
-		for n in nodes do deepest(r, s, text_rx, id_rx, n, &out, memo)
+		for n in nodes do deepest(r, s, text_rx, id_rx, css, n, &out, memo)
 	} else {
 		append(&out, ..nodes)
 	}
@@ -2335,7 +2425,7 @@ apply :: proc(r: ^Runner, s: ^Selector, nodes: []int) -> (res: []int, err: Err) 
 	// Without a text, id or size, a relative filter comes first among the filters, and its
 	// order is kept: the nearest element first (centers' distance, to the nearest anchor).
 	// Then deepestMatchingElement: matches with no other match below them.
-	if text_rx == nil && id_rx == nil && !hw && !hh {
+	if text_rx == nil && id_rx == nil && !hw && !hh && css == nil {
 		by_distance(r, s, nodes, out[:]) or_return
 		inner := make([]bool, len(r.h.nodes), context.temp_allocator) // has a match below it
 		for n in out do for p := r.h.nodes[n].parent; p >= 0; p = r.h.nodes[p].parent do inner[p] = true
@@ -2424,13 +2514,13 @@ sort_by_position :: proc(r: ^Runner, list: []int) -> []int {
 }
 
 @(private = "file")
-deepest :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, n: int, out: ^[dynamic]int, memo: []i8) -> bool {
+deepest :: proc(r: ^Runner, s: ^Selector, text_rx, id_rx: ^Rx, css: []bool, n: int, out: ^[dynamic]int, memo: []i8) -> bool {
 	// Each node once: the list holds whole subtrees, and a walk from each of their nodes went
 	// through the nodes below it again.
 	if memo[n] != 0 do return memo[n] == 1
 	found := false
-	for c in r.h.nodes[n].children do if deepest(r, s, text_rx, id_rx, c, out, memo) do found = true
-	if !found && basic_match(r, s, text_rx, id_rx, r.h.nodes[n]) {
+	for c in r.h.nodes[n].children do if deepest(r, s, text_rx, id_rx, css, c, out, memo) do found = true
+	if !found && (css == nil || css[n]) && basic_match(r, s, text_rx, id_rx, r.h.nodes[n]) {
 		append(out, n)
 		found = true
 	}
@@ -2679,6 +2769,31 @@ shortened :: proc(pattern: string) -> string {
 	cut := 100
 	for cut > 0 && !utf8.rune_start(pattern[cut]) do cut -= 1
 	return fmt.tprintf("%s…", pattern[:cut])
+}
+
+// Web: the nodes of the last read a CSS selector matches (Maestro's css filter: the page's
+// querySelectorAll, matched to the hierarchy's elements), asked once per read.
+@(private = "file")
+css_matches :: proc(r: ^Runner, selector: string) -> (hits: []bool, err: Err) {
+	if r.dev.platform != .Web do return nil, "the `css` selector is for web flows"
+	if r.css_read != r.reads {
+		r.css_hits = make(map[string][]bool, 4, r.alloc)
+		r.css_read = r.reads
+	}
+	if cached, ok := r.css_hits[selector]; ok do return cached, nil
+	indices, msg, ok := op_web_css(r.c, selector, context.temp_allocator)
+	if !ok do return nil, AGENT_LOST
+	if msg != "" do return nil, fmt.aprintf("Invalid CSS selector `%s`: %s", selector, msg, allocator = r.alloc)
+	hits = make([]bool, len(r.h.nodes), r.alloc)
+	for i in indices do if int(i) < len(hits) do hits[i] = true
+	r.css_hits[strings.clone(selector, r.alloc)] = hits
+	return hits, nil
+}
+
+// Web: an <option> of a focused <select>, placed out of the page (agent.js, as Maestro's
+// synthetic nodes, which its bounds filter keeps).
+synthetic_option :: proc(r: ^Runner, n: H_Node) -> bool {
+	return r.dev.platform == .Web && n.class == "option" && n.left >= WEB_SYNTHETIC && n.top >= WEB_SYNTHETIC
 }
 
 has_bounds :: proc(n: H_Node) -> bool {
@@ -2956,12 +3071,12 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		h = max(h, r.h.nodes[i].bottom)
 	}
 	if w > 0 && h > 0 do r.w, r.h_px = w, h
-	if r.dev.platform == .IOS do clip_to_scroll_views(r)
+	if r.dev.platform != .Android do clip_to_scroll_views(r)
 	// filterOutOfBounds: drop nodes less than 10% on screen whose children are all dropped.
 	w, h = r.w, r.h_px
 	if w == 0 || h == 0 do w, h = max(i32), max(i32) // display size not known yet
 	#reverse for &n, k in r.h.nodes {
-		if !n.kept do n.kept = visible_pct(n, w, h) >= 0.1
+		if !n.kept do n.kept = visible_pct(n, w, h) >= 0.1 || synthetic_option(r, n)
 		if n.kept && n.parent >= 0 do r.h.nodes[n.parent].kept = true
 		_ = k
 	}

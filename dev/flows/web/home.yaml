@@ -1,0 +1,32 @@
+# The home page: launchApp's clearState and arguments, navigation and back.
+url: http://127.0.0.1:8781/index.html
+name: Web home
+---
+- launchApp:
+    clearState: true
+- assertVisible: Speedrun Web Lab
+- assertVisible:
+    id: visits
+    text: "1"
+# Without clearState the site keeps its data: a second visit.
+- launchApp
+- assertVisible:
+    id: visits
+    text: "2"
+- launchApp:
+    clearState: true
+    arguments:
+      greeting: World
+- assertVisible: Hello, World!
+- assertVisible:
+    id: visits
+    text: "1"
+# Links open other pages; back returns.
+- tapOn: Forms
+- assertVisible: Sign up
+- back
+- assertVisible: Speedrun Web Lab
+- tapOn: Reset visits
+- assertVisible:
+    id: visits
+    text: "0"

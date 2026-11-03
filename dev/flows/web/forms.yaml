@@ -1,0 +1,34 @@
+# Typing, a select, a checkbox, a button enabled once the form is filled, a late answer.
+url: http://127.0.0.1:8781/forms.html
+name: Web forms
+---
+- launchApp
+- assertVisible:
+    id: submit
+    enabled: false
+- tapOn: Your name
+- inputText: Adx
+- eraseText: 1
+- inputText: a
+- assertVisible:
+    id: name
+    text: Ada
+- tapOn: Email
+- inputText: ada@example.com
+- tapOn:
+    id: About you
+- inputText: "Line one\nLine two"
+# A <select>: its options show while it has the focus.
+- tapOn:
+    id: plan
+- tapOn: Pro
+- assertVisible:
+    id: plan
+    text: Pro
+- tapOn:
+    id: terms
+- assertVisible:
+    id: terms
+    checked: true
+- tapOn: Create account
+- assertVisible: "Thanks, Ada! Plan: Pro"

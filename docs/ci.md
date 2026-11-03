@@ -12,6 +12,10 @@ speedrun test flows/ --format junit --output report.xml --debug-output debug --f
 - **Several devices:** `--shard-split <n>` splits the flows across n devices
   (`--device a,b`), `--shard-all <n>` runs every flow on each. Tags pick flows:
   `--include-tags`, `--exclude-tags`. All options: [Command line](cli.md).
+- **Web flows** run headless with `--headless`, on macOS or Linux runners; Speedrun downloads
+  Chrome's headless shell on the first run (about 100 MB; cache `~/.cache/speedrun/chrome`
+  on Linux to skip it). With `--shard-split <n>`, each shard runs its own Chrome. See
+  [Web](web.md).
 - **Android emulators:** a freshly booted emulator's launcher often stalls, and its "isn't
   responding" dialog can take a flow's keys. Speedrun answers the dialog; to keep it from
   coming up, see [Troubleshooting](troubleshooting.md).

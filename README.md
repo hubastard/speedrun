@@ -2,12 +2,12 @@
 
 <p align="center">
   <b>The fastest end-to-end test runner for mobile apps.</b><br>
-  Black-box UI tests for Android and iOS, written in plain YAML.
+  Black-box UI tests for Android, iOS and the web, written in plain YAML.
 </p>
 
 <p align="center">
   <a href="https://github.com/hubastard/speedrun/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/hubastard/speedrun?style=flat-square&labelColor=000000&color=2ea44f"></a>
-  <img alt="Android and iOS" src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-000000?style=flat-square">
+  <img alt="Android, iOS and web" src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Web-000000?style=flat-square">
   <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache%202.0-000000?style=flat-square"></a>
 </p>
 
@@ -44,8 +44,8 @@ appId: com.example.app
   before tapping it, so the same flow passes on a small phone.
 - **Black-box.** Any build of your app, release builds included, through the platform's
   accessibility layer. Tested on native and React Native apps.
-- **One file.** The Android and iOS agents are built in: no JVM, no drivers to install, no
-  SDK in your app.
+- **One file.** The Android and iOS agents are built in, and it drives Chrome itself: no JVM,
+  no WebDriver or drivers to install, no SDK in your app.
 - **Ready for CI.** JUnit and HTML reports, sharding across devices, tags, and a debug folder
   with screenshots and logs for every failure. It answers the "isn't responding" dialogs a
   freshly booted emulator puts up, reconnects to its agent if the agent crashes, and boots iOS
@@ -92,6 +92,9 @@ appId: com.example.app
    speedrun test flows/ --format junit --output report.xml      # a whole suite, for CI
    ```
 
+   A website's flow names its page with `url:` instead of `appId:`, and runs in Chrome:
+   `speedrun test --headless web-login.yaml` ([Web](docs/web.md)).
+
 In a terminal you see each step live, with its time. When a step fails, Speedrun shows what
 was on screen, and where it saved the screenshot and logs.
 
@@ -106,8 +109,9 @@ maestro test flows/     # before
 speedrun test flows/    # after
 ```
 
-Everything runs as written except Maestro's AI commands (`assertWithAI` and the like). The
-details, and the few differences you may notice:
+Everything runs as written, web flows included, except Maestro's AI commands (`assertWithAI`
+and the like) and `startRecording` on the web. The details, and the few differences you may
+notice:
 [Maestro compatibility](docs/maestro-compatibility.md).
 
 ## Running on CI
@@ -194,14 +198,17 @@ Speedrun's iOS suite and journey runs also had the simulator's Reduce Motion on
 
 Speedrun runs a small agent on the device. It reads the screen in milliseconds, without
 screenshots, and tells exactly when the app has settled, so each step starts the moment the
-app is ready instead of after a fixed wait.
+app is ready instead of after a fixed wait. In the browser, a script in the page does the same,
+from what the page reports: its changes, requests in flight, timers and animations.
 
 ## Requirements
 
-- **macOS** on Apple silicon, for Android and iOS, or **Linux** x86_64, for Android (CI
-  runners included). The install script picks the right package.
+- **macOS** on Apple silicon, for Android, iOS and web, or **Linux** x86_64, for Android and
+  web (CI runners included). The install script picks the right package.
 - **Android:** the platform tools (`adb` on your PATH) and a running emulator, or a device
   with USB debugging on.
+- **Web:** Chrome. Speedrun uses the one installed, or downloads Chrome for Testing on the
+  first run ([Web](docs/web.md#chrome)); macOS or Linux.
 - **iOS:** Xcode and a booted simulator (on CI, boot it with
   [`speedrun fast-boot`](docs/ci.md#ios-boot-the-simulator-with-speedrun-fast-boot)). Real iOS devices
   are not supported yet. A release's iOS agent is built with one Xcode (its release notes name
@@ -216,6 +223,7 @@ app is ready instead of after a fixed wait.
 - [Command line](docs/cli.md): options, environment variables, exit status.
 - [Running on CI](docs/ci.md): reports, sharding, failure artifacts, `speedrun fast-boot` for
   iOS simulators.
+- [Web](docs/web.md): testing websites in Chrome, with the same flows.
 - [Sessions](docs/sessions.md): drive an app a command at a time, from an AI agent or a
   terminal, and save the steps as a flow.
 - [Maestro compatibility](docs/maestro-compatibility.md): what is supported, and the

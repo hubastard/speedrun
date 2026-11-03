@@ -33,6 +33,28 @@ what is still slow: `dev/TO_IMPROVE.md`.
   (`agent/ios/build/agent.tar.gz`) into the binary, named by a hash of their contents; the
   first iOS run unpacks it into `~/Library/Caches/speedrun/ios-agent-<hash>` (deleting other
   builds' folders but one a runner was started from), so a release is one file.
+- `host/web.odin`, `host/web/agent.js` — the web "device": Chrome driven over the DevTools
+  protocol through `--remote-debugging-pipe` (Chrome reads requests on its fd 3 and writes
+  answers and events on fd 4, each a JSON message ended by a NUL; Chrome is forked with the
+  pipe there and Playwright's flags, in its own session). An agent thread in the speedrun
+  process serves the same binary protocol as the device agents on 127.0.0.1 (a random port,
+  the per-run token first), so the runner, sessions and MCP drive the browser as a device,
+  plus web ops (25-32: navigate, clear an origin's data, CSS matches, launch arguments as
+  globals, geolocation, screencast, wait for a change, scroll into view). `agent.js` is added
+  to every new document (`Page.addScriptToEvaluateOnNewDocument`) and set up again through
+  `WEB_AGENT` when a window keeps its object across documents (`window.open`'s about:blank,
+  which Chrome runs no script for). It reads the page with Maestro's rules (maestro-web.js)
+  and settles from what the page reports: DOM mutations, input, scrolls, focus, requests in
+  flight (fetch and XHR wrapped), short timers an event set (setTimeout wrapped; not those a
+  timer sets, so polling loops do not count) and running animations that move or resize; a
+  settle ends one frame after the last change, and a lookup waits for the next change
+  (`waitChange`) rather than polling. Nodes that change continuously (restless, as on iOS)
+  stop counting. Page targets are auto-attached paused (`Target.setAutoAttach`
+  `waitForDebuggerOnStart`) so the script is in before the page runs; a pop-up becomes the
+  driven page. Dialogs are accepted. Chrome: `SPEEDRUN_CHROME`, the headless shell or the
+  installed Chrome, else Chrome for Testing downloaded into the cache. A killed run leaves
+  its profile folder (`speedrun-chrome-<pid>-*` in the temp folder); the next run deletes
+  those whose pid is gone. `SPEEDRUN_WEB_DEBUG=1` prints every DevTools message.
 - `host/` — the `speedrun` binary (Odin). One persistent TCP connection through
   `adb forward`, `TCP_NODELAY`, a reused receive buffer and arena-allocated strings.
   - `main.odin`: command line and the latency benchmark. Its steps locate their target with
@@ -92,6 +114,11 @@ what is still slow: `dev/TO_IMPROVE.md`.
   `dev/flows/device/settings.yaml` (Android) cover scripts and the device commands;
   `dev/flows/notifications` the iOS notification alert (its test app:
   `dev/flows/notifications/install.sh`).
+- `dev/flows/web` — the web regression flows, on a small site in `dev/flows/web/site`
+  (serve it on 127.0.0.1:8781, see its README): navigation, clearState and launch arguments,
+  forms and a `<select>`, scrolling (a list in a box, rows made as it scrolls, the page),
+  late content, a sliding panel, a ticker, double and long presses, dialogs, an iframe, a
+  pop-up window, dark mode, geolocation.
 - `dev/compare.sh` — one flow with speedrun, then Maestro, side by side per command (see
   `dev/TO_IMPROVE.md`).
 
@@ -224,7 +251,8 @@ replaced). It stops after 10 idle minutes (`SPEEDRUN_IDLE_S`), or with
   speedrun per device, `[shard N]` lines, a merged report and Maestro's summary box.
 - `-c` / `--continuous`: reruns the flow when it or a flow it runs changes, or on Enter.
 
-Accepted and ignored: `--headless`, `--screen-size` (web), `--api-url`, `--api-key`,
+Web: `--headless`, `--screen-size`, `-p web`; flows that are all web flows run in the browser.
+Accepted and ignored: `--api-url`, `--api-key`,
 `--reinstall-driver`; `--analyze` (AI) says it is not supported; `--apple-team-id` (real iOS
 devices) is an error. With several devices connected and no `--device`, Maestro asks which
 one; speedrun takes a connected Android device, else the one booted simulator.
@@ -398,7 +426,7 @@ Supported:
 - YAML as Maestro's parser reads it: a plain (unquoted) value containing `: ` is an error
   ("mapping values are not allowed here"); quote it.
 
-Not supported (an error naming it): AI commands and web flows (`url:`, the `css` selector).
+Not supported (an error naming it): AI commands, and `startRecording` in web flows.
 
 `openLink: autoVerify` on Android picks the flow's app in the "Open with" dialog by its name,
 as Maestro does; the agent reads that name on the device (the app's label in the device's

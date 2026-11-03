@@ -1,0 +1,21 @@
+# Scrolling: a list in a scroll box, then the page, to a button under a sticky banner.
+url: http://127.0.0.1:8781/list.html
+name: Web scrolling
+---
+- launchApp
+# Rows the page makes as its list scrolls (infinite scroll): not there until then.
+- assertNotVisible: Item 75
+- scrollUntilVisible:
+    element: Item 75
+- assertNotVisible: Row 40
+- scrollUntilVisible:
+    element: Row 40
+- tapOn: Row 40
+- assertVisible: "Picked: Row 40"
+- scrollUntilVisible:
+    element: Bottom of the page
+- tapOn: Bottom of the page
+- assertVisible: Bottom clicked
+- swipe:
+    direction: DOWN
+- scroll

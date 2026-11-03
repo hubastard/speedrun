@@ -20,6 +20,7 @@ DEFAULT_PERMISSIONS :: []Env_Pair{{"all", "allow"}}
 set_permissions :: proc(r: ^Runner, app: string, perms: []Env_Pair) -> Err {
 	values := make([]Env_Pair, len(perms), context.temp_allocator)
 	for p, i in perms do values[i] = {p.key, eval(r, p.value) or_return}
+	if r.dev.platform == .Web do return nil // a page asks its permissions itself (Maestro: a no-op)
 	if r.dev.platform == .IOS {
 		// The runner keeps the last permissions it was given (XCTestIOSDevice.setPermissions).
 		r.notifications = strings.clone(notification_answer(values), r.alloc)
@@ -460,6 +461,7 @@ sql_quote :: proc(s: string) -> string {
 set_orientation :: proc(r: ^Runner, name: string) -> Err {
 	o, known := orientation_by_name(name)
 	if !known do return unknown_orientation(name, r.alloc)
+	if r.dev.platform == .Web do return nil // a browser window does not turn (Maestro: a no-op)
 	if !op_mark(r.c) do return AGENT_LOST
 	if r.dev.platform == .IOS {
 		device: i32 = 1 // UIDeviceOrientation
@@ -520,8 +522,8 @@ active_window_rotated :: proc(r: ^Runner, landscape: bool) -> (waited: bool) {
 device_mode :: proc(r: ^Runner, op: Device_Mode_Op) -> (mutating: bool, err: Err) {
 	switch op {
 	case .Airplane_On, .Airplane_Off, .Airplane_Toggle:
-		// Airplane mode is not available on iOS simulators: a no-op.
-		if r.dev.platform == .IOS do return true, nil
+		// Airplane mode is not available on iOS simulators, nor in the browser: a no-op.
+		if r.dev.platform != .Android do return true, nil
 		on := op == .Airplane_On
 		if op == .Airplane_Toggle do on = !(airplane_enabled(r) or_return)
 		if api_level(r) < 28 {
@@ -534,9 +536,9 @@ device_mode :: proc(r: ^Runner, op: Device_Mode_Op) -> (mutating: bool, err: Err
 	case .Dark_On, .Dark_Off, .Dark_Toggle:
 		on := op == .Dark_On
 		if op == .Dark_Toggle do on = !(dark_enabled(r) or_return)
-		if r.dev.platform == .IOS {
-			// XCUIDevice.appearance. The app redraws in place: no wait (the next lookup
-			// sees the new screen).
+		if r.dev.platform != .Android {
+			// iOS: XCUIDevice.appearance; web: the page's prefers-color-scheme. The app redraws
+			// in place: no wait (the next lookup sees the new screen).
 			if _, ok := op_appearance(r.c, 2 if on else 1); !ok do return true, AGENT_LOST
 			return true, nil
 		}
@@ -577,7 +579,7 @@ airplane_enabled :: proc(r: ^Runner) -> (on: bool, err: Err) {
 
 @(private = "file")
 dark_enabled :: proc(r: ^Runner) -> (on: bool, err: Err) {
-	if r.dev.platform == .IOS {
+	if r.dev.platform != .Android {
 		appearance, ok := op_appearance(r.c, 0)
 		if !ok do return false, AGENT_LOST
 		return appearance == 2, nil
@@ -733,6 +735,7 @@ DEVICE_RECORDING :: "/sdcard/speedrun-recording.mp4"
 // (h264). One at a time: a second start is ignored.
 start_recording :: proc(r: ^Runner, file: string) -> Err {
 	if r.recording.active do return nil
+	if r.dev.platform == .Web do return web_start_recording(r, file)
 	null, nerr := os.open("/dev/null", {.Write})
 	if nerr != nil do return "cannot open /dev/null"
 	defer os.close(null)
@@ -775,6 +778,7 @@ start_recording :: proc(r: ^Runner, file: string) -> Err {
 stop_recording :: proc(r: ^Runner) -> Err {
 	if !r.recording.active do return nil
 	r.recording.active = false
+	if r.dev.platform == .Web do return web_stop_recording(r)
 	p := r.recording.process
 	if r.dev.platform == .IOS {
 		// simctl writes the video out on SIGINT.
@@ -810,6 +814,7 @@ add_media :: proc(r: ^Runner, files: []string) -> Err {
 		case:
 			return fmt.aprintf("Extension .%s is not yet supported for add media", ext, allocator = r.alloc)
 		}
+		if r.dev.platform == .Web do continue // a page has no photo library (Maestro: a no-op)
 		if r.dev.platform == .IOS {
 			add_media_ios(r, f) or_return
 			continue
@@ -872,6 +877,8 @@ LOCATION_RESEND_MS :: 2000
 
 set_location :: proc(r: ^Runner, latitude, longitude: f64, keep_sending := true) -> Err {
 	lat, lon := kotlin_double(latitude, context.temp_allocator), kotlin_double(longitude, context.temp_allocator)
+	// Web: the page's geolocation, allowed (Maestro sets it, without the permission).
+	if r.dev.platform == .Web do return nil if op_web_geo(r.c, latitude, longitude) else AGENT_LOST
 	if r.dev.platform == .IOS {
 		if out, ok := simctl("location", r.dev.udid, "set", fmt.tprintf("%s,%s", lat, lon)); !ok do return strings.clone(out, r.alloc)
 		return nil

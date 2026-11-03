@@ -1,0 +1,15 @@
+# Content that comes after a request and a timer, a sliding panel, double and long presses.
+url: http://127.0.0.1:8781/late.html
+name: Web late content
+---
+- launchApp
+- tapOn: Load items
+- assertVisible: Loaded 3 items
+- assertVisible: Coffee
+- tapOn: Open panel
+- tapOn: Panel button
+- assertVisible: Panel button tapped
+- doubleTapOn: Double click me
+- assertVisible: Double clicked
+- longPressOn: Hold me
+- assertVisible: Held

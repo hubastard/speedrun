@@ -1,0 +1,15 @@
+# Browser dialogs (accepted), a same-origin iframe, a new window.
+url: http://127.0.0.1:8781/popups.html
+name: Web popups
+---
+- launchApp
+- tapOn: Show alert
+- assertVisible: Alert closed
+- tapOn: Ask to confirm
+- assertVisible: Confirmed
+- tapOn: Frame button
+- assertVisible: Frame button tapped
+- tapOn: Open window
+- assertVisible: New window
+- tapOn: Popup button
+- assertVisible: Popup button tapped
