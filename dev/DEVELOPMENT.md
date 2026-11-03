@@ -62,7 +62,12 @@ what is still slow: `dev/TO_IMPROVE.md`.
   them as the page's work). Page targets are auto-attached paused (`Target.setAutoAttach`
   `waitForDebuggerOnStart`) so the script is in before the page runs; a pop-up becomes the
   driven page. Dialogs are accepted. Chrome: `SPEEDRUN_CHROME`, the headless shell or the
-  installed Chrome, else Chrome for Testing downloaded into the cache. Chrome's output goes to
+  installed Chrome, else Chrome for Testing downloaded into the cache. A cached browser (Chrome
+  for Testing's, Firefox's) is refreshed once a day before it starts (`web_refresh`,
+  `firefox_refresh`: the stamp `<cache>/<kind>.checked`, written whatever the answer, so an
+  offline machine asks again tomorrow): a newer stable is downloaded and used, and
+  `browser_prune` keeps the newest two copies (a shard that started on the previous one keeps
+  its files). Chrome's output goes to
   `speedrun-chrome.log` in its profile, quoted when it does not start; when that log blames
   the sandbox (Ubuntu 23.10+ restricts unprivileged user namespaces, so Chrome exits at
   once on GitHub's ubuntu-24.04 runners), `web_start` starts it again with `--no-sandbox`

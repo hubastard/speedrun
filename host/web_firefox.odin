@@ -600,8 +600,24 @@ firefox_executable :: proc() -> (path: string, err: string) {
 	}
 	// On Linux the cache's: a distribution's Firefox is often a snap, confined away from the
 	// profile in the temporary folder.
-	if p := firefox_cached(); p != "" do return p, ""
+	if p, version := firefox_cached(); p != "" do return firefox_refresh(p, version), ""
 	return firefox_download()
+}
+
+// The cached Firefox kept current, as Chrome for Testing's (web_refresh): once a day, Mozilla's
+// latest release, downloaded when it is newer; the cached one otherwise.
+@(private = "file")
+firefox_refresh :: proc(exe, version: string) -> string {
+	if !browser_check_due(firefox_cache_dir(), "firefox") do return exe
+	latest, err := firefox_latest()
+	if err != "" || !version_newer(latest, version) do return exe
+	fresh, ferr := firefox_fetch(latest, version)
+	if ferr != "" {
+		fmt.eprintf("%s: running Firefox %s\n", ferr, version)
+		return exe
+	}
+	browser_prune(firefox_cache_dir(), "firefox")
+	return fresh
 }
 
 @(private = "file")
@@ -618,29 +634,35 @@ firefox_in :: proc(dir: string) -> string {
 	}
 }
 
-// The newest Firefox in the cache (folders `firefox-<version>`), "" for none.
+// The newest Firefox in the cache (folders `firefox-<version>`) and its version, "" for none.
 @(private = "file")
-firefox_cached :: proc() -> string {
+firefox_cached :: proc() -> (exe, version: string) {
 	entries, err := os.read_all_directory_by_path(firefox_cache_dir(), context.temp_allocator)
-	if err != nil do return ""
-	best, best_version := "", ""
+	if err != nil do return
 	for e in entries {
-		version := strings.trim_prefix(e.name, "firefox-")
-		if version == e.name || version == "" || version[0] < '0' || version[0] > '9' do continue
-		exe := firefox_in(e.fullpath)
-		if !os.exists(exe) do continue
-		if best == "" || version_newer(version, best_version) do best, best_version = exe, version
+		v := strings.trim_prefix(e.name, "firefox-")
+		if v == e.name || v == "" || v[0] < '0' || v[0] > '9' do continue
+		x := firefox_in(e.fullpath)
+		if !os.exists(x) do continue
+		if exe == "" || version_newer(v, version) do exe, version = x, v
 	}
-	return best
+	return
 }
 
-// Downloads Mozilla's current Firefox release into the cache: the macOS disk image (mounted
-// with hdiutil, its app copied) or the Linux archive (tar). No other dependency than curl.
+// Downloads Mozilla's current Firefox release into the cache.
 @(private = "file")
 firefox_download :: proc() -> (exe: string, err: string) {
 	when ODIN_OS != .Darwin && !(ODIN_OS == .Linux && ODIN_ARCH == .amd64) {
 		return "", "No Firefox on this machine: set SPEEDRUN_FIREFOX to a Firefox executable."
 	}
+	version, lerr := firefox_latest()
+	if lerr != "" do return "", lerr
+	return firefox_fetch(version, "")
+}
+
+// Mozilla's latest Firefox release.
+@(private = "file")
+firefox_latest :: proc() -> (version: string, err: string) {
 	VERSIONS :: "https://product-details.mozilla.org/1.0/firefox_versions.json"
 	state, out, stderr, perr := os.process_exec({command = {"curl", "-fsSL", "--max-time", "60", VERSIONS}}, context.temp_allocator)
 	if perr != nil || !state.success {
@@ -649,8 +671,19 @@ firefox_download :: proc() -> (exe: string, err: string) {
 	v, jerr := json.parse(out, allocator = context.temp_allocator)
 	if jerr != nil do return "", "could not read Mozilla's list of Firefox releases"
 	root, _ := v.(json.Object)
-	version, _ := root["LATEST_FIREFOX_VERSION"].(json.String)
+	version, _ = root["LATEST_FIREFOX_VERSION"].(json.String)
 	if version == "" do return "", "Mozilla's list of releases names no Firefox version"
+	return version, ""
+}
+
+// Downloads Firefox `version` into the cache: the macOS disk image (mounted with hdiutil, its
+// app copied) or the Linux archive (tar), with curl. `replacing`: the cached version it is
+// newer than ("" for none).
+@(private = "file")
+firefox_fetch :: proc(version, replacing: string) -> (exe: string, err: string) {
+	state: os.Process_State
+	stderr: []byte
+	perr: os.Error
 	cache := firefox_cache_dir()
 	if e := os.make_directory_all(cache); e != nil && e != .Exist do return "", fmt.tprintf("could not create %s: %v", cache, e)
 	tmp, terr := os.make_directory_temp(cache, "download-*", context.temp_allocator)
@@ -659,7 +692,8 @@ firefox_download :: proc() -> (exe: string, err: string) {
 	final := fmt.tprintf("%s/firefox-%s", cache, version)
 	unpacked := fmt.tprintf("%s/unpacked", tmp)
 	if e := os.make_directory(unpacked); e != nil do return "", fmt.tprintf("could not create %s: %v", unpacked, e)
-	fmt.eprintf("Downloading Firefox %s into %s...\n", version, cache)
+	if replacing != "" do fmt.eprintf("Downloading Firefox %s (newer than the cached %s) into %s...\n", version, replacing, cache)
+	else do fmt.eprintf("Downloading Firefox %s into %s...\n", version, cache)
 	when ODIN_OS == .Darwin {
 		url := fmt.tprintf("https://archive.mozilla.org/pub/firefox/releases/%s/mac/en-US/Firefox%%20%s.dmg", version, version)
 		dmg := fmt.tprintf("%s/firefox.dmg", tmp)

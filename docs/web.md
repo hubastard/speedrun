@@ -50,6 +50,13 @@ no Selenium, no Node. Which Chrome:
 
 Each run starts with a fresh profile: no cookies, storage or cache from an earlier run.
 
+A browser in Speedrun's cache is kept current: once a day, before it starts, Speedrun asks
+for the current stable version (Chrome for Testing's, Mozilla's for Firefox) and downloads it
+when it is newer, so the browser's security fixes arrive. The copy before it is kept, older
+ones deleted. Offline, the cached one runs. `SPEEDRUN_NO_BROWSER_UPDATE=1` turns this off (to
+keep a browser version fixed, `SPEEDRUN_CHROME` and `SPEEDRUN_FIREFOX` name one). A browser
+installed on the machine updates itself.
+
 Chrome runs with its sandbox. Where it cannot run, Chrome exits at once (Ubuntu 23.10 and
 later keep it from the user namespaces it needs: GitHub's `ubuntu-24.04` runners among them),
 and Speedrun starts it again without, as Playwright does by default, and says so. To keep the

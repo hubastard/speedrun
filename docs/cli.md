@@ -87,6 +87,7 @@ speedrun mcp                    # the session's verbs as an MCP server, on stdin
 | `SPEEDRUN_CHROME` | Web: the Chrome or Chromium to run (default: see [Web](web.md#chrome)). |
 | `SPEEDRUN_FIREFOX` | Web: the Firefox to run with `--device firefox` (default: see [Web](web.md#firefox)). |
 | `SPEEDRUN_NO_UPDATE_CHECK=1` | Do not ask GitHub whether a newer release is out. |
+| `SPEEDRUN_NO_BROWSER_UPDATE=1` | Web: do not check once a day for a newer Chrome for Testing or Firefox than the one in Speedrun's cache (see [Web](web.md#chrome)). |
 | `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
 | `SPEEDRUN_CLEAR_STATE_REINSTALL=1` | iOS: `clearState` reinstalls the app, as Maestro does, instead of emptying its folders (~0.7 s slower). |

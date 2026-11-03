@@ -22,6 +22,7 @@ import "core:mem/virtual"
 import "core:net"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
@@ -1329,19 +1330,66 @@ web_record :: proc(w: ^Web, on: bool, b: ^[dynamic]byte) {
 // ---- finding Chrome ----------------------------------------------------------------------
 
 // The Chrome to run: SPEEDRUN_CHROME, else (headless) the headless shell from the cache, else
-// an installed Chrome (headless: as --headless), else one downloaded into the cache.
+// an installed Chrome (headless: as --headless), else one downloaded into the cache. A cached
+// one is kept current (web_refresh); an installed one updates itself.
 web_chrome :: proc(headless: bool) -> (path: string, err: string) {
 	if p := os.get_env("SPEEDRUN_CHROME", context.temp_allocator); p != "" {
 		if !os.exists(p) do return "", fmt.tprintf("SPEEDRUN_CHROME: %s does not exist", p)
 		return p, ""
 	}
 	if headless {
-		if p := web_cached("chrome-headless-shell"); p != "" do return p, ""
+		if p, version := web_cached("chrome-headless-shell"); p != "" do return web_refresh("chrome-headless-shell", p, version), ""
 		return web_download("chrome-headless-shell")
 	}
 	if p := web_installed(); p != "" do return p, ""
-	if p := web_cached("chrome"); p != "" do return p, ""
+	if p, version := web_cached("chrome"); p != "" do return web_refresh("chrome", p, version), ""
 	return web_download("chrome")
+}
+
+// A cached browser kept current: once a day (browser_check_due), Chrome for Testing's current
+// stable `kind` is asked for, and downloaded when it is newer than the cached one (a release
+// carries the browser's security fixes); older copies but the one before are deleted
+// (browser_prune). The cached one when the check is not due, fails or finds nothing newer.
+@(private = "file")
+web_refresh :: proc(kind, exe, version: string) -> string {
+	if !browser_check_due(web_cache_dir(), kind) do return exe
+	latest, url, err := cft_stable(kind)
+	if err != "" || !version_newer(latest, version) do return exe
+	fresh, ferr := web_fetch(kind, latest, url, version)
+	if ferr != "" {
+		fmt.eprintf("%s: running %s %s\n", ferr, kind, version)
+		return exe
+	}
+	browser_prune(web_cache_dir(), kind)
+	return fresh
+}
+
+// Whether to ask now for the browser `kind`'s current version: once a day, unless
+// SPEEDRUN_NO_BROWSER_UPDATE is set. The check is marked as made (`<cache>/<kind>.checked`,
+// its time) whatever its answer: offline, the cached browser runs, and tomorrow it asks again.
+@(private)
+browser_check_due :: proc(cache, kind: string) -> bool {
+	if os.get_env("SPEEDRUN_NO_BROWSER_UPDATE", context.temp_allocator) != "" do return false
+	stamp := fmt.tprintf("%s/%s.checked", cache, kind)
+	if info, err := os.stat(stamp, context.temp_allocator); err == nil && time.since(info.modification_time) < 24 * time.Hour do return false
+	_ = os.write_entire_file(stamp, []byte{})
+	return true
+}
+
+// Deletes the downloads of `kind` in `cache` (folders `<kind>-<version>`) but the newest two:
+// a run that started on the one before keeps its files.
+@(private)
+browser_prune :: proc(cache, kind: string) {
+	entries, err := os.read_all_directory_by_path(cache, context.temp_allocator)
+	if err != nil do return
+	versions := make([dynamic]string, context.temp_allocator)
+	for e in entries {
+		version := strings.trim_prefix(e.name, fmt.tprintf("%s-", kind))
+		if version == e.name || version == "" || version[0] < '0' || version[0] > '9' do continue
+		append(&versions, version)
+	}
+	slice.sort_by(versions[:], proc(a, b: string) -> bool {return version_newer(a, b)})
+	for v in versions[min(2, len(versions)):] do os.remove_all(fmt.tprintf("%s/%s-%s", cache, kind, v))
 }
 
 @(private = "file")
@@ -1399,21 +1447,21 @@ web_executable :: proc(dir, kind: string) -> string {
 	}
 }
 
-// The newest download of `kind` in the cache ("" for none): folders `<kind>-<version>`.
+// The newest download of `kind` in the cache and its version ("" for none): folders
+// `<kind>-<version>`.
 @(private = "file")
-web_cached :: proc(kind: string) -> string {
+web_cached :: proc(kind: string) -> (exe, version: string) {
 	entries, err := os.read_all_directory_by_path(web_cache_dir(), context.temp_allocator)
-	if err != nil do return ""
-	best, best_version := "", ""
+	if err != nil do return
 	for e in entries {
 		if !strings.has_prefix(e.name, kind) || len(e.name) <= len(kind) + 1 || e.name[len(kind)] != '-' do continue
-		version := e.name[len(kind) + 1:]
-		if version[0] < '0' || version[0] > '9' do continue
-		exe := web_executable(e.fullpath, kind)
-		if !os.exists(exe) do continue
-		if best == "" || version_newer(version, best_version) do best, best_version = exe, version
+		v := e.name[len(kind) + 1:]
+		if v[0] < '0' || v[0] > '9' do continue
+		x := web_executable(e.fullpath, kind)
+		if !os.exists(x) do continue
+		if exe == "" || version_newer(v, version) do exe, version = x, v
 	}
-	return best
+	return
 }
 
 @(private)
@@ -1430,33 +1478,48 @@ version_newer :: proc(a, b: string) -> bool {
 // Downloads Chrome for Testing's current stable `kind` into the cache, with curl and unzip.
 @(private = "file")
 web_download :: proc(kind: string) -> (exe: string, err: string) {
+	version, url, lerr := cft_stable(kind)
+	if lerr != "" do return "", lerr
+	return web_fetch(kind, version, url, "")
+}
+
+// Chrome for Testing's current stable version of `kind`, and its download for this machine.
+@(private = "file")
+cft_stable :: proc(kind: string) -> (version, url, err: string) {
 	LIST :: "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
 	state, out, stderr, perr := os.process_exec({command = {"curl", "-fsSL", "--max-time", "60", LIST}}, context.temp_allocator)
 	if perr != nil || !state.success {
-		return "", fmt.tprintf("No Chrome on this machine, and the list of Chrome for Testing downloads could not be fetched (%s). Install Chrome, or set SPEEDRUN_CHROME to a Chrome or Chromium executable.", strings.trim_space(string(stderr)))
+		return "", "", fmt.tprintf("No Chrome on this machine, and the list of Chrome for Testing downloads could not be fetched (%s). Install Chrome, or set SPEEDRUN_CHROME to a Chrome or Chromium executable.", strings.trim_space(string(stderr)))
 	}
 	v, jerr := json.parse(out, allocator = context.temp_allocator)
-	if jerr != nil do return "", "could not read the list of Chrome for Testing downloads"
+	if jerr != nil do return "", "", "could not read the list of Chrome for Testing downloads"
 	root, _ := v.(json.Object)
 	channels, _ := root["channels"].(json.Object)
 	stable, _ := channels["Stable"].(json.Object)
-	version, _ := stable["version"].(json.String)
+	version, _ = stable["version"].(json.String)
 	downloads, _ := stable["downloads"].(json.Object)
 	list, _ := downloads[kind].(json.Array)
-	url := ""
 	for item in list {
 		o, _ := item.(json.Object)
 		if p, _ := o["platform"].(json.String); p == web_platform() do url, _ = o["url"].(json.String)
 	}
-	if url == "" || version == "" do return "", fmt.tprintf("Chrome for Testing has no %s for %s", kind, web_platform())
+	if url == "" || version == "" do return "", "", fmt.tprintf("Chrome for Testing has no %s for %s", kind, web_platform())
+	return version, url, ""
+}
+
+// Downloads `kind` `version` from `url` into the cache; `replacing`: the cached version it is
+// newer than ("" for none).
+@(private = "file")
+web_fetch :: proc(kind, version, url, replacing: string) -> (exe: string, err: string) {
 	cache := web_cache_dir()
 	if e := os.make_directory_all(cache); e != nil && e != .Exist do return "", fmt.tprintf("could not create %s: %v", cache, e)
-	fmt.eprintf("Downloading %s %s (Chrome for Testing) into %s...\n", kind, version, cache)
+	if replacing != "" do fmt.eprintf("Downloading %s %s (Chrome for Testing, newer than the cached %s) into %s...\n", kind, version, replacing, cache)
+	else do fmt.eprintf("Downloading %s %s (Chrome for Testing) into %s...\n", kind, version, cache)
 	tmp, terr := os.make_directory_temp(cache, "download-*", context.temp_allocator)
 	if terr != nil do return "", fmt.tprintf("could not create a folder in %s: %v", cache, terr)
 	defer os.remove_all(tmp)
 	zip := fmt.tprintf("%s/chrome.zip", tmp)
-	state, _, stderr, perr = os.process_exec({command = {"curl", "-fL", "--max-time", "600", "-o", zip, url}}, context.temp_allocator)
+	state, _, stderr, perr := os.process_exec({command = {"curl", "-fL", "--max-time", "600", "-o", zip, url}}, context.temp_allocator)
 	if perr != nil || !state.success do return "", fmt.tprintf("could not download %s: %s", url, strings.trim_space(string(stderr)))
 	unpacked := fmt.tprintf("%s/unpacked", tmp)
 	state, _, stderr, perr = os.process_exec({command = {"unzip", "-q", zip, "-d", unpacked}}, context.temp_allocator)
