@@ -261,6 +261,12 @@ Speedrun is young and changes fast. If a flow that passes with Maestro fails wit
 please open an issue with the flow and its folder in the debug output (`logs/debug.log` there
 traces the run), or the output of `SPEEDRUN_DEBUG=1 speedrun test …`.
 
+## Sponsors
+
+Speedrun is free and open source. If you or your team rely on it, you can
+[sponsor its development](https://github.com/sponsors/hubastard): it pays for the macOS and
+device CI every release is checked on, and for the time spent on fixes and new features.
+
 ## License
 
 Speedrun is licensed under the [Apache License 2.0](LICENSE). It includes
