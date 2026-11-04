@@ -264,8 +264,8 @@ traces the run), or the output of `SPEEDRUN_DEBUG=1 speedrun test …`.
 ## Sponsors
 
 Speedrun is free and open source. If you or your team rely on it, you can
-[sponsor its development](https://github.com/sponsors/hubastard): it pays for the macOS and
-device CI every release is checked on, and for the time spent on fixes and new features.
+[sponsor its development](https://github.com/sponsors/hubastard): it pays for the time spent
+on fixes, issue triage and new features, and for the hardware every release is tested on.
 
 ## License
 
