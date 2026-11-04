@@ -87,11 +87,14 @@ final class Input {
     /// the speed of the touch's last moves (a touch that rests sends no events, so resting
     /// before the lift does not help), so the drag ends slowly: dragKick points in dragKickMs
     /// (at full speed the list starts following ~100 points late), the rest but the last
-    /// dragTail points in dragFastMs, those at 200 points/s (UIKit flung once in three tries
-    /// at 250, React Native at 333 and with a 125 ms tail). 350 points scroll 250-340 in
-    /// 390 ms. The content is still ~50 ms after the lift, testmanagerd confirms ~250 ms
-    /// after it: the drag returns dragDoneMs after the lift (Private.confirmPending).
-    static let dragKick = 12.0, dragKickMs = 40.0, dragFastMs = 150.0, dragTail = 40.0, dragTailMs = 200.0
+    /// dragTail points in dragFastMs, those at 80 points/s. UIKit flung once in three tries at
+    /// 250, React Native at 333; Flutter flings from 100 (BouncingScrollPhysics): at 200 its
+    /// lists glided on for ~1 s after the settle, and a tap in that glide only stopped the list
+    /// (Flutter Bench: a row tapped right after scrollUntilVisible did not open; resting 60 ms
+    /// before the lift did not stop the glide). 350 points scroll 250-340 in 440 ms. The
+    /// content is still ~50 ms after the lift, testmanagerd confirms ~250 ms after it: the drag
+    /// returns dragDoneMs after the lift (Private.confirmPending).
+    static let dragKick = 12.0, dragKickMs = 40.0, dragFastMs = 150.0, dragTail = 20.0, dragTailMs = 250.0
     static let dragDoneMs = 100.0
 
     func drag(from a: (Int32, Int32), to b: (Int32, Int32), out: inout Writer) throws {

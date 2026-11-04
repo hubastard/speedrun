@@ -99,6 +99,8 @@ Runner :: struct {
 	read_ms_recent:       [8]f64, // the last reads' durations (slow_read)
 	settled_unread:       bool, // a settle ended and the screen was not read since
 	react_native:         bool, // a settle saw the app's JavaScript threads run
+	ios_app:              string, // iOS: the app launchApp started last
+	flutter_apps:         map[string]bool, // iOS: apps built with Flutter (ios_flutter), by bundle id
 	read_call:            int, // c.calls after the last read_screen (screen_current)
 	read_at:              time.Tick,
 	marks:                [dynamic]u64, // per node of the latest read: what it is, says, and its frame (untouched)
@@ -635,6 +637,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			if out, ok := simctl_env(ios_launch_env(), ..cmd[:]); !ok do return true, out
 			debug_step(r, "simctl launch", &t)
 			r.launch_due = strings.clone(app, r.alloc)
+			r.ios_app = r.launch_due
 			return true, nil
 		}
 		if d.clear_state do _ = shell(r, "pm clear %s", app)
@@ -881,10 +884,33 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 	return settle(r, no_change_ms = SETTLE_TYPED_NO_CHANGE_MS)
 }
 
+// iOS: whether the app is built with Flutter, its bundle holding Flutter.framework (asked of
+// simctl once per app and run).
+@(private = "file")
+ios_flutter :: proc(r: ^Runner, app: string) -> bool {
+	if app == "" do return false
+	if r.flutter_apps.allocator.procedure == nil do r.flutter_apps = make(map[string]bool, 4, r.alloc)
+	if v, known := r.flutter_apps[app]; known do return v
+	out, ok := simctl("get_app_container", r.dev.udid, app)
+	v := ok && os.exists(fmt.tprintf("%s/Frameworks/Flutter.framework", strings.trim_space(out)))
+	r.flutter_apps[strings.clone(app, r.alloc)] = v
+	return v
+}
+
+// iOS hideKeyboard: how long a keyboard that moves is waited for, read every
+// KEYBOARD_MOVE_POLL_MS (one going away takes ~0.3 s).
+KEYBOARD_HIDE_WAIT_MS :: 800
+KEYBOARD_MOVE_POLL_MS :: 60
+
 // iOS hideKeyboard: past the keyboard's introduction, then a short swipe up, and if the
-// keyboard is still there, one to the left. A keyboard still up fails the
-// command, as in Maestro: a screen without a scroll view that dismisses it on drag (React
-// Native's default) keeps it.
+// keyboard is still there, one to the left, as in Maestro. A keyboard still up fails the
+// command: a screen without a scroll view that dismisses it on drag (React Native's default)
+// keeps it.
+// A Flutter app (ios_flutter) closes the keyboard on no drag, and on no tap outside unless the
+// app asks; and the second swipe, shorter than its touch slop, is a tap at the screen's center
+// there (it focused the field under it, Flutter Bench). So its keyboard's Done key is pressed
+// instead, iOS's own key for ending an edit (Flutter's single-line fields ask for one): a
+// multiline field or a number pad has none, and the command fails.
 @(private = "file")
 ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 	if !read_screen(r) do return AGENT_LOST
@@ -901,18 +927,53 @@ ios_hide_keyboard :: proc(r: ^Runner) -> Err {
 		break
 	}
 	// The keyboard element, or its delete key (the number pad's has another id).
+	keyboard_frame :: proc(r: ^Runner) -> (shown: bool, frame: [4]i32, err: Err) {
+		if !read_screen(r) do return false, {}, AGENT_LOST
+		for &n in r.h.nodes do if n.kept && (n.class == "Keyboard" || n.id == "delete") do return true, {n.left, n.top, n.right, n.bottom}, nil
+		return false, {}, nil
+	}
+	// Still up: after a swipe, read again a moment later, and while the keyboard moves (the
+	// settle after a swipe leaves animations out): one going away reads as up, without keys.
 	keyboard_shown :: proc(r: ^Runner) -> (shown: bool, err: Err) {
-		if !read_screen(r) do return false, AGENT_LOST
-		for &n in r.h.nodes do if n.kept && (n.class == "Keyboard" || n.id == "delete") do return true, nil
-		return false, nil
+		at: [4]i32
+		shown, at = keyboard_frame(r) or_return
+		t := time.tick_now()
+		for shown && time.tick_since(t) < KEYBOARD_HIDE_WAIT_MS * time.Millisecond {
+			time.sleep(KEYBOARD_MOVE_POLL_MS * time.Millisecond)
+			now: [4]i32
+			shown, now = keyboard_frame(r) or_return
+			if now == at do break
+			at = now
+		}
+		return
 	}
 	w, h := r.w, r.h_px
 	if !(keyboard_shown(r) or_return) do return nil
-	swipe_points(r, w / 2, h / 2, w / 2, i32(f32(h) * 0.47), 50, nil) or_return
-	if !(keyboard_shown(r) or_return) do return nil
-	// swipe_points settled already.
-	swipe_points(r, w / 2, h / 2, i32(f32(w) * 0.47), h / 2, 50, nil) or_return
+	if ios_flutter(r, r.ios_app) {
+		for &n in r.h.nodes do if n.kept && has_bounds(n) && n.id == "Done" && n.parent >= 0 {
+			in_keyboard := false
+			for p := n.parent; p >= 0 && !in_keyboard; p = r.h.nodes[p].parent do in_keyboard = r.h.nodes[p].class == "Keyboard"
+			if !in_keyboard do continue
+			note(r, "a Flutter app: pressing the keyboard's Done key")
+			if _, ok := op_press(r.c, n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2, IOS_FRAME_TAP_MS); !ok do return AGENT_LOST
+			settle(r) or_return
+			break
+		}
+	} else {
+		swipe_points(r, w / 2, h / 2, w / 2, i32(f32(h) * 0.47), 50, nil) or_return
+		if !(keyboard_shown(r) or_return) do return nil
+		// swipe_points settled already.
+		swipe_points(r, w / 2, h / 2, i32(f32(w) * 0.47), h / 2, 50, nil) or_return
+	}
 	if keyboard_shown(r) or_return {
+		if r.debug {
+			b := strings.builder_make(context.temp_allocator)
+			for &n in r.h.nodes do if n.id != "" && (n.class == "Key" || n.class == "Button") do fmt.sbprintf(&b, " %s(%v)", n.id, n.kept)
+			note(r, "the keyboard stayed up; its keys with an id:%s", strings.to_string(b))
+		}
+		if ios_flutter(r, r.ios_app) {
+			return "Couldn't hide the keyboard: its field has no Done key (a multiline field or a number pad has none), and a Flutter app closes the keyboard on nothing else unless it asks to. Tap where the app closes it (outside the field, if it unfocuses on a tap there), or give the field a Done action (textInputAction: TextInputAction.done)."
+		}
 		return "Couldn't hide the keyboard. This can happen if the app uses a custom input or doesn't expose a standard dismiss action."
 	}
 	return nil
@@ -2114,19 +2175,39 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 // Not on Android: a drag there is injected at once, and the faster one flung the list now and
 // then (row 39 to 145 in one drag, past the row looked for), where reads cost ~15 ms a drag
 // anyway; iOS's play out in real time, and its reads cost ~200 ms.
+// No list under (x, y), but one up or down elsewhere on screen (a bottom sheet's, below the
+// screen's center: from the center, the drag pulled the sheet's edge or the scrim behind it,
+// and nothing scrolled): the drag starts in the one nearest y, on Android a tenth of the way in
+// from its edge nearest y (as long a drag as one from the center).
 @(private = "file")
 drag_start :: proc(r: ^Runner, x, y: i32, dir: Swipe_Dir) -> (start: i32, placed: bool) {
-	if r.dev.platform != .IOS do return y, true
 	sv := -1
 	for k in r.h.order {
 		n := r.h.nodes[k]
 		if !scroll_container(n) || x < n.left || x >= n.right || y < n.top || y >= n.bottom do continue
 		if sv < 0 || n.depth > r.h.nodes[sv].depth do sv = k
 	}
-	if sv < 0 do return y, false
+	if sv >= 0 && r.dev.platform != .IOS do return y, true
+	near := sv < 0
+	if near {
+		best: i32 = -1
+		for k in r.h.order {
+			n := r.h.nodes[k]
+			if !n.kept || !scroll_container(n) || x < n.left || x >= n.right || scrolls_sideways(r, k) do continue
+			top, bottom := max(n.top, 0), min(n.bottom, r.h_px)
+			if bottom - top < r.w / 3 do continue
+			off := top - y if top > y else y - bottom
+			if sv < 0 || off < best do sv, best = k, off
+		}
+		if sv < 0 do return y, r.dev.platform != .IOS
+	}
 	top, bottom := max(r.h.nodes[sv].top, 0), min(r.h.nodes[sv].bottom, r.h_px)
+	if r.dev.platform != .IOS {
+		margin := (bottom - top) / 10
+		return clamp(y, top + margin, bottom - margin), true
+	}
 	start = top + (bottom - top) * 7 / 10 if dir == .Up else top + (bottom - top) * 3 / 10
-	if (dir == .Up && start <= y) || (dir == .Down && start >= y) do start = y
+	if !near && ((dir == .Up && start <= y) || (dir == .Down && start >= y)) do start = y
 	return start, true
 }
 
@@ -2152,7 +2233,7 @@ debug_list :: proc(r: ^Runner, x, y: i32) {
 	}
 	if sv < 0 do return
 	first, last := "", ""
-	for k in subtree(r, sv) do if t := r.h.nodes[k].text; t != "" && r.h.nodes[k].kept {
+	for k in subtree(r, sv) do if t := r.h.nodes[k].text if r.h.nodes[k].text != "" else r.h.nodes[k].desc; t != "" && r.h.nodes[k].kept {
 		if first == "" do first = t
 		last = t
 	}
@@ -2179,9 +2260,12 @@ scroll_signature :: proc(r: ^Runner, x, y: i32, vertical: bool) -> (sig: u64, em
 		if !n.kept do continue
 		v := n.top if vertical else n.left
 		h = (h ~ u64(u32(v))) * 1099511628211
+		// A label counts as the row's text: Flutter's rows say theirs only as labels.
 		for c in transmute([]u8)n.text do h = (h ~ u64(c)) * 1099511628211
 		h = (h ~ u64('|')) * 1099511628211
-		if n.text != "" do empty = false
+		for c in transmute([]u8)n.desc do h = (h ~ u64(c)) * 1099511628211
+		h = (h ~ u64('|')) * 1099511628211
+		if n.text != "" || n.desc != "" do empty = false
 	}
 	return h, empty
 }
@@ -3261,6 +3345,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		h = max(h, r.h.nodes[i].bottom)
 	}
 	if w > 0 && h > 0 do r.w, r.h_px = w, h
+	if r.dev.platform == .IOS do adopt_list_content(r)
 	if r.dev.platform != .Android do clip_to_scroll_views(r)
 	// filterOutOfBounds: drop nodes less than 10% on screen whose children are all dropped.
 	w, h = r.w, r.h_px
@@ -3286,6 +3371,43 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	trace_read(r, us(t) / 1000)
 	r.read_call, r.read_at = r.c.calls, time.tick_now()
 	return true
+}
+
+// iOS, Flutter: a node with children is a container holding the node itself, then its
+// children, so a list is a scroll view with nothing in it, followed by its rows, side by side
+// (rows scrolled away with no frame). Each check that looks for the list a row is in (where to
+// drag, what clips it, whether a drag moved it) found none. Such a scroll view, its container's
+// first child, gets the siblings after it as its children when each lies inside its frame (or
+// has none): a toolbar after an empty UIKit scroll view does not.
+@(private = "file")
+adopt_list_content :: proc(r: ^Runner) {
+	nodes := r.h.nodes[:]
+	for k in 0 ..< len(nodes) {
+		n := nodes[k]
+		switch n.class {
+		case "ScrollView", "Table", "CollectionView":
+		case: continue
+		}
+		p := n.parent
+		if p < 0 || k != p + 1 || (k + 1 < len(nodes) && nodes[k + 1].depth > n.depth) do continue
+		end := k + 1
+		for end < len(nodes) && nodes[end].depth > nodes[p].depth do end += 1
+		if end == k + 1 do continue
+		inside := true
+		for j in k + 1 ..< end do if nodes[j].parent == p {
+			s := nodes[j]
+			if s.right <= s.left || s.bottom <= s.top do continue
+			if s.left < n.left - 1 || s.top < n.top - 1 || s.right > n.right + 1 || s.bottom > n.bottom + 1 {
+				inside = false
+				break
+			}
+		}
+		if !inside do continue
+		for j in k + 1 ..< end {
+			nodes[j].depth += 1
+			if nodes[j].parent == p do nodes[j].parent = k
+		}
+	}
 }
 
 // The last read took over SLOW_READ_MIN_MS and SLOW_READ_FACTOR times the median of the reads

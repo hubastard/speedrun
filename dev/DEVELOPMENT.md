@@ -156,6 +156,9 @@ what is still slow: `dev/TO_IMPROVE.md`.
   Compose and SwiftUI), and its 21 flows: the
   regression suite (every command and selector, on Android and iOS with the same files) and
   the benchmark against Maestro (`bench/app/bench.sh`; see its README).
+- `bench/flutter` — Flutter Bench, a Flutter app with the Flutter patterns test tools trip
+  on (merged row labels, a modal bottom sheet's list, a TabBarView, keyboards without a
+  Done key), and its 8 flows, on Android and iOS (`bench/flutter/bench.sh build|test`).
 - `bench/settings` — the Settings benchmark, `bench_scenario_android.yaml` and
   `bench_scenario_ios.yaml`: 14 commands per lap on Android's and iOS's Settings app
   (navigation two levels deep, scrolling both ways, text input), `-e TIMES=3` for three laps;
@@ -278,6 +281,7 @@ Maestro flow files run as they are:
 ```
 ./speedrun test dev/flows/features.yaml
 ./speedrun test -p ios bench/app/flows/        # the benchmark app's suite, on a simulator
+./speedrun test bench/flutter/flows/           # Flutter Bench's (bench/flutter/bench.sh build first)
 ```
 
 Speedrun picks a connected Android device, else the one booted simulator; `--platform` and
@@ -502,7 +506,7 @@ On iOS (simulators), the same commands run, with Maestro's iOS behavior: `back` 
 (use the navigation bar's `BackButton`), `killApp` is `stopApp`, only ENTER, BACKSPACE, HOME and
 LOCK keys act, and the hierarchy is the foreground app plus the status bars with Maestro's
 attribute mapping; `clearState` empties the app's folders (Maestro reinstalls it); `hideKeyboard` swipes as
-Maestro's does; airplane mode does nothing (no simulator has it). Permissions (`launchApp`
+Maestro's does (a Flutter app's: its Done key); airplane mode does nothing (no simulator has it). Permissions (`launchApp`
 grants all by default, as in Maestro) are written to the simulator's privacy database the
 way Maestro's `applesimutils` does, so neither is needed; location goes through
 `simctl privacy`. The notification-permission alert is answered as Maestro's runner does: a
@@ -822,7 +826,27 @@ Known differences in how, not what:
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
 - iOS `hideKeyboard` fails when the keyboard stays up, as Maestro's does ("Couldn't hide the
   keyboard"); the keyboard is found by its element (the number pad's delete key has another
-  id).
+  id). One that moves after a swipe is read again until it stops (the settle after a swipe
+  leaves animations out: a keyboard going away read as up, without its keys). In a Flutter
+  app (its bundle holds `Frameworks/Flutter.framework`, asked of `simctl get_app_container`
+  once per app and run) it presses the keyboard's Done key (id `Done`) instead of swiping:
+  Flutter dismisses the keyboard on no drag, and the 12-point swipe, under Flutter's 18-point
+  touch slop, was a tap at the screen's center that focused the field there.
+- iOS, Flutter: a node with children is a container holding the node itself, then its
+  children, so a list is an empty `ScrollView` with its rows as its siblings. The host gives
+  such a scroll view (its container's first child) the siblings after it when each lies in
+  its frame (adopt_list_content): every check that looks for the list a row is in (where to
+  drag, clipping, whether a drag moved the list) found none, and scrollUntilVisible waited out
+  each drag (a list without text reads as re-rendering). A row's text is its label there, and
+  the scroll signature counts labels. Flutter cuts a row's frame to the list's edge itself,
+  so a row partly scrolled away reads as fully shown.
+- iOS drags (scrollUntilVisible) end at 80 points/s: Flutter flings from 100
+  (BouncingScrollPhysics), and at 200 its lists glided for ~1 s past the settle, a tap in the
+  glide only stopping the list. A rest before the lift did not stop it.
+- scrollUntilVisible's vertical drags start in the list nearest the screen's center when no
+  list holds the center (a modal bottom sheet at half height: the center was its top edge,
+  Flutter Bench's sheet did not scroll); on Android a tenth of the way in from its edge, as
+  long a drag as one from the center.
 - Android `SWIPE` waits when its back-dated down time would come before the last event
   injected: Android 17's input verifier drops a gesture whose down time goes backwards
   ("Down time went backwards"), and one that starts, in event time, before the previous one

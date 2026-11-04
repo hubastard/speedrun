@@ -99,6 +99,10 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   stops, even on a slow CI emulator. It takes more, shorter swipes, and its `speed` has no
   effect. `swipe` and `scroll`
   fling as in Maestro.
+- **`scrollUntilVisible` drags in the list when the screen's center holds none**, such as a
+  bottom sheet that covers the lower half of the screen: it starts in the list nearest the
+  center. Maestro drags from the center, on the sheet's edge or the dimmed screen behind it,
+  and the list does not move.
 - **`scrollUntilVisible` scrolls the element clear of what is drawn over it** (a sticky
   footer, a floating search bar), so a tap that follows lands on it. Maestro stops once the
   element is on screen, under the footer or not.
@@ -123,6 +127,11 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   when it is too big (a list of thousands of alternatives works), and a part without one
   that compiles to more than 32,767 instructions or uses more than 255 character classes
   is an error.
+- **iOS `hideKeyboard` in a Flutter app presses the keyboard's Done key** instead of
+  swiping: Flutter closes the keyboard on no swipe, and the second of Maestro's swipes is
+  short enough to be a tap at the screen's center there, which can land on another field or
+  a button. A field without a Done key (multiline, a number pad) keeps the keyboard up, and
+  the command fails, as in Maestro.
 - **iOS: what a list has scrolled out of view is not visible**, as on Android: an element's
   bounds are cut to the scrolling area around it, and taps aim at the part that shows.
   Maestro counts an element as visible when its frame is on screen, even if the list hides it.
