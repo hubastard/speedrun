@@ -61,7 +61,9 @@ elif command -v xcodebuild >/dev/null; then
   products=agent/ios/build/Build/Products
   xctestrun=$(cd "$products" && ls -t -- *.xctestrun | sed -n 1p)
   runner=Release-iphonesimulator/SpeedrunAgentUITests-Runner.app
-  IOS_AGENT_ID=$(cd "$products" && find "$xctestrun" "$runner" -type f -print0 | LC_ALL=C sort -z \
+  # A letter first: Odin reads a -define value that starts like a number as one (217e7d8d...
+  # was 2170000000, and the build failed).
+  IOS_AGENT_ID=a$(cd "$products" && find "$xctestrun" "$runner" -type f -print0 | LC_ALL=C sort -z \
     | xargs -0 shasum -a 256 | shasum -a 256 | cut -c 1-16)
   if [[ ! -f agent/ios/build/agent.tar.gz || "$(cat agent/ios/build/agent.id 2>/dev/null)" != "$IOS_AGENT_ID" ]]; then
     COPYFILE_DISABLE=1 tar -czf agent/ios/build/agent.tar.gz --no-xattrs --no-mac-metadata -C "$products" "$xctestrun" "$runner"

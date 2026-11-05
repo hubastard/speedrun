@@ -735,8 +735,12 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 			if msg != "" do return true, msg
 			return true, settle(r)
 		}
+		// The settle measures from the link's opening (MARK), as launchApp's: else from the
+		// last action, often a minute before, whose quiet window was long past, and it ended at
+		// once on the screen from before the link (issue #21).
 		// iOS opens every link the same way (browser and autoVerify do not apply there).
 		if r.dev.platform == .IOS {
+			if !op_mark(r.c) do return true, AGENT_LOST
 			if out, ok := simctl("openurl", r.dev.udid, link); !ok do return true, out
 			return true, settle(r)
 		}
@@ -751,6 +755,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 				}
 			}
 		}
+		if !op_mark(r.c) do return true, AGENT_LOST
 		_ = shell(r, "am start -a android.intent.action.VIEW -d %s %s", link, browser)
 		settle(r) or_return
 		if d.auto_verify do auto_verify(r, eval(r, d.app_id) or_return) or_return
@@ -1532,6 +1537,31 @@ under_loading :: proc(r: ^Runner, el: int) -> (blocked, listed: bool, err: Err) 
 	return !reaches(r, el, hit, frame), spinner, nil
 }
 
+// Android: whether node `k`, outside element `el`'s subtree, is part of it all the same: within
+// its frame, in its window, and in every list it is in. Android's accessibility tree can list a
+// view's children after it rather than under it: a React Native footer's button came after the
+// footer, was taken for a cover, and the tap went to the footer's padding (issue #21). What
+// covers an element is outside it: a sticky footer over a row is outside the row's list (if
+// within the row's frame, cut at the list's edge), the keyboard and a dialog in other windows.
+// iOS and the web have a hit test, which judges a node within the element's frame the same way
+// (reaches).
+@(private = "file")
+part_of :: proc(r: ^Runner, k, el: int) -> bool {
+	c, e := r.h.nodes[k], r.h.nodes[el]
+	if c.left < e.left - 1 || c.top < e.top - 1 || c.right > e.right + 1 || c.bottom > e.bottom + 1 do return false
+	in_it :: proc(r: ^Runner, k, a: int) -> bool {
+		for p := r.h.nodes[k].parent; p >= 0; p = r.h.nodes[p].parent do if p == a do return true
+		return false
+	}
+	root := el
+	for r.h.nodes[root].parent >= 0 do root = r.h.nodes[root].parent
+	if !in_it(r, k, root) do return false
+	for a := e.parent; a >= 0; a = r.h.nodes[a].parent {
+		if scroll_container(r.h.nodes[a]) && !in_it(r, k, a) do return false
+	}
+	return true
+}
+
 // Whether a touch the hit test took to node `hit` reaches element `el`: the element, a node in
 // it, one of its containers, or a node within its frame (React Native lists a button twice on
 // iOS, siblings with one frame: the hit test may answer the other). A hit the last read does
@@ -1701,6 +1731,7 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 		c := r.h.nodes[k]
 		if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
 		if scroll_indicator(r, c) do continue
+		if r.dev.platform == .Android && part_of(r, k, el) do continue
 		// Content of another list is no fixed chrome (a closed drawer's menu, which
 		// accessibility still places on screen): only views outside any other scroll view
 		// count.
@@ -1711,7 +1742,8 @@ cover_at :: proc(r: ^Runner, el: int, x, y: i32) -> int {
 			if !holds do continue nodes
 		}
 		if 2 * i64(c.right - c.left) * i64(c.bottom - c.top) < i64(r.w) * i64(r.h_px) {
-			note(r, "%s covered by %s %d,%d-%d,%d", n.class, c.class, c.left, c.top, c.right, c.bottom)
+			note(r, "%s covered by #%d %s %d,%d-%d,%d (in #%d; the element #%d in #%d)", n.class, k, c.class,
+				c.left, c.top, c.right, c.bottom, c.parent, el, n.parent)
 			return k
 		}
 	}

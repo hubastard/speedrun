@@ -509,6 +509,11 @@ Supported:
 
 Not supported (an error naming it): AI commands, and `startRecording` in web flows.
 
+`openLink` marks its action (MARK) before opening the link, as `launchApp` does: else its
+settle measured from the step before, often a minute earlier, and ended at once on the screen
+from before the link (issue #21: assertions passed on it, links were lost in an Expo dev
+client's reload, a scroll dragged a list before its screen showed).
+
 `openLink: autoVerify` on Android picks the flow's app in the "Open with" dialog by its name,
 as Maestro does; the agent reads that name on the device (the app's label in the device's
 language) where Maestro pulls and parses the APK. Then Chrome's first-run screens.
@@ -638,7 +643,12 @@ Known differences in how, not what:
   center, as before. On a 320x640 emulator (CI's default), the journey's size and quantity
   taps hit the product page's footer, and the sign-in's Next the keyboard; they now pass.
   A cover inside the same list (an OTP field's digit boxes drawn over its hidden input)
-  moves with the element: no drag, the center.
+  moves with the element: no drag, the center. On Android a node within the element's frame,
+  in its window and in every list it is in, is part of it, not a cover (`part_of`): the
+  accessibility tree can list a view's children after it rather than under it, and a React
+  Native footer's own button was taken for a cover, the tap going to the footer's padding
+  (issue #21). A sticky footer over a row is outside the row's list, the keyboard in another
+  window. iOS and the web have a hit test for it (`reaches`).
 - While its drags move the content, `scrollUntilVisible` stops on an element only once it
   shows as much as asked (`visibility`), and drags an element its list cuts on the side it
   comes in from (iOS) just far enough to bring it all in, a margin past the list's edge or
