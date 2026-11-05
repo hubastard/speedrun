@@ -89,8 +89,12 @@ jobs:
             for app in todomvc rwa; do [ -f "results/$app.md" ] && { cat "results/$app.md"; echo; }; done
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The runs are also in bench/results/history.jsonl (run.sh records them): to keep them,
+      # `bench/results.py import <that file>` in a checkout, then commit bench/results.
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bench-web
-          path: bench/web/results
+          path: |
+            bench/web/results
+            bench/results/history.jsonl

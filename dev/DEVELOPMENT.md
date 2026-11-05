@@ -239,12 +239,22 @@ with.
   hours). The workflow creates the release with a placeholder for its notes: write them
   (`gh release edit <tag> --notes-file <file>`, what changed for users, as the earlier
   releases). Run it by hand (`gh workflow run release-linux.yml -f tag=v0.1.7`) to rebuild a tag.
+  Before tagging, the READMEs take the benchmarks' latest numbers: `bench/results.py readme`
+  writes the tables between `<!-- results:NAME -->` markers again in this README and the
+  benchmarks' own, from `bench/results/history.jsonl` (every full benchmark run on a Mac adds
+  to it, and `bench/results/` has the pages). Commit them in `bench/`, then here with the
+  release's commit. Nothing else writes the READMEs' numbers.
 - `.github/workflows/journey.yml`: after every push to `main`, builds speedrun, downloads
   the prebuilt Speedrun Bench for these sources (builds it, with Node, when the release has
   none: setup-node alone took 3-4 minutes on the macOS runner) and runs the benchmark
   journey (`bench/journey/journey.yaml`) with speedrun on an Android 15 emulator (Ubuntu,
   KVM) and an iOS simulator (macOS runner, the newest Xcode installed). The JUnit report
-  and the debug output are kept as artifacts.
+  and the debug output are kept as artifacts. After a push (not a run started by hand), the
+  `record` job adds the journey's and the web flows' times to the `bench-history` branch
+  (`bench/results.py ci`, from each job's `bench-env.json` and reports): its README has a row
+  per push, flagged where a benchmark got 15% slower than the median of the 5 pushes before,
+  and a page per benchmark has each step's or flow's time. The branch holds only those files;
+  the job pushes to it with the workflow's token, one record at a time.
   The iOS job boots its simulator with `speedrun fast-boot`, in the background while the iOS
   agent builds, from a speedrun built in seconds without it (`SPEEDRUN_NO_IOS=1`). After the
   journey, the sign-in flow clears the app's state as the journey left it, and the step fails

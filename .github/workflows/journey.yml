@@ -5,6 +5,8 @@
 # simulator is booted with `speedrun fast-boot`, and a flow then clears the app's state. On the
 # web, speedrun's web flows (dev/flows/web) and the Real World App's journeys (bench/web) run in
 # Chrome and in Firefox. The JUnit reports and speedrun's debug output are kept as artifacts.
+# After a push to main (not a run started by hand), the record job adds the runs' times to the
+# bench-history branch, a row per push (bench/results.py ci), so a push that slowed a flow shows.
 name: Journey
 
 on:
@@ -123,6 +125,11 @@ jobs:
             adb install -r bench/app/prebuilt/speedrun-bench.apk
             ./speedrun test bench/journey/journey.yaml --format junit --output journey-android.xml --debug-output debug-android --flatten-debug-output
 
+      # What the record job needs to know about the run (bench/results.py ci-env).
+      - name: Describe the run
+        if: always()
+        run: python3 bench/results.py ci-env bench-env.json --device "API 35 emulator (pixel_7, 4 cores, 4 GB)" --report journey-android.xml:journey:android:debug-android
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -130,6 +137,7 @@ jobs:
           path: |
             journey-android.xml
             debug-android
+            bench-env.json
           if-no-files-found: ignore
 
   ios:
@@ -225,6 +233,10 @@ jobs:
             | tee "$RUNNER_TEMP/sign-in.log"
           if grep "clear state: reinstalling" "$RUNNER_TEMP/sign-in.log"; then exit 1; fi
 
+      - name: Describe the run
+        if: always()
+        run: python3 bench/results.py ci-env bench-env.json --simulator "$SIMULATOR" --report journey-ios.xml:journey:ios:debug-ios
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -233,6 +245,7 @@ jobs:
             journey-ios.xml
             sign-in-ios.xml
             debug-ios
+            bench-env.json
           if-no-files-found: ignore
 
   web:
@@ -297,6 +310,13 @@ jobs:
           ./speedrun test --headless --device firefox dev/flows/web/ --format junit --output web-firefox.xml --debug-output debug-web-firefox --flatten-debug-output
           ./speedrun test --headless --device firefox --screen-size 1280x1000 bench/web/rwa/flows --format junit --output rwa-firefox.xml --debug-output debug-rwa-firefox --flatten-debug-output
 
+      - name: Describe the run
+        if: always()
+        run: |
+          python3 bench/results.py ci-env bench-env.json --device "headless" \
+            --report web-chrome.xml:web-site:chrome --report web-firefox.xml:web-site:firefox \
+            --report rwa-chrome.xml:web-rwa:chrome --report rwa-firefox.xml:web-rwa:firefox
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -306,4 +326,48 @@ jobs:
             rwa-*.xml
             debug-web-*
             debug-rwa-*
+            bench-env.json
           if-no-files-found: ignore
+
+  # After a push to main: the jobs' times go to the bench-history branch (bench/results.py ci),
+  # whose README has a row per push and each benchmark's page its flows' or steps' times. A run
+  # started by hand records nothing. One record at a time: each builds on the branch as the
+  # previous one left it.
+  record:
+    needs: [android, ios, web]
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: bench-history
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Record the runs on the bench-history branch
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch -q origin bench-history; then
+            git worktree add -q history FETCH_HEAD
+          else
+            git worktree add -q --detach history
+            git -C history checkout -q --orphan bench-history
+            git -C history rm -rfq .
+          fi
+          python3 bench/results.py --history history/history.jsonl --out history \
+            ci artifacts --commit "$GITHUB_SHA" --subject "${MESSAGE%%$'\n'*}"
+          git -C history add -A
+          if git -C history diff --cached --quiet; then exit 0; fi
+          git -C history commit -q -m "Benchmarks of ${GITHUB_SHA::7}"
+          git -C history push -q origin HEAD:bench-history
