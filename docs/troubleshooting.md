@@ -7,6 +7,13 @@
 - **"Another UiAutomation client is running on the device".** Android allows only one UI
   automation tool at a time. Speedrun stops Maestro's leftover driver itself; stop any other
   tool (Appium, `uiautomator`, an instrumentation test) before running.
+- **Runs that get slower and slower, the computer stalling, "isn't responding" dialogs on
+  an Android emulator.** Emulators before version 37.2.13 leak memory on the computer each
+  time an app's process ends (about 40 MB), and a test run restarts the app often: the
+  emulator grows by gigabytes until the computer runs short of memory, and everything
+  freezes for minutes, mouse clicks included. Update the emulator (`sdkmanager --install
+  emulator`, or Android Studio's SDK Manager) and restart it. Speedrun warns when it runs
+  on one of those versions.
 - **Slow or flaky runs on a busy machine.** An emulator stalls when the host is short of
   memory or CPU. Shut iOS simulators down while testing on Android (run
   `speedrun --stop-agent` first), and rerun before trusting a failure.

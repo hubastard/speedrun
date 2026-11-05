@@ -831,6 +831,16 @@ Known differences in how, not what:
   just-booted simulator), the restart took 30-70 s and met the same errors. The agent's test
   overrides `record(_:)` to log issues instead (`XCTest issue (not recorded)`), and each
   request fails on its own. The agent's ISSUE op (52) makes XCTest record one, to check it.
+- Emulators before 37.2.13 leak host memory each time a guest process exits (issue
+  568480829): measured on 37.2.12 with plain `adb`, ~40 MB a killed app (`pm clear`, `am
+  force-stop`; an app brought back without a kill: nothing), in the emulator's graphics
+  regions (`vmmap --summary <qemu pid>`: `IOAccelerator (graphics)`, `owned unmapped
+  (graphics)` with `-gpu host`; `Malloc Large` with SwiftShader). A day of suites took it to
+  an 11 GB footprint on a 16 GB Mac; macOS then compressed it, and the emulator froze for
+  minutes (one tree read took 355 s, ANR dialogs, failed flows). 37.2.13 frees them (30 kills:
+  graphics 115 → 156 MB). `device_prepare` reads the version from `ro.boot.serialno`
+  (`EMULATOR37X2X12X0`) and warns below 37.2.13. Measure the emulator with `vmmap`'s
+  physical footprint: `ps`'s RSS counts its shared memory twice.
 - Android, an app that doesn't answer: each accessibility call into a window whose UI thread
   is blocked (an app hanging, an emulator the Mac starved of memory) waits 5 s and returns
   nothing. The agent's walks stop at the first such call (`child`, `STALLED_CALL_MS`), and

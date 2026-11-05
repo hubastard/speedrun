@@ -202,6 +202,7 @@ device_prepare :: proc(d: ^Device) -> (present: bool, err: string) {
 	}
 	scale := android_scale()
 	script := strings.concatenate({
+		"echo serialno $(getprop ro.boot.serialno); ",
 		"echo scales $(settings get global window_animation_scale) $(settings get global transition_animation_scale) ",
 		"$(settings get global animator_duration_scale); ",
 		"settings put global window_animation_scale ", scale, "; settings put global transition_animation_scale ", scale,
@@ -218,6 +219,13 @@ device_prepare :: proc(d: ^Device) -> (present: bool, err: string) {
 	if strings.contains(out, "stopped-maestro") {
 		fmt.eprintln("Stopped Maestro's driver, left running on the device by an earlier Maestro run: it held the UiAutomation slot.")
 	}
+	for line in strings.split_lines(out, context.temp_allocator) {
+		if !strings.has_prefix(line, "serialno ") do continue
+		if v, old := leaky_emulator(strings.trim_space(line[len("serialno "):])); old && !warned_emulator {
+			warned_emulator = true
+			fmt.eprintfln("\x1b[33mWarning: this Android emulator (%s) leaks memory on the computer each time an app's process ends, about 40 MB a time. A test run restarts the app often: the emulator grows by gigabytes, then the computer stalls (minutes-long freezes, \"isn't responding\" dialogs, failed flows). Emulator 37.2.13 fixes it (https://issuetracker.google.com/568480829): update it (sdkmanager --install emulator, or Android Studio's SDK Manager) and restart the emulator.\x1b[0m", v)
+		}
+	}
 	// "scales 1 1 1" ("null" for one never set, which Android reads as 1). Already as wanted:
 	// nothing to put back. A run that prepares twice (bench) keeps what the first found.
 	for line in strings.split_lines(out, context.temp_allocator) {
@@ -233,6 +241,31 @@ device_prepare :: proc(d: ^Device) -> (present: bool, err: string) {
 		if d.scales_was == "" && !as_wanted do d.scales_was = strings.clone(scales)
 	}
 	return strings.contains(out, "present"), ""
+}
+
+// Emulators before 37.2.13 leak host memory each time a guest process exits (graphics
+// contexts, surfaces and frame buffers left allocated: issue 568480829). Measured on 37.2.12:
+// ~40 MB a killed app (launchApp stops the app, clearState kills it), the emulator at 11 GB
+// after a day of suites on a 16 GB Mac, then macOS compressing it, and minutes-long freezes.
+// An emulator's serial number carries its version: EMULATOR37X2X12X0.
+@(private = "file")
+warned_emulator := false
+
+@(private = "file")
+leaky_emulator :: proc(serial: string) -> (version: string, old: bool) {
+	if !strings.has_prefix(serial, "EMULATOR") do return "", false
+	parts := strings.split(serial[len("EMULATOR"):], "X", context.temp_allocator)
+	if len(parts) < 3 do return "", false
+	v: [3]int
+	for i in 0 ..< 3 {
+		n, ok := strconv.parse_int(parts[i])
+		if !ok do return "", false
+		v[i] = n
+	}
+	version = fmt.tprintf("%d.%d.%d", v[0], v[1], v[2])
+	fixed := [3]int{37, 2, 13}
+	for i in 0 ..< 3 do if v[i] != fixed[i] do return version, v[i] < fixed[i]
+	return version, false
 }
 
 // Android's animation scale for --animations.
