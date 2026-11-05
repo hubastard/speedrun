@@ -61,6 +61,7 @@ Hierarchy :: struct {
 	hash:      u64, // for retryTapIfNoChange
 	content:   u64, // what the nodes are and say (class, text, description, id, flags), not where
 	unsettled: bool, // iOS: the screen changed since the last settle ended
+	stalled:   bool, // Android: a window's app did not answer the read, which has it in part
 }
 
 Record :: struct {
@@ -3288,11 +3289,30 @@ script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 
 // ---- device ---------------------------------------------------------------------------
 
+// How long read_screen reads again a screen whose app does not answer (Android).
+STALLED_READ_MAX_MS :: 60_000
+
 // Reads every window into r.h and applies the bounds filter.
 read_screen :: proc(r: ^Runner) -> bool {
 	after_settle := r.settled_unread
 	r.settled_unread = false
 	if !read_screen_once(r) do return false
+	// Android: an app whose UI thread is blocked (hanging, or a device starved of memory) does
+	// not answer the read's calls, and the agent stops at the first, 5 s on: that window is in
+	// the read in part. Read again until the app answers, up to STALLED_READ_MAX_MS, rather
+	// than act on part of a screen (the agent used to wait 5 s a node: one read took 355 s).
+	if r.h.stalled {
+		t := time.tick_now()
+		note(r, "the app did not answer the read (its UI thread is blocked): reading again until it does")
+		for r.h.stalled && time.tick_since(t) < STALLED_READ_MAX_MS * time.Millisecond {
+			if !read_screen_once(r) do return false
+		}
+		if r.h.stalled {
+			note(r, "the app has not answered for %.0f s: going on with the part of the screen read", us(t) / 1e6)
+		} else {
+			note(r, "the app answered again after %.0f ms", us(t) / 1000)
+		}
+	}
 	// Android, React Native: the first read after a settle, much slower than reads have been,
 	// was served by a main thread at work again. JavaScript can pause between the steps of a
 	// navigation, the settle ending in such a pause, then send the next one: the read shows the
@@ -3386,8 +3406,11 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	}
 	r.h.hash = hash
 	r.h.content = content
-	// iOS: a byte after the nodes, 1 when the screen differs from where the last settle ended.
-	r.h.unsettled = rd.off < len(rd.b) && rd_u8(&rd) == 1
+	// A byte after the nodes. iOS: 1 when the screen differs from where the last settle ended.
+	// Android: 1 when a window's app did not answer the read (read_screen).
+	flag := rd.off < len(rd.b) && rd_u8(&rd) == 1
+	r.h.unsettled = flag && r.dev.platform != .Android
+	r.h.stalled = flag && r.dev.platform == .Android
 	// Display size: the extent of the window roots, in the current orientation (it changes
 	// with setOrientation).
 	w, h: i32
@@ -3417,7 +3440,8 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	if r.debug {
 		first := ""
 		for i in r.h.order do if r.h.nodes[i].text != "" { first = r.h.nodes[i].text; break }
-		fmt.printf("      [read %.0f ms: %d nodes, %d roots, root0=%v first text %q]\n", us(t) / 1000, len(r.h.nodes), len(r.h.roots), r.h.nodes[r.h.roots[0]].class if len(r.h.roots) > 0 else "-", first)
+		fmt.printf("      [read %.0f ms: %d nodes, %d roots, root0=%v first text %q%s]\n", us(t) / 1000, len(r.h.nodes), len(r.h.roots), r.h.nodes[r.h.roots[0]].class if len(r.h.roots) > 0 else "-", first,
+			", in part: the app did not answer" if r.h.stalled else "")
 	}
 	trace_read(r, us(t) / 1000)
 	r.read_call, r.read_at = r.c.calls, time.tick_now()
@@ -3570,12 +3594,13 @@ trace_read :: proc(r: ^Runner, ms: f64) {
 		}
 	}
 	throttled := shape == t.read_shape && time.tick_since(t.read_at) < time.Second && time.tick_since(r.last_interaction) >= TRACE_EVERY_READ_AFTER_ACTION
-	if len(t.lines) > 0 && (r.h.content == t.read_content || throttled) {
+	if len(t.lines) > 0 && !r.h.stalled && (r.h.content == t.read_content || throttled) {
 		t.same_reads += 1
 		return
 	}
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "read %.0f ms: %d nodes", ms, len(r.h.nodes))
+	if r.h.stalled do fmt.sbprintf(&b, ", in part: the app did not answer")
 	if t.same_reads > 0 do fmt.sbprintf(&b, " (%d reads since the last read line)", t.same_reads)
 	shown := 0
 	first := make(map[string]bool, 10, context.temp_allocator)

@@ -831,6 +831,15 @@ Known differences in how, not what:
   just-booted simulator), the restart took 30-70 s and met the same errors. The agent's test
   overrides `record(_:)` to log issues instead (`XCTest issue (not recorded)`), and each
   request fails on its own. The agent's ISSUE op (52) makes XCTest record one, to check it.
+- Android, an app that doesn't answer: each accessibility call into a window whose UI thread
+  is blocked (an app hanging, an emulator the Mac starved of memory) waits 5 s and returns
+  nothing. The agent's walks stop at the first such call (`child`, `STALLED_CALL_MS`), and
+  SCREEN ends with a byte saying the read has that window in part; the host reads again until
+  the app answers (`STALLED_READ_MAX_MS`, 60 s, then it goes on with the part read). Before,
+  a walk went on, 5 s a node, and kept what it got: a read during an emulator stall took 355 s
+  and lacked a third of the screen, and during a 15 s freeze of a test app (`kill -STOP`
+  through `run-as`) a read without the app's window let `extendedWaitUntil: notVisible` pass
+  on a button still on screen.
 - Android's "… isn't responding" and "… keeps stopping" dialogs are answered on reads
   (`answer_error_dialog`; their buttons' ids, `android:id/aerr_wait` and
   `android:id/aerr_close`, are the same in every language), and the wait for a launched app

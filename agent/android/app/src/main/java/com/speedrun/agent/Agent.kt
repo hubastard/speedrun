@@ -73,10 +73,12 @@ internal object AgentLog {
  *        drawing: the view's drawing order among its siblings (higher: drawn over them)
  *        flags: 1 clickable, 2 enabled, 4 focused, 8 scrollable, 16 checked,
  *               32 visible to user, 64 selected
- *  10 SCREEN                                 -> u32 count, count * node
+ *  10 SCREEN                                 -> u32 count, count * node, u8 stalled
  *        every window (active one first, then status bar, dialogs, keyboard...), each root
  *        at depth 0, keeping only children the system reports visible to the user (all of
- *        a WebView's): the hierarchy flows' selectors match against.
+ *        a WebView's): the hierarchy flows' selectors match against. stalled = 1 when a
+ *        window's app did not answer an accessibility call (see child): that window is read
+ *        in part.
  *   6 FIND   str text                        -> u32 count, count * node
  *        nodes of the active window whose text or content description contains text,
  *        ignoring case, in document order (depth is 0). The app's own search: one round
@@ -198,6 +200,10 @@ private const val SWIPE_STEP_MS = 8 // one MOVE per ~120 Hz touch sample
 // A drag's lift waits this long after its moves (real time): over a frame, so the app handles
 // the moves and the lift in different frames, as a finger's.
 private const val SWIPE_LIFT_GAP_MS = 25L
+
+// An accessibility call the app doesn't answer returns empty after AccessibilityInteraction-
+// Client's 5 s timeout. One that took this long timed out (see child).
+private const val STALLED_CALL_MS = 4000L
 
 // A DOWN the system dropped (see touchDown) is put down again this often, for this long.
 private const val TOUCH_RETRY_MS = 30L
@@ -404,6 +410,32 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private fun isCompose(n: AccessibilityNodeInfo): Boolean =
         n.className?.startsWith("androidx.compose.ui.platform.") == true
 
+    // A walk of the tree met a call the app did not answer (child).
+    private var stalled = false
+
+    /**
+     * n's child i, noting in [stalled] a call the app did not answer: its UI thread blocked (an
+     * app hanging, a device starved of memory), each call waits 5 s and returns nothing. A walk
+     * that went on paid that for every node not fetched yet, and left out each one that failed:
+     * one read took 355 s and came back with 76 of the screen's ~108 nodes, which flows then
+     * matched against. Walks stop at a stalled call instead, and SCREEN says so (the host reads
+     * again until the app answers).
+     */
+    private fun child(n: AccessibilityNodeInfo, i: Int): AccessibilityNodeInfo? {
+        val t = SystemClock.uptimeMillis()
+        val c = n.getChild(i)
+        if (SystemClock.uptimeMillis() - t >= STALLED_CALL_MS) stalled = true
+        return c
+    }
+
+    /** A window's root, noting in [stalled] a call the app did not answer (see child). */
+    private fun rootOf(get: () -> AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        val t = SystemClock.uptimeMillis()
+        val root = get()
+        if (SystemClock.uptimeMillis() - t >= STALLED_CALL_MS) stalled = true
+        return root
+    }
+
     /** Root of the active window, waiting up to ~100 ms for one to appear. */
     private fun activeRoot(): AccessibilityNodeInfo? {
         for (i in 0 until 20) {
@@ -428,7 +460,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         val depths = ArrayDeque<Int>()
         nodes.addLast(root)
         depths.addLast(0)
-        while (nodes.isNotEmpty()) {
+        stalled = false
+        while (nodes.isNotEmpty() && !stalled) {
             val n = nodes.removeLast()
             val depth = depths.removeLast()
             writeNode(n, depth)
@@ -436,7 +469,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             if (!compose && isCompose(n)) compose = true
             // Push children in reverse so they pop in document order (pre-order DFS).
             for (i in n.childCount - 1 downTo 0) {
-                val c = n.getChild(i) ?: continue
+                val c = child(n, i) ?: continue
                 nodes.addLast(c)
                 depths.addLast(depth + 1)
             }
@@ -523,24 +556,35 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         walkCompose = false
         val seen = HashSet<Int>()
         val screen = Rect()
-        val active = ua.rootInActiveWindow
+        // Each window on its own: one whose app does not answer is read in part, the others
+        // (the status bar, an "isn't responding" dialog) in full.
+        var anyStalled = false
+        stalled = false
+        val active = rootOf { ua.rootInActiveWindow }
+        anyStalled = stalled
         if (active != null) {
             seen.add(active.windowId)
             active.getBoundsInScreen(screen)
             count += walkVisible(active)
+            anyStalled = anyStalled || stalled
         }
         val windows = try { ua.windows } catch (e: Exception) { emptyList() }
         for (w in windows) {
             if (!seen.add(w.id)) continue
-            val root = w.root ?: continue
+            stalled = false
+            val root = rootOf { w.root }
+            anyStalled = anyStalled || stalled
+            if (root == null) continue
             if (screen.isEmpty) root.getBoundsInScreen(screen)
             count += walkVisible(root)
+            anyStalled = anyStalled || stalled
         }
         count += writeToast(screen)
         composeShown = walkCompose
         tree.flush()
         body.writeInt(count)
         treeBuf.writeTo(body)
+        body.writeByte(if (anyStalled) 1 else 0)
     }
 
     /** walkVisible met Compose content (composeShown). */
@@ -555,7 +599,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         nodes.addLast(root)
         depths.addLast(0)
         inWebView.addLast(false)
-        while (nodes.isNotEmpty()) {
+        stalled = false
+        while (nodes.isNotEmpty() && !stalled) {
             val n = nodes.removeLast()
             val depth = depths.removeLast()
             // A WebView's content is often reported invisible, so keep all of it.
@@ -564,7 +609,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             count++
             if (!walkCompose && isCompose(n)) walkCompose = true
             for (i in n.childCount - 1 downTo 0) {
-                val c = n.getChild(i) ?: continue
+                val c = child(n, i) ?: continue
                 if (!web && !c.isVisibleToUser) continue
                 nodes.addLast(c)
                 depths.addLast(depth + 1)
@@ -949,11 +994,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         else {
             var found: AccessibilityNodeInfo? = null
             val nodes = ArrayDeque<AccessibilityNodeInfo>()
-            ua.rootInActiveWindow?.let { nodes.addLast(it) }
-            while (nodes.isNotEmpty() && found == null) {
+            stalled = false
+            rootOf { ua.rootInActiveWindow }?.let { nodes.addLast(it) }
+            while (nodes.isNotEmpty() && found == null && !stalled) {
                 val n = nodes.removeLast()
                 if (n.isFocused && n.isEditable) found = n
-                else for (i in 0 until n.childCount) nodes.addLast(n.getChild(i) ?: continue)
+                else for (i in 0 until n.childCount) nodes.addLast(child(n, i) ?: continue)
             }
             found
         }
@@ -1129,7 +1175,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val depths = ArrayDeque<Int>()
             nodes.addLast(root)
             depths.addLast(0)
-            while (nodes.isNotEmpty()) {
+            stalled = false
+            while (nodes.isNotEmpty() && !stalled) {
                 val n = nodes.removeLast()
                 val depth = depths.removeLast()
                 var id = (n.className?.toString()?.hashCode() ?: 0).toLong()
@@ -1149,7 +1196,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 ids.add(id)
                 states.add(st)
                 for (i in n.childCount - 1 downTo 0) {
-                    val c = n.getChild(i) ?: continue
+                    val c = child(n, i) ?: continue
                     if (!c.isVisibleToUser) continue
                     nodes.addLast(c)
                     depths.addLast(depth + 1)
