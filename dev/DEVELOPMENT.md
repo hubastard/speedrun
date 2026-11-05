@@ -25,7 +25,8 @@ what is still slow: `dev/TO_IMPROVE.md`.
   Two entry points share that logic (`Agent.kt`) and differ in how input is injected
   (`Injectors.kt`):
   - `ShellMain` (default): started with `app_process` as the shell user, which holds
-    `INJECT_EVENTS`, so taps go straight to the hidden input manager, async (~1 ms per tap).
+    `INJECT_EVENTS`, so taps go straight to the hidden input manager, async but for a
+    touch's DOWN, which waits for the input dispatcher to pick its window (~1 ms per tap).
     It builds its own `UiAutomation` the way `uiautomator dump` does.
   - `AgentInstrumentation` (fallback, `--instrument`): injects through
     `UiAutomation`, which syncs input transactions before DOWN and after UP (~60 ms per tap).
@@ -847,6 +848,21 @@ Known differences in how, not what:
   list holds the center (a modal bottom sheet at half height: the center was its top edge,
   Flutter Bench's sheet did not scroll); on Android a tenth of the way in from its edge, as
   long a drag as one from the center.
+- Android touches (`TAP`, `PRESS`, `SWIPE`) in another window than the last touch's wait for
+  window transitions first: a window that is opening takes no touches until its transition
+  ends, and the one under it none either (`InputDispatcher: No new touched window at (x, y)`).
+  Async, that injection went fine and the tap was reported done, the app never seeing it
+  (issue #9: an Activity's Button tapped ~230 ms into its open transition, API 35 on CI;
+  here with the transition scale at 5). The wait is `UiAutomation.syncInputTransactions(true)`
+  (hidden): the window manager waits until no transition or window animation runs (up to
+  5 s), then for the dispatcher to have the windows. UiAutomation's injection, which
+  UiAutomator and so Maestro use, does it before every DOWN and UP; it costs ~30 ms with
+  nothing running, hence only on a new window. Then the DOWN goes in wait-for-result mode,
+  and one the system dropped (`Dropping event because there is no touchable window`) goes
+  down again every 30 ms for up to 2 s. That alone does not catch it with gesture
+  navigation: a system spy window under every touch takes the DOWN, which counts as
+  delivered. The response carries the wait and the drops; the host notes them, and fails the
+  command when every DOWN was dropped.
 - Android `SWIPE` waits when its back-dated down time would come before the last event
   injected: Android 17's input verifier drops a gesture whose down time goes backwards
   ("Down time went backwards"), and one that starts, in event time, before the previous one

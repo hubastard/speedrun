@@ -27,6 +27,12 @@ interface Injector {
     val path: Int
     /** sync = return only once the app has handled the event (async otherwise). */
     fun inject(e: InputEvent, sync: Boolean = false)
+    /**
+     * Injects e and returns once the input dispatcher has picked the window it goes to (or,
+     * through UiAutomation, once the app has handled it): false when the system dropped it
+     * instead, as a touch where no window takes touches. Asynchronous injection can't tell.
+     */
+    fun deliver(e: InputEvent): Boolean
 }
 
 /** Unwraps reflection's InvocationTargetException so logs show the real error. */
@@ -53,24 +59,31 @@ class UiAutomationInjector(private val ua: UiAutomation) : Injector {
     override val path get() = if (fastInject != null) InjectPath.UI_AUTOMATION_FAST else InjectPath.UI_AUTOMATION
 
     override fun inject(e: InputEvent, sync: Boolean) {
+        send(e, sync)
+    }
+
+    // UiAutomation has no mode that waits for the dispatcher only: sync waits for the app too.
+    override fun deliver(e: InputEvent) = send(e, sync = true)
+
+    private fun send(e: InputEvent, sync: Boolean): Boolean {
         val m = fastInject
         if (m != null) {
             try {
-                m.invoke(ua, e, sync, false)
-                return
+                return m.invoke(ua, e, sync, false) as Boolean
             } catch (t: Throwable) {
                 AgentLog.w("fast injection unavailable, using public API: ${cause(t)}")
                 fastInject = null
             }
         }
-        ua.injectInputEvent(e, sync)
+        return ua.injectInputEvent(e, sync)
     }
 }
 
 /**
  * Straight to the hidden input manager, like scrcpy. Needs INJECT_EVENTS, which the shell
  * uid has (ShellMain). Async mode returns once the event is queued in the input dispatcher;
- * sync (wait-for-finish) once the app has handled it.
+ * wait-for-result (deliver) once the dispatcher has picked its window or dropped it; sync
+ * (wait-for-finish) once the app has handled it.
  * If the call throws (hidden method gone, permission denied) it logs once and hands this and
  * every later event to [fallback]. A refused event (false) is only logged: UiAutomation ends
  * up in the same InputManagerGlobal.injectInputEvent, so switching would not help.
@@ -100,8 +113,21 @@ class InputManagerInjector private constructor(
         fallback.inject(e, sync)
     }
 
+    override fun deliver(e: InputEvent): Boolean {
+        if (!failed) {
+            try {
+                return injectMethod.invoke(manager, e, INJECT_INPUT_EVENT_MODE_WAIT_FOR_RESULT) as Boolean
+            } catch (t: Throwable) {
+                AgentLog.w("InputManager injection failed; using UiAutomation injection from now on", cause(t))
+            }
+            failed = true
+        }
+        return fallback.deliver(e)
+    }
+
     companion object {
         private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
+        private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_RESULT = 1
         private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 2
 
         /** Null (with the reason logged) when the hidden API is not there. */

@@ -133,6 +133,14 @@ Action_Result :: struct {
 	prep_us:     u32, // active-window lookup + frame-stats clear on the device
 	inject_us:   u32, // DOWN + UP injection on the device
 	inject_path: Inject_Path,
+	// Android touches (TAP, PRESS, SWIPE): DOWNs the system dropped (no window took touches
+	// there: one opening) before it took one, and how long they held the touch off. untaken:
+	// it dropped every one, for 2 s. transition_us: how long the touch waited for window
+	// transitions (a new window active since the last touch).
+	dropped:       int,
+	dropped_us:    u32,
+	untaken:       bool,
+	transition_us: u32,
 }
 
 Conn :: struct {
@@ -402,6 +410,19 @@ read_action :: proc(body: []byte) -> (res: Action_Result, ok: bool) {
 	return res, r.ok
 }
 
+// A touch's response: read_action's fields, then (Android) the dropped DOWNs and the wait for
+// window transitions.
+read_touch :: proc(body: []byte) -> (res: Action_Result, ok: bool) {
+	res = read_action(body) or_return
+	if len(body) < 9 + 11 do return res, true // iOS, web: no such fields
+	r := Reader{b = body[9:], ok = true}
+	res.dropped = int(rd_u16(&r))
+	res.dropped_us = rd_u32(&r)
+	res.untaken = rd_u8(&r) == 0
+	res.transition_us = rd_u32(&r)
+	return res, r.ok
+}
+
 op_tap :: proc(c: ^Conn, x, y: i32) -> (res: Action_Result, ok: bool) {
 	req: [9]byte
 	req[0] = u8(Op.Tap)
@@ -410,7 +431,7 @@ op_tap :: proc(c: ^Conn, x, y: i32) -> (res: Action_Result, ok: bool) {
 	body: []byte
 	body, _, ok = call(c, req[:])
 	if !ok do return
-	return read_action(body)
+	return read_touch(body)
 }
 
 // The index of the node (in the last screen read) that a touch at x, y reaches, -1 for none;
@@ -455,7 +476,7 @@ op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32, fling := false, can
 	body: []byte
 	body, _, ok = call(c, req[:])
 	if !ok do return
-	return read_action(body)
+	return read_touch(body)
 }
 
 // Key events into the focused field; `skipped` characters had no key sequence.
@@ -493,7 +514,7 @@ op_press :: proc(c: ^Conn, x, y, hold_ms: i32) -> (res: Action_Result, ok: bool)
 	body: []byte
 	body, _, ok = call(c, req[:])
 	if !ok do return
-	return read_action(body)
+	return read_touch(body)
 }
 
 // iOS: count taps interval_ms apart in one gesture (each its own event record waits ~230 ms

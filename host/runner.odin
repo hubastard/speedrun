@@ -1126,13 +1126,13 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			if _, ok := op_taps(r.c, x, y, i32(d.repeat), i32(d.delay_ms)); !ok do return AGENT_LOST
 		} else do for i in 0 ..< d.repeat {
 			t := time.tick_now()
-			ok: bool
 			if d.long_press {
-				_, ok = op_press(r.c, x, y, long_press_ms(r))
+				res, ok := op_press(r.c, x, y, long_press_ms(r))
+				if !ok do return AGENT_LOST
+				touch_taken(r, res, x, y) or_return
 			} else {
-				ok = tap_at(r, x, y, frame)
+				tap_at(r, x, y, frame) or_return
 			}
-			if !ok do return AGENT_LOST
 			if d.repeat > 1 {
 				left := f64(d.delay_ms) - us(t) / 1000
 				if left > 0 do time.sleep(time.Duration(left * f64(time.Millisecond)))
@@ -1153,7 +1153,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			n := r.h.nodes[el]
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 			note(r, "a tap in a sheet changed nothing: tapping again")
-			if !tap_at(r, x, y, frame) do return AGENT_LOST
+			tap_at(r, x, y, frame) or_return
 			again := settle_status(r, d.settle_ms) or_return
 			status = again.status
 		}
@@ -1213,7 +1213,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				// predate its focus flag): that is no miss.
 				if same && moved && (typing_before || !typing(r)) {
 					x, y = nx + x - center.x, ny + y - center.y
-					if !tap_at(r, x, y, frame) do return AGENT_LOST
+					tap_at(r, x, y, frame) or_return
 					settle(r, d.settle_ms) or_return
 					read_since_tap = false
 					retapped = true
@@ -1243,7 +1243,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				f := field_of(r, el) if el >= 0 else -1
 				if f >= 0 && .Focused not_in r.h.nodes[f].flags && r.h.hash == before {
 					note(r, "the tap left the text field unfocused and the screen as it was: tapping it again")
-					if !tap_at(r, x, y, frame) do return AGENT_LOST
+					tap_at(r, x, y, frame) or_return
 					settle(r, d.settle_ms) or_return
 					read_since_tap = false
 				}
@@ -1271,7 +1271,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			time.sleep(time.Second)
 			if !read_screen(r) do return AGENT_LOST
 		}
-		if !tap_at(r, x, y, frame) do return AGENT_LOST
+		tap_at(r, x, y, frame) or_return
 		settle(r, d.settle_ms) or_return
 	}
 	return nil
@@ -1299,14 +1299,31 @@ frame_hold :: proc(r: ^Runner, unknown: bool, class: string) -> bool {
 }
 
 @(private = "file")
-tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> bool {
+tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> Err {
 	note(r, "tap at %d,%d%s", x, y, fmt.tprintf(" (held %d ms)", IOS_FRAME_TAP_MS) if frame else "")
+	res: Action_Result
+	ok: bool
 	if frame {
-		_, ok := op_press(r.c, x, y, IOS_FRAME_TAP_MS)
-		return ok
+		res, ok = op_press(r.c, x, y, IOS_FRAME_TAP_MS)
+	} else {
+		res, ok = op_tap(r.c, x, y)
 	}
-	_, ok := op_tap(r.c, x, y)
-	return ok
+	if !ok do return AGENT_LOST
+	return touch_taken(r, res, x, y)
+}
+
+// Android: a window that is opening, and the one it covers, take no touches until its
+// transition ends (issue #9: an Activity's Button tapped during its open transition did
+// nothing). The agent waits for transitions before a touch in a new window, and puts a finger
+// down the system dropped down again until it takes one, for up to 2 s. A touch it never took
+// fails the command: the app never saw it.
+touch_taken :: proc(r: ^Runner, res: Action_Result, x, y: i32) -> Err {
+	if res.transition_us > 0 do note(r, "a new window: waited %.0f ms for window transitions", f64(res.transition_us) / 1000)
+	if res.dropped == 0 do return nil
+	ms := f64(res.dropped_us) / 1000
+	if res.untaken do return fmt.aprintf("The touch at %d,%d never reached the app: for %.1f s the system dropped it, no window taking touches there (a window still opening, or the screen off)", x, y, ms / 1000, allocator = r.alloc)
+	note(r, "the system dropped %d touch%s at %d,%d, no window taking touches there (one opening): taken after %.0f ms", res.dropped, "" if res.dropped == 1 else "es", x, y, ms)
+	return nil
 }
 
 // The classes of node `el` and its ancestors, hashed.
@@ -2307,7 +2324,9 @@ swipe :: proc(r: ^Runner, c: ^Cmd, d: Swipe) -> Err {
 // Like `adb shell input swipe`: the content keeps the gesture's speed and flings.
 @(private = "file")
 swipe_points :: proc(r: ^Runner, x1, y1, x2, y2, duration: i32, settle_ms: Maybe(int)) -> Err {
-	if _, ok := op_swipe(r.c, x1, y1, x2, y2, duration, fling = true); !ok do return AGENT_LOST
+	res, ok := op_swipe(r.c, x1, y1, x2, y2, duration, fling = true)
+	if !ok do return AGENT_LOST
+	touch_taken(r, res, x1, y1) or_return
 	return settle(r, settle_ms)
 }
 

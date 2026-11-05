@@ -82,12 +82,20 @@ internal object AgentLog {
  *        ignoring case, in document order (depth is 0). The app's own search: one round
  *        trip instead of TREE's ~40 after a screen change. Text an app sets only through an
  *        accessibility delegate is not searched; fall back to TREE when FIND finds nothing.
- *   3 TAP    i32 x, i32 y                    -> u32 prep_us, u32 inject_us, u8 inject_path
+ *   3 TAP    i32 x, i32 y                    -> u32 prep_us, u32 inject_us, u8 inject_path,
+ *                                               u16 dropped, u32 dropped_us, u8 taken,
+ *                                               u32 transition_us
  *   4 KEY    i32 keycode                     -> u32 prep_us, u32 inject_us, u8 inject_path
  *        prep = active-window lookup + frame-stats clear; inject_path = see InjectPath
  *        (formerly fast_inject: 0 and 1 keep their meaning, 2 = shell-uid InputManager).
+ *        dropped = DOWNs the system dropped before one was taken (no window took touches
+ *        there: a window opening), dropped_us = how long they held the touch off, taken = 0
+ *        when it dropped them all for TOUCH_DROPPED_MAX_MS; transition_us = how long the
+ *        touch waited for window transitions, a new window being active (see touchDown).
  *   7 SWIPE  i32 x1, i32 y1, i32 x2, i32 y2, i32 duration_ms, i32 flags
- *                                            -> u32 prep_us, u32 inject_us, u8 inject_path
+ *                                            -> u32 prep_us, u32 inject_us, u8 inject_path,
+ *                                               u16 dropped, u32 dropped_us, u8 taken,
+ *                                               u32 transition_us
  *        a drag from (x1,y1) to (x2,y2) lasting duration_ms. flags & 1 (fling): lift at
  *        the end, like `adb shell input swipe`, so the content keeps its speed and flings.
  *        Otherwise the pointer stays still for SWIPE_HOLD_MS before lifting: no fling, the
@@ -95,7 +103,9 @@ internal object AgentLog {
  *        slop). flags & 2 (cancel): a CANCEL instead of the lift, which no scroll view flings
  *        on, but a paging list does not snap on either. The events carry those timestamps but
  *        are injected right away, ending now; only the first MOVE waits for the app (~1 frame).
- *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path
+ *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path,
+ *                                               u16 dropped, u32 dropped_us, u8 taken,
+ *                                               u32 transition_us
  *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u32 skipped, u8 focused
@@ -188,6 +198,10 @@ private const val SWIPE_STEP_MS = 8 // one MOVE per ~120 Hz touch sample
 // A drag's lift waits this long after its moves (real time): over a frame, so the app handles
 // the moves and the lift in different frames, as a finger's.
 private const val SWIPE_LIFT_GAP_MS = 25L
+
+// A DOWN the system dropped (see touchDown) is put down again this often, for this long.
+private const val TOUCH_RETRY_MS = 30L
+private const val TOUCH_DROPPED_MAX_NS = 2_000_000_000L
 
 // Quiet time needed after a UI-change accessibility event: apps send content-change and
 // scroll events at most every ~100 ms, so a shorter gap does not prove the UI stopped.
@@ -658,10 +672,105 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeByte(injector.path) // after injecting, so a fallback taken mid-action shows
     }
 
-    private fun tap(x: Float, y: Float) = timedAction {
-        val downTime = SystemClock.uptimeMillis()
-        injectMotion(touch(downTime, downTime, MotionEvent.ACTION_DOWN, x, y))
-        injectMotion(touch(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
+    private fun tap(x: Float, y: Float) {
+        timedAction {
+            val downTime = touchDown(x, y)
+            injectMotion(touch(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
+        }
+        writeTouch()
+    }
+
+    // The last touch's DOWNs the system dropped (touchDown), how long they held it off,
+    // whether it took one in the end, and how long it waited for window transitions.
+    private var dropped = 0
+    private var droppedNs = 0L
+    private var touchTaken = true
+    private var transitionNs = 0L
+
+    private fun writeTouch() {
+        body.writeShort(minOf(dropped, 0xFFFF))
+        body.writeInt((droppedNs / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        body.writeByte(if (touchTaken) 1 else 0)
+        body.writeInt((transitionNs / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+    }
+
+    // The active window at the last touch.
+    private var touchWindow = Int.MIN_VALUE
+
+    // UiAutomation.syncInputTransactions(waitForAnimations), hidden: with true, the window
+    // manager waits (up to 5 s) until no transition or window animation runs, then until the
+    // input dispatcher has the windows as they are. Null when missing.
+    private var syncInput: java.lang.reflect.Method? = try {
+        UiAutomation::class.java.getMethod("syncInputTransactions", java.lang.Boolean.TYPE)
+    } catch (t: Throwable) {
+        AgentLog.w("UiAutomation.syncInputTransactions(waitForAnimations) missing: touches don't wait for window transitions")
+        null
+    }
+
+    /**
+     * A touch in another window than the last one's waits for window transitions: a window
+     * that is opening, and the one it covers, take no touches until its transition ends, and a
+     * touch on either went to no window (issue #9). Only then, as the wait costs ~30 ms even
+     * with nothing running (the window manager hands the dispatcher its windows); UiAutomation's
+     * injection, which UiAutomator and Maestro use, waits so before every DOWN and UP.
+     */
+    private fun waitForTransitions() {
+        transitionNs = 0
+        if (actionWindow == touchWindow) return
+        val m = syncInput ?: return
+        val t = SystemClock.elapsedRealtimeNanos()
+        try {
+            m.invoke(ua, true)
+        } catch (e: Throwable) {
+            AgentLog.w("syncInputTransactions failed; touches don't wait for window transitions", cause(e))
+            syncInput = null
+            return
+        }
+        transitionNs = SystemClock.elapsedRealtimeNanos() - t
+        beginAction() // the settle measures from the touch, not from before the transition
+        touchWindow = actionWindow
+    }
+
+    /**
+     * Puts a finger down at x, y, stamped at() (now by default), and returns its down time. A
+     * window that is opening takes no touches until its transition lets it, and the one under
+     * it none either: the system drops a DOWN there ("no touchable window"), and its gesture
+     * with it, though injecting it went fine (issue #9: an Activity's Button tapped as it came
+     * in, ~230 ms into its open transition on API 35, did nothing). So the DOWN waits for the
+     * input dispatcher to pick its window, and one it dropped goes down again every
+     * TOUCH_RETRY_MS, for up to TOUCH_DROPPED_MAX_NS. The settle then measures from the DOWN
+     * it took. Waiting costs well under a millisecond when the dispatcher is idle. A touch
+     * can't always tell: with gesture navigation a system spy window under every touch takes
+     * the DOWN, and the dispatcher counts that as delivered. So a touch in a window that just
+     * came first waits for window transitions (waitForTransitions).
+     */
+    private fun touchDown(x: Float, y: Float, at: () -> Long = { SystemClock.uptimeMillis() }): Long {
+        dropped = 0
+        droppedNs = 0
+        touchTaken = true
+        waitForTransitions()
+        val start = SystemClock.elapsedRealtimeNanos()
+        while (true) {
+            val down = at()
+            val e = touch(down, down, MotionEvent.ACTION_DOWN, x, y)
+            lastEventTime = maxOf(lastEventTime, down)
+            touchTaken = injector.deliver(e)
+            e.recycle()
+            if (touchTaken) {
+                if (dropped > 0) beginAction()
+                return down
+            }
+            dropped++
+            droppedNs = SystemClock.elapsedRealtimeNanos() - start
+            // Ends the dropped gesture for an input verifier that counted its DOWN. Stamped at
+            // its down time, so a SWIPE's next DOWN, stamped in the past, comes after it.
+            injectMotion(touch(down, down, MotionEvent.ACTION_CANCEL, x, y))
+            if (droppedNs >= TOUCH_DROPPED_MAX_NS) {
+                AgentLog.w("the system dropped $dropped touches at $x,$y over ${droppedNs / 1_000_000} ms: no window takes touches there")
+                return down
+            }
+            Thread.sleep(TOUCH_RETRY_MS)
+        }
     }
 
     /**
@@ -708,7 +817,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // right after a swipe right).
     private var lastEventTime = 0L
 
-    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean, cancel: Boolean) = timedAction {
+    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean, cancel: Boolean) {
+        timedAction { drag(x1, y1, x2, y2, durationMs, fling, cancel) }
+        writeTouch()
+    }
+
+    private fun drag(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int, fling: Boolean, cancel: Boolean) {
         val duration = durationMs.coerceIn(0, 10_000)
         val hold = if (fling) 0 else SWIPE_HOLD_MS
         val dx = x2 - x1
@@ -719,8 +833,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             // with no movement (a swipe left read as a swipe down, 1 run in 3).
             val early = lastEventTime + 1 - SystemClock.uptimeMillis()
             if (early > 0) Thread.sleep(early)
-            val down = SystemClock.uptimeMillis()
-            injectMotion(touch(down, down, MotionEvent.ACTION_DOWN, x1, y1))
+            val down = touchDown(x1, y1)
+            if (!touchTaken) return
             val steps = maxOf(1, duration / SWIPE_STEP_MS)
             for (i in 1..steps) {
                 val f = i.toFloat() / steps
@@ -730,18 +844,18 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 injectMotion(touch(down, maxOf(at, SystemClock.uptimeMillis()), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f))
             }
             injectMotion(touch(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x2, y2))
-            return@timedAction
+            return
         }
         // Timestamps end now, so the app sees the gesture's speed without us waiting it out,
         // unless that would start it before the last gesture did (a tap just before).
         val early = lastEventTime + 1 - (SystemClock.uptimeMillis() - duration - hold)
         if (early > 0) Thread.sleep(early)
-        val down = SystemClock.uptimeMillis() - duration - hold
+        val down = touchDown(x1, y1) { SystemClock.uptimeMillis() - duration - hold }
+        if (!touchTaken) return
         fun move(f: Float, sync: Boolean = false) = injectMotion(
             touch(down, down + (duration * f).toLong(), MotionEvent.ACTION_MOVE, x1 + dx * f, y1 + dy * f),
             sync,
         )
-        injectMotion(touch(down, down, MotionEvent.ACTION_DOWN, x1, y1))
         // Two MOVEs just past touch slop, each handled by the app before the next (about a
         // frame each): a scrolling parent intercepts the gesture on the first, or on the
         // second when the view under the finger keeps it from intercepting until the finger
@@ -776,11 +890,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         injectMotion(touch(down, up, end, x2, y2))
     }
 
-    private fun press(x: Float, y: Float, holdMs: Int) = timedAction {
-        val down = SystemClock.uptimeMillis()
-        injectMotion(touch(down, down, MotionEvent.ACTION_DOWN, x, y))
-        Thread.sleep(holdMs.coerceIn(0, 60_000).toLong()) // the app's long-press timer runs in real time
-        injectMotion(touch(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
+    private fun press(x: Float, y: Float, holdMs: Int) {
+        timedAction {
+            val down = touchDown(x, y)
+            Thread.sleep(holdMs.coerceIn(0, 60_000).toLong()) // the app's long-press timer runs in real time
+            injectMotion(touch(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
+        }
+        writeTouch()
     }
 
     // 2x the 8 dp touch slop.
