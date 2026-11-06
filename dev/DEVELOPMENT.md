@@ -916,8 +916,11 @@ Known differences in how, not what:
   list holds the center (a modal bottom sheet at half height: the center was its top edge,
   Flutter Bench's sheet did not scroll); on Android a tenth of the way in from its edge, as
   long a drag as one from the center.
-- Android touches (`TAP`, `PRESS`, `SWIPE`) in another window than the last touch's wait for
-  window transitions first: a window that is opening takes no touches until its transition
+- Android touches (`TAP`, `PRESS`, `SWIPE`), keys, typing and erasing in another window than
+  the last input's wait for window transitions first (keys since v0.4.9: a key goes to the
+  focused window, which a closing one can still be; issue #9's reporter saw a second back
+  after one that closed a sheet's editor leave the sheet open, on v0.4.8, not reproduced
+  here): a window that is opening takes no touches until its transition
   ends, and the one under it none either (`InputDispatcher: No new touched window at (x, y)`).
   Async, that injection went fine and the tap was reported done, the app never seeing it
   (issue #9: an Activity's Button tapped ~230 ms into its open transition, API 35 on CI;
@@ -1182,9 +1185,19 @@ Known differences in how, not what:
   notes either). A window that takes the focus with no field starts an empty editor
   (`TYPE_NULL`): no field. Android 13 cannot empty the service's node cache (whose input
   focus can be the field before), so it does not wait. Backspace through the service waits
-  the same way: the connection it holds before is the field before's. On the emulator here
-  input has started by the time keys go (a wait of 0–7 ms right after a tap); not reproduced
-  locally, CI's emulator being slower.
+  the same way: the connection it holds before is the field before's (and is fetched again
+  before each press). On the emulator here input has started by the time keys go (a wait of
+  0–7 ms right after a tap); not reproduced locally, CI's emulator being slower.
+  One look-up per input start, and none while speedrun types: the service takes the field
+  the agent is typing into (provider `input`, until `typed`). A field whose app changes what
+  is typed (a length limit, upper case) restarts input on every key; v0.4.8 looked the field
+  up at each start, again every 16 ms for 300 ms while it found the same one, and an app with
+  a large tree then typed 55 characters in 40 s instead of 22 (Compose Bench's Form "Handle"
+  field: 3.8–4.4 s against 3.0–3.5 s; now 2.8–3.3 s). Compose reports the focus a frame or
+  more after it starts input, so the field found can be the one before: while the agent
+  waits, input that started on another field after its last touch (`since`) is looked at
+  again every 50 ms. Keeping the node cache while the service is up (Compose sending events
+  then) was tried and reverted: the lab's Compose screen missed "Count: 3".
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

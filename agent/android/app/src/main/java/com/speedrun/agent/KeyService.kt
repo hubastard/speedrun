@@ -32,12 +32,17 @@ import java.util.concurrent.Executors
  * wait for it ([awaitInput]).
  */
 class KeyService : AccessibilityService() {
-    // The field the system last started input on ([fieldOf] its node), or one of FIELD_*.
-    // Guarded by [lock], which is notified when it changes.
+    // The field the system last started input on ([fieldOf] its node), or one of FIELD_*, when,
+    // and how many starts and finishes there were. Guarded by [lock], notified when they change.
     private val lock = Object()
     private var started = FIELD_NONE
+    private var startedAt = 0L
     private var starts = 0
-    private var previous = FIELD_NONE // the field input last started on
+    // The field speedrun is typing into ([typing]): input that starts again meanwhile is on it.
+    // A field whose app changes what is typed (a length limit, upper case) restarts the
+    // keyboard's input on each key: a look-up each, into the app, slowed typing in an app with
+    // a large tree to ~0.8 s a key.
+    private var typingInto = FIELD_NONE
     private val lookups = Executors.newSingleThreadExecutor()
 
     // Input starts on a field when it takes the focus: the system tells the keyboard app and
@@ -48,50 +53,38 @@ class KeyService : AccessibilityService() {
             super.onStartInput(attribute, restarting)
             // A window that takes the focus with no text field in it starts an empty editor.
             val editor = attribute.inputType != InputType.TYPE_NULL
-            val n = synchronized(lock) {
-                started = if (editor) FIELD_LOOKING else FIELD_NONE
+            var lookUp = 0
+            synchronized(lock) {
+                starts++
+                startedAt = SystemClock.uptimeMillis()
+                started = when {
+                    !editor -> FIELD_NONE
+                    typingInto != FIELD_NONE -> typingInto
+                    else -> FIELD_LOOKING
+                }
+                if (started == FIELD_LOOKING) lookUp = starts
                 lock.notifyAll()
-                ++starts
             }
-            if (editor) lookups.execute { lookUp(n) }
+            if (lookUp != 0) lookups.execute { publish(lookUp, focusedField()) }
         }
 
         override fun onFinishInput() {
             super.onFinishInput()
             synchronized(lock) {
                 started = FIELD_NONE
+                typingInto = FIELD_NONE
                 starts++
                 lock.notifyAll()
             }
         }
     }
 
-    // The field input start [n] is on. Compose reports the focus a frame or more after it
-    // starts input: the field found can still be the one before, or none (the code field of
-    // the lab's form was found as the password field before it). Looked up again until it is
-    // another, [LOOK_UP_MS] at most, each find given out as it comes.
-    private fun lookUp(n: Int) {
-        val before = synchronized(lock) { previous }
-        val end = SystemClock.uptimeMillis() + LOOK_UP_MS
-        var field = focusedField()
-        if (!publish(n, field)) return
-        while ((field == before || field == FIELD_UNKNOWN) && SystemClock.uptimeMillis() < end) {
-            Thread.sleep(LOOK_UP_EVERY_MS)
-            val again = focusedField()
-            if (again == field) continue
-            field = again
-            if (!publish(n, field)) return
-        }
-        AgentLog.i("key service: input started on ${java.lang.Long.toHexString(field)}")
-    }
-
     // [field] as input start [n]'s, unless another start or a finish came since.
-    private fun publish(n: Int, field: Long): Boolean = synchronized(lock) {
-        if (starts != n) return false
-        started = field
-        if (field != FIELD_UNKNOWN) previous = field
-        lock.notifyAll()
-        true
+    private fun publish(n: Int, field: Long) = synchronized(lock) {
+        if (starts == n) {
+            started = field
+            lock.notifyAll()
+        }
     }
 
     private fun focusedField(): Long {
@@ -109,19 +102,35 @@ class KeyService : AccessibilityService() {
      * meet a keyboard that still takes the field as it was (on a slow emulator, the second
      * character of "sneaker" went in before the first: "nseaker"). Returns the milliseconds
      * waited, or -1 when it did not start. A field this service cannot tell (no input focus
-     * found as input started) is taken as the one.
+     * found as input started) is taken as the one. Compose reports the focus a frame or more
+     * after it starts input, so the field found then can be the one before (the lab's code
+     * field was found as the password field): input that started on another field after
+     * [since] (speedrun's last touch, uptime) is looked at again, every [LOOK_AGAIN_MS].
      */
-    fun awaitInput(field: Long, timeoutMs: Long): Long {
+    fun awaitInput(field: Long, since: Long, timeoutMs: Long): Long {
         val start = SystemClock.uptimeMillis()
-        synchronized(lock) {
-            while (true) {
-                val waited = SystemClock.uptimeMillis() - start
-                if (started == field || started == FIELD_UNKNOWN) return waited
-                if (waited >= timeoutMs) return -1
-                lock.wait(timeoutMs - waited)
+        var lookedAt = 0L
+        while (true) {
+            var lookAgain = 0
+            synchronized(lock) {
+                val now = SystemClock.uptimeMillis()
+                if (started == field || started == FIELD_UNKNOWN) return now - start
+                if (now - start >= timeoutMs) return -1
+                val another = started != FIELD_NONE && started != FIELD_LOOKING && startedAt >= since
+                if (another && now - lookedAt >= LOOK_AGAIN_MS) lookAgain = starts
+                else lock.wait(minOf(timeoutMs - (now - start), LOOK_AGAIN_MS))
+            }
+            if (lookAgain != 0) {
+                lookedAt = SystemClock.uptimeMillis()
+                publish(lookAgain, focusedField())
             }
         }
     }
+
+    /** speedrun types into [field] until [typed]. */
+    fun typing(field: Long) = synchronized(lock) { typingInto = field }
+
+    fun typed() = synchronized(lock) { typingInto = FIELD_NONE }
 
     override fun onServiceConnected() {
         instance = this
@@ -142,11 +151,22 @@ class KeyService : AccessibilityService() {
     // field's connection a moment after the field takes the focus: input on [field] is waited
     // for (the connection held until then is the field before's), then the connection, up to
     // [CONNECTION_WAIT_MS], asked for again after [ASK_AGAIN_MS]. False with none.
-    fun send(code: Int, count: Int, field: Long?): Boolean {
+    fun send(code: Int, count: Int, field: Long?, since: Long): Boolean {
         if (Build.VERSION.SDK_INT < 33) return false
-        if (field != null && awaitInput(field, INPUT_WAIT_MS) < 0) {
-            AgentLog.i("key service: no input started on the focused field in $INPUT_WAIT_MS ms")
+        if (field != null && Build.VERSION.SDK_INT >= 34) {
+            if (awaitInput(field, since, INPUT_WAIT_MS) < 0) {
+                AgentLog.i("key service: no input started on the focused field in $INPUT_WAIT_MS ms")
+            }
+            typing(field)
         }
+        try {
+            return sendKeys(code, count)
+        } finally {
+            typed()
+        }
+    }
+
+    private fun sendKeys(code: Int, count: Int): Boolean {
         val start = SystemClock.uptimeMillis()
         var ic = inputMethod?.currentInputConnection
         var asked = false
@@ -160,11 +180,13 @@ class KeyService : AccessibilityService() {
         }
         if (ic == null) return false
         repeat(count) {
+            // A field the app changes on each key restarts input, and with it the connection.
+            ic = inputMethod?.currentInputConnection ?: ic
             val t = SystemClock.uptimeMillis()
-            ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, FLAGS))
-            ic.sendKeyEvent(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, FLAGS))
+            ic!!.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, FLAGS))
+            ic!!.sendKeyEvent(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, FLAGS))
         }
-        ic.getSurroundingText(0, 0, 0)
+        (inputMethod?.currentInputConnection ?: ic)!!.getSurroundingText(0, 0, 0)
         return true
     }
 
@@ -191,8 +213,7 @@ class KeyService : AccessibilityService() {
         private const val FIELD_UNKNOWN = Long.MIN_VALUE + 1 // started, its field not found
         private const val FIELD_LOOKING = Long.MIN_VALUE + 2 // started, its field being looked up
         const val INPUT_WAIT_MS = 1000L
-        private const val LOOK_UP_MS = 300L
-        private const val LOOK_UP_EVERY_MS = 16L
+        private const val LOOK_AGAIN_MS = 50L
         private const val FLAGS = KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
         private const val CONNECTION_WAIT_MS = 1000L
         private const val ASK_AGAIN_MS = 200L
@@ -200,9 +221,10 @@ class KeyService : AccessibilityService() {
 }
 
 /**
- * The shell agent's way to [KeyService]: `call("keys", null, {code, count, field?})` -> {sent},
- * and `call("input", null, {field})` -> {waited} (milliseconds, -1: input did not start on the
- * field; absent: the service is not up, or Android 13). A call is a binder transaction, which SELinux lets the
+ * The shell agent's way to [KeyService]: `call("keys", null, {code, count, field?, since})` ->
+ * {sent}; `call("input", null, {field, since})` -> {waited} (milliseconds, -1: input did not
+ * start on the field; absent: the service is not up, or Android 13), then keys typed into the
+ * field until `call("typed")`; `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
  * shell user make into an app (as `content call` does); a local socket it does not. Only the
  * shell user and root may call.
  */
@@ -213,10 +235,11 @@ class KeyProvider : ContentProvider() {
         if (extras == null) return null
         val service = KeyService.instance
         val field = if (extras.containsKey("field")) extras.getLong("field") else null
+        val since = extras.getLong("since")
         return when (method) {
             "keys" -> {
                 val sent = try {
-                    service != null && service.send(extras.getInt("code"), extras.getInt("count").coerceIn(0, 10_000), field)
+                    service != null && service.send(extras.getInt("code"), extras.getInt("count").coerceIn(0, 10_000), field, since)
                 } catch (e: Exception) {
                     AgentLog.w("key service: send failed", e)
                     false
@@ -225,9 +248,12 @@ class KeyProvider : ContentProvider() {
             }
             "input" -> Bundle().apply { // Android 13 cannot tell the field (focusedField)
                 if (service != null && field != null && Build.VERSION.SDK_INT >= 34) {
-                    putLong("waited", service.awaitInput(field, KeyService.INPUT_WAIT_MS))
+                    putLong("waited", service.awaitInput(field, since, KeyService.INPUT_WAIT_MS))
+                    service.typing(field)
                 }
             }
+            "typed" -> Bundle().apply { service?.typed() }
+            "up" -> Bundle().apply { putBoolean("up", service != null) }
             else -> null
         }
     }

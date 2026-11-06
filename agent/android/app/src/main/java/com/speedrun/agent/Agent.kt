@@ -745,6 +745,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private var droppedNs = 0L
     private var touchTaken = true
     private var transitionNs = 0L
+    // The last touch's down time (uptime ms): input started before it can be the field before.
+    private var lastTouchDown = 0L
 
     private fun writeTouch() {
         body.writeShort(minOf(dropped, 0xFFFF))
@@ -753,8 +755,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt((transitionNs / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
     }
 
-    // The active window at the last touch.
-    private var touchWindow = Int.MIN_VALUE
+    // The active window at the last touch or key.
+    private var inputWindow = Int.MIN_VALUE
 
     // UiAutomation.syncInputTransactions(waitForAnimations), hidden: with true, the window
     // manager waits (up to 5 s) until no transition or window animation runs, then until the
@@ -762,32 +764,34 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private var syncInput: java.lang.reflect.Method? = try {
         UiAutomation::class.java.getMethod("syncInputTransactions", java.lang.Boolean.TYPE)
     } catch (t: Throwable) {
-        AgentLog.w("UiAutomation.syncInputTransactions(waitForAnimations) missing: touches don't wait for window transitions")
+        AgentLog.w("UiAutomation.syncInputTransactions(waitForAnimations) missing: input doesn't wait for window transitions")
         null
     }
 
     /**
-     * A touch in another window than the last one's waits for window transitions: a window
-     * that is opening, and the one it covers, take no touches until its transition ends, and a
-     * touch on either went to no window (issue #9). Only then, as the wait costs ~30 ms even
-     * with nothing running (the window manager hands the dispatcher its windows); UiAutomation's
-     * injection, which UiAutomator and Maestro use, waits so before every DOWN and UP.
+     * A touch or a key in another window than the last one's waits for window transitions: a
+     * window that is opening, and the one it covers, take no touches until its transition ends,
+     * and a touch on either went to no window (issue #9). A key goes to the focused window,
+     * which a closing window can still be: after a back closed a sheet's editor, the next back
+     * left the sheet open (issue #9's reporter, v0.4.8). Only then, as the wait costs ~30 ms
+     * even with nothing running (the window manager hands the dispatcher its windows);
+     * UiAutomation's injection, which UiAutomator and Maestro use, waits so before every event.
      */
     private fun waitForTransitions() {
         transitionNs = 0
-        if (actionWindow == touchWindow) return
+        if (actionWindow == inputWindow) return
         val m = syncInput ?: return
         val t = SystemClock.elapsedRealtimeNanos()
         try {
             m.invoke(ua, true)
         } catch (e: Throwable) {
-            AgentLog.w("syncInputTransactions failed; touches don't wait for window transitions", cause(e))
+            AgentLog.w("syncInputTransactions failed; input doesn't wait for window transitions", cause(e))
             syncInput = null
             return
         }
         transitionNs = SystemClock.elapsedRealtimeNanos() - t
-        beginAction() // the settle measures from the touch, not from before the transition
-        touchWindow = actionWindow
+        beginAction() // the settle measures from the input, not from before the transition
+        inputWindow = actionWindow
     }
 
     /**
@@ -817,6 +821,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             e.recycle()
             if (touchTaken) {
                 if (dropped > 0) beginAction()
+                lastTouchDown = down
                 return down
             }
             dropped++
@@ -963,7 +968,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // The second MOVE, past the first: the scroll a gesture held by the view under it loses.
     private val swipeSecondMovePx = 4 * Resources.getSystem().displayMetrics.density
 
-    private fun key(code: Int) = timedAction { pressKey(code) }
+    private fun key(code: Int) = timedAction {
+        waitForTransitions()
+        pressKey(code)
+    }
 
     private fun pressKey(code: Int) {
         if (code == KeyEvent.KEYCODE_DEL && keysThroughField(code, 1)) return
@@ -1003,12 +1011,14 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             }
         }
         timedAction {
+            waitForTransitions()
             if (skipped > 0 && insertText(text)) {
                 skipped = 0
                 return@timedAction
             }
             injectKeys(keys)
         }
+        if (input != 0) keyCall("typed", Bundle())
         body.writeInt(skipped)
         body.writeByte(if (field != null) 1 else 0)
         body.writeByte(input)
@@ -1100,6 +1110,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             putInt("code", code)
             putInt("count", count)
             putLong("field", KeyService.fieldOf(field))
+            putLong("since", lastTouchDown)
         }
         return keyCall("keys", extras)?.getBoolean("sent") == true
     }
@@ -1111,7 +1122,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      */
     private fun awaitFieldInput(field: AccessibilityNodeInfo): Long? {
         if (Build.VERSION.SDK_INT < 33) return null
-        val result = keyCall("input", Bundle().apply { putLong("field", KeyService.fieldOf(field)) }) ?: return null
+        val result = keyCall("input", Bundle().apply {
+            putLong("field", KeyService.fieldOf(field))
+            putLong("since", lastTouchDown)
+        }) ?: return null
         return if (result.containsKey("waited")) result.getLong("waited") else null
     }
 
@@ -1179,6 +1193,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // applies DELs asynchronously; without the wait, spare DELs (erasing more characters than
     // the field holds) could land after the next command's first typed characters.
     private fun erase(count: Int) = timedAction {
+        waitForTransitions()
         if (keysThroughField(KeyEvent.KEYCODE_DEL, count.coerceIn(0, 10_000))) return@timedAction
         val del = arrayOf(
             KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0),
