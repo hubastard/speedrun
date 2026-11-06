@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`9c77858`](https://github.com/hubastard/speedrun/commit/9c7785874c0fe4601d5c6dad560c1f1cc5802be8) Bench: three flows fit a shorter screen (keyboard over a lin | 2026-11-06 17:56 | 56.2 s | 45.5 s | 3.07 s | 3.95 s | 6.07 s | 9.21 s ▲ +16% |
 | [`91bae0e`](https://github.com/hubastard/speedrun/commit/91bae0ed2fd630e5b18e0e32c227544d462b0fa1) Bench: Compose Bench's README takes its first numbers, for v | 2026-11-06 17:29 | 46.4 s ▼ −16% | 40.5 s | 3.15 s | 3.74 s | 5.45 s | 8.06 s |
 | [`e60b138`](https://github.com/hubastard/speedrun/commit/e60b138c285948eb3cfcb683487ff2819e231881) Android: Compose content in a bottom sheet's or a dialog's w | 2026-11-06 17:19 | 55.7 s | 44.5 s | 3.14 s | 3.80 s | 5.47 s | 7.97 s |
 | [`180901f`](https://github.com/hubastard/speedrun/commit/180901ffc0ff39490b0262d4bba292242988aa58) Android: typed keys wait until the keyboard app has started  | 2026-11-06 17:11 | 58.1 s ▲ +20% | 51.8 s ▲ +18% | 3.08 s | 3.72 s | 5.60 s | 7.91 s |
