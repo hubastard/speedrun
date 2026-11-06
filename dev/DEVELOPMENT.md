@@ -18,8 +18,13 @@ what is still slow: `dev/TO_IMPROVE.md`.
   a read refreshes the root and the ~50 nodes fetched with it, and serves the others from
   the cache. Compose sends no events to a UiAutomation client (only while an accessibility
   service is enabled), so a Compose node removed stayed matched (issue #2): while the last
-  read showed Compose content (a `androidx.compose.ui.platform.` host view), each read
-  empties the cache first (`clearCache`, API 34+; setting the service info below). That
+  read showed Compose content (a `androidx.compose.ui.platform.` host view, or a node whose
+  extra data keys are Compose's, `androidx.compose.ui.semantics.id`), each read empties the
+  cache first (`clearCache`, API 34+; setting the service info below). A bottom sheet's, a
+  dialog's or a popup's window has no `ComposeView` (its host reads as a ViewGroup): issue
+  #9's app, a panel in such a window, read a dot that came on a tab and a row's detail
+  from the cache, never (3 ms reads of the same node count for 17 s; the key service of
+  v0.4.7 hid it, Compose sending events while a service is on). That
   costs the app building every node again, ~0.5 ms each (a 134-node screen: ~100 ms a
   read against ~10 ms cached; no prefetch strategy did better); View-based apps keep it.
   Two entry points share that logic (`Agent.kt`) and differ in how input is injected

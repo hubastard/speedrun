@@ -280,12 +280,17 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private val serviceInfo: AccessibilityServiceInfo = ua.serviceInfo
 
     /**
-     * The last read showed Compose content (its host view, ComposeView or AndroidComposeView).
+     * The last read showed Compose content: its host view (ComposeView), or a node Compose made
+     * (its extra data keys are Compose's, androidx.compose.ui.semantics.id). A bottom sheet's,
+     * a dialog's or a popup's window has no ComposeView: its host reads as a ViewGroup (issue
+     * #9: in an app's panel, a dot that came on a tab, and a row's detail, were never read).
      * Compose sends accessibility events only while an accessibility service is enabled, and a
      * UiAutomation client is none: nothing evicts its nodes from this client's node cache, and
      * a read refreshes only the root and the ~50 nodes fetched with it, serving the others as
      * they were (a node removed stays, as long as the views' sizes hold). While it shows, each
      * read starts from an empty cache (freshNodes); View-based apps send events, and keep it.
+     * The key service (KeyService.kt) is an enabled service: while it is on, Compose sends
+     * events too.
      */
     private var composeShown = false
 
@@ -416,7 +421,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     private fun isCompose(n: AccessibilityNodeInfo): Boolean =
-        n.className?.startsWith("androidx.compose.ui.platform.") == true
+        n.className?.startsWith("androidx.compose.ui.platform.") == true ||
+            n.availableExtraData.any { it.startsWith("androidx.compose.ui.semantics.") }
 
     // A walk of the tree met a call the app did not answer (child).
     private var stalled = false
