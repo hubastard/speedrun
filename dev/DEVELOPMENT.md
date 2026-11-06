@@ -174,6 +174,10 @@ what is still slow: `dev/TO_IMPROVE.md`.
 - `bench/flutter` — Flutter Bench, a Flutter app with the Flutter patterns test tools trip
   on (merged row labels, a modal bottom sheet's list, a TabBarView, keyboards without a
   Done key), and its 8 flows, on Android and iOS (`bench/flutter/bench.sh build|test`).
+- `bench/compose` — Compose Bench, a Jetpack Compose app (no other toolkit around it) with
+  the Compose patterns test tools trip on (a modal bottom sheet's list and an Activity started
+  from it, Material 3 tabs over a pager, text fields), and its 4 flows, on Android
+  (`bench/compose/bench.sh build|test`).
 - `bench/settings` — the Settings benchmark, `bench_scenario_android.yaml` and
   `bench_scenario_ios.yaml`: 14 commands per lap on Android's and iOS's Settings app
   (navigation two levels deep, scrolling both ways, text input), `-e TIMES=3` for three laps;
@@ -310,6 +314,7 @@ Maestro flow files run as they are:
 ./speedrun test dev/flows/features.yaml
 ./speedrun test -p ios bench/app/flows/        # the benchmark app's suite, on a simulator
 ./speedrun test bench/flutter/flows/           # Flutter Bench's (bench/flutter/bench.sh build first)
+./speedrun test bench/compose/flows/           # Compose Bench's (bench/compose/bench.sh build first)
 ```
 
 Speedrun picks a connected Android device, else the one booted simulator; `--platform` and
