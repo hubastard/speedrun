@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`e60b138`](https://github.com/hubastard/speedrun/commit/e60b138c285948eb3cfcb683487ff2819e231881) Android: Compose content in a bottom sheet's or a dialog's w | 2026-11-06 17:19 | 55.7 s | 44.5 s | 3.14 s | 3.80 s | 5.47 s | 7.97 s |
 | [`180901f`](https://github.com/hubastard/speedrun/commit/180901ffc0ff39490b0262d4bba292242988aa58) Android: typed keys wait until the keyboard app has started  | 2026-11-06 17:11 | 58.1 s ▲ +20% | 51.8 s ▲ +18% | 3.08 s | 3.72 s | 5.60 s | 7.91 s |
 | [`cd3c7d0`](https://github.com/hubastard/speedrun/commit/cd3c7d0b9dda8a00ec92d992df07560bc1afb096) Bench: Compose Bench, a plain Jetpack Compose app and its 4  | 2026-11-06 16:10 | 36.9 s ✗ 0/1 | 34.5 s ▼ −23% | 3.08 s | 3.80 s | 4.92 s | 7.35 s ▼ −16% |
 | [`69c1d08`](https://github.com/hubastard/speedrun/commit/69c1d08e1046eb742177c216747ad9a357d0cd2f) Android: Backspace and eraseText go through the focused fiel | 2026-11-06 01:46 | 54.1 s ▲ +26% | 45.7 s | 3.10 s | 3.90 s | 5.53 s | 8.80 s |
