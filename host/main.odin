@@ -479,9 +479,18 @@ op_swipe :: proc(c: ^Conn, x1, y1, x2, y2, duration_ms: i32, fling := false, can
 	return read_touch(body)
 }
 
+// Whether keys waited for the system to start input on the focused field (Android 14+: the
+// keyboard app is told of the field then).
+Field_Input :: enum u8 {
+	Unknown,   // not checked: before Android 14, the key service not up, iOS, the web
+	Started,   // input had started on it
+	Waited,    // it started after `input_wait_us`
+	Timed_Out, // it did not start in a second: typed anyway
+}
+
 // Key events into the focused field; `skipped` characters had no key sequence.
 // `focused`: a text field had the input focus (false: the keys went to whatever had it).
-op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Result, skipped: u32, focused: bool, ok: bool) {
+op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, ok: bool) {
 	body: []byte
 	body, _, ok = call(c, str_request(.Type, text, alloc))
 	if !ok do return
@@ -490,7 +499,12 @@ op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Re
 	r := Reader{b = body[9:], ok = true} // after prep_us, inject_us, inject_path
 	skipped = rd_u32(&r)
 	focused = rd_u8(&r) != 0
-	return res, skipped, focused, r.ok
+	if !r.ok do return res, skipped, focused, input, input_wait_us, false
+	if len(r.b) - r.off >= 5 { // Android's agent only
+		input = Field_Input(min(rd_u8(&r), u8(Field_Input.Timed_Out)))
+		input_wait_us = rd_u32(&r)
+	}
+	return res, skipped, focused, input, input_wait_us, r.ok
 }
 
 // `count` DEL presses.

@@ -209,8 +209,10 @@ what is still slow: `dev/TO_IMPROVE.md`.
   token in its environment, not its command line (`ps` shows those to every user). It serves
   one client at a time: one silent for 5 s, or announcing over 16 MB, is dropped.
 - The key service's provider (`com.speedrun.agent.keys`, exported, KeyService.kt) sends key
-  presses into the focused field: it serves the shell user and root only
-  (`Binder.getCallingUid()`), and the service is on only during a run.
+  presses into the focused field and says whether input has started on it: it serves the
+  shell user and root only (`Binder.getCallingUid()`), and the service is on only during a
+  run. The service reads window content only to find the focused field as input starts, and
+  hands nothing it reads to anyone.
 - The Android agent's `SHELL` is no shell: it splits the command on spaces and runs it, so a
   flow's values (an app id, a link) cannot add commands. Only `adb shell` strings go through
   a shell (launch arguments: quoted, `sh_quote`).
@@ -1139,7 +1141,8 @@ Known differences in how, not what:
   inputs flow failed at "Backspaces: 2", on every build and with `adb shell input keyevent`).
   UiAutomation gets no input connection: AccessibilityManagerService hands one only to bound
   services that ask for the input method APIs (`startInput` walks `mBoundServices`). So the
-  agent's APK has one, `KeyService` (`flagInputMethodEditor`, no events, no window content).
+  agent's APK has one, `KeyService` (`flagInputMethodEditor`, no events; window content to
+  find which field input started on, below).
   At start the host installs the APK (`cmd package install`, when the installed one differs
   from the pushed one) and adds the service to `enabled_accessibility_services`
   (`accessibility_enabled` 1); `device_stop` puts both back as it found them. Right after an
@@ -1161,6 +1164,22 @@ Known differences in how, not what:
   instrumentation agent), keys are injected as before. Checked on API 36.1 (Gboard 15) and
   API 37 (Gboard 18): React Native, Flutter and Compose fields; bench/app's 21 flows took the
   same time with the service on (402 s against 407 s, each flow within 2 s).
+- Typed keys wait for the system to start input on the focused field (Android 14 and later).
+  Keys reach the app through the keyboard app, which learns of a field when input starts on
+  it: keys typed before met a keyboard that took the field as it was. On CI (API 35, Gboard
+  14), `inputText: sneaker` 120 ms after the tap on an empty search field left "nseaker": the
+  "s" went in, then the "n" landed at the cursor the keyboard was told of, 0. The system
+  tells the key service of each input start along with the keyboard app (`onStartInput`);
+  the service then finds the field with the input focus (window content, its node cache
+  emptied first) and keeps its node's identity (window id, `hashCode`: the same from any
+  client). TYPE gives the provider the focused field's identity, and the service holds the
+  call until input has started on it (1 s at most, then the keys go anyway; SPEEDRUN_DEBUG
+  notes either). A window that takes the focus with no field starts an empty editor
+  (`TYPE_NULL`): no field. Android 13 cannot empty the service's node cache (whose input
+  focus can be the field before), so it does not wait. Backspace through the service waits
+  the same way: the connection it holds before is the field before's. On the emulator here
+  input has started by the time keys go (a wait of 0–7 ms right after a tap); not reproduced
+  locally, CI's emulator being slower.
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

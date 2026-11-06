@@ -877,8 +877,12 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 }
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
-	res, skipped, focused, ok := op_type(r.c, text, r.alloc)
+	res, skipped, focused, input, input_wait_us, ok := op_type(r.c, text, r.alloc)
 	if !ok do return AGENT_LOST
+	#partial switch input {
+	case .Waited:    note(r, "typing waited %d ms for the keyboard to start on the field", input_wait_us / 1000)
+	case .Timed_Out: note(r, "the keyboard did not start on the field in %d ms: typed anyway", input_wait_us / 1000)
+	}
 	if !focused {
 		note(r, "no text field had the input focus")
 		r.warning = "No text field had the input focus, so the text may have gone nowhere: did the tap on the field before it land?"

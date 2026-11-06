@@ -114,13 +114,17 @@ internal object AgentLog {
  *                                               u32 transition_us
  *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
- *                                               u32 skipped, u8 focused
+ *                                               u32 skipped, u8 focused, u8 input,
+ *                                               u32 input_wait_us
  *        key events into the focused field (virtual keyboard map, like `adb shell input
  *        text`). Text with a character no key produces (most non-ASCII) is inserted at the
  *        focused field's cursor instead, whole (insertText). skipped = characters not typed:
  *        those with no key sequence when no editable field has the input focus. focused = 1
  *        when an editable field had the input focus as typing began (0: the keys went to
- *        whatever had it).
+ *        whatever had it). Keys wait for the system to start input on that field first (the
+ *        keyboard app is told of it then; keys before met a keyboard that took the field as
+ *        it was): input = 0 not known (before Android 14, the key service not up), 1 started
+ *        already, 2 started after input_wait_us, 3 did not start in a second (typed anyway).
  *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        count DEL key presses.
  *  12 MARK                                   -> (empty)
@@ -966,18 +970,33 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private fun type(text: String) {
         var skipped = 0
-        val focused = inputFocus() != null
-        timedAction {
-            val keys = ArrayList<Array<KeyEvent>>()
-            for (ch in text) {
-                val events = keyMap.getEvents(charArrayOf(ch))
-                if (events == null) {
-                    skipped++
-                    continue
-                }
-                for (e in events) e.source = InputDevice.SOURCE_KEYBOARD
-                keys += events
+        val keys = ArrayList<Array<KeyEvent>>()
+        for (ch in text) {
+            val events = keyMap.getEvents(charArrayOf(ch))
+            if (events == null) {
+                skipped++
+                continue
             }
+            for (e in events) e.source = InputDevice.SOURCE_KEYBOARD
+            keys += events
+        }
+        if (Build.VERSION.SDK_INT >= 34) ua.clearCache() // the focus as it is now, not as cached
+        val field = inputFocus()
+        // Keys go through the keyboard app: it must have been told of the field first.
+        var input = 0
+        var inputWaitNs = 0L
+        if (field != null && skipped == 0 && keys.isNotEmpty()) {
+            val t = SystemClock.elapsedRealtimeNanos()
+            val waited = awaitFieldInput(field)
+            inputWaitNs = SystemClock.elapsedRealtimeNanos() - t
+            input = when {
+                waited == null -> 0
+                waited < 0 -> 3
+                waited > 0 -> 2
+                else -> 1
+            }
+        }
+        timedAction {
             if (skipped > 0 && insertText(text)) {
                 skipped = 0
                 return@timedAction
@@ -985,7 +1004,9 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             injectKeys(keys)
         }
         body.writeInt(skipped)
-        body.writeByte(if (focused) 1 else 0)
+        body.writeByte(if (field != null) 1 else 0)
+        body.writeByte(input)
+        body.writeInt((inputWaitNs / 1000).toInt())
     }
 
     /**
@@ -1066,37 +1087,56 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      * ActivityManager.getContentProviderExternal, IContentProvider.call).
      */
     private fun keysThroughField(code: Int, count: Int): Boolean {
-        if (Build.VERSION.SDK_INT < 33 || inputFocus() == null) return false
+        if (Build.VERSION.SDK_INT < 33) return false
+        if (Build.VERSION.SDK_INT >= 34) ua.clearCache()
+        val field = inputFocus() ?: return false
+        val extras = Bundle().apply {
+            putInt("code", code)
+            putInt("count", count)
+            putLong("field", KeyService.fieldOf(field))
+        }
+        return keyCall("keys", extras)?.getBoolean("sent") == true
+    }
+
+    /**
+     * Milliseconds the key service waited for the system to start input on [field] (0: it had),
+     * -1 when it did not start in KeyService.INPUT_WAIT_MS, null when the service is not up or
+     * cannot tell (Android 13).
+     */
+    private fun awaitFieldInput(field: AccessibilityNodeInfo): Long? {
+        if (Build.VERSION.SDK_INT < 33) return null
+        val result = keyCall("input", Bundle().apply { putLong("field", KeyService.fieldOf(field)) }) ?: return null
+        return if (result.containsKey("waited")) result.getLong("waited") else null
+    }
+
+    /** A call to the key service's provider (KeyProvider), null when it cannot be reached. */
+    private fun keyCall(method: String, extras: Bundle): Bundle? {
+        if (Build.VERSION.SDK_INT < 33) return null
         repeat(2) { // a second try with the provider looked up again: its process may have restarted
             val provider = keyProvider ?: try {
                 val am = Class.forName("android.app.ActivityManager").getMethod("getService").invoke(null)!!
                 val holder = am.javaClass.getMethod(
                     "getContentProviderExternal", String::class.java, Int::class.javaPrimitiveType,
                     IBinder::class.java, String::class.java,
-                ).invoke(am, KeyProvider.AUTHORITY, 0, Binder(), "speedrun") ?: return false
+                ).invoke(am, KeyProvider.AUTHORITY, 0, Binder(), "speedrun") ?: return null
                 holder.javaClass.getField("provider").get(holder)
             } catch (e: Throwable) {
                 AgentLog.w("key provider: not found", cause(e))
-                return false
-            } ?: return false
+                return null
+            } ?: return null
             keyProvider = provider
             try {
-                val extras = Bundle().apply {
-                    putInt("code", code)
-                    putInt("count", count)
-                }
                 val source = AttributionSource.Builder(SHELL_UID).setPackageName("com.android.shell").build()
-                val result = provider.javaClass.getMethod(
+                return provider.javaClass.getMethod(
                     "call", AttributionSource::class.java, String::class.java, String::class.java,
                     String::class.java, Bundle::class.java,
-                ).invoke(provider, source, KeyProvider.AUTHORITY, "keys", null, extras) as Bundle?
-                return result?.getBoolean("sent") == true
+                ).invoke(provider, source, KeyProvider.AUTHORITY, method, null, extras) as Bundle?
             } catch (e: Throwable) {
                 AgentLog.w("key provider: call failed", cause(e))
                 keyProvider = null
             }
         }
-        return false
+        return null
     }
 
     /**

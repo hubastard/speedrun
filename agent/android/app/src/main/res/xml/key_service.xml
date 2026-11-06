@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- KeyService: no events, no window content; only the input method APIs (Android 13+). -->
+<!-- KeyService: no events; the input method APIs (Android 13+), and window content to find
+     which field input started on (the field with the input focus then). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityFlags="flagInputMethodEditor"
+    android:canRetrieveWindowContent="true"
     android:description="@string/key_service_description"
     android:isAccessibilityTool="true" />
