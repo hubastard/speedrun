@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`69c1d08`](https://github.com/hubastard/speedrun/commit/69c1d08e1046eb742177c216747ad9a357d0cd2f) Android: Backspace and eraseText go through the focused fiel | 2026-11-06 01:46 | 54.1 s ▲ +26% | 45.7 s | 3.10 s | 3.90 s | 5.53 s | 8.80 s |
 | [`5b64fc4`](https://github.com/hubastard/speedrun/commit/5b64fc463c52bd884722cf8bf471e2e80486a642) openLink settles on the link's screen; Android: an element's | 2026-11-05 14:49 | 42.9 s | 44.0 s | 3.17 s | 3.86 s | 5.92 s | 8.73 s |
 
 - [Journey, Android](ci-journey-android.md)
