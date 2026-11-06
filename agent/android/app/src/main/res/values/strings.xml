@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="key_service_description">Turned on by speedrun during a test run, and off after it: sends key presses through the focused field, as a keyboard does.</string>
+</resources>

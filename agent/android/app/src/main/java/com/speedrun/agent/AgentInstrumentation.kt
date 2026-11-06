@@ -2,6 +2,7 @@ package com.speedrun.agent
 
 import android.app.Activity
 import android.app.Instrumentation
+import android.app.UiAutomation
 import android.os.Bundle
 
 /**
@@ -28,7 +29,7 @@ class AgentInstrumentation : Instrumentation() {
     override fun onStart() {
         super.onStart()
         try {
-            val ua = uiAutomation
+            val ua = getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES) // KeyService stays on
             val injector = UiAutomationInjector(ua)
             AgentLog.i("injection path: ${InjectPath.describe(injector.path)}")
             Agent(ua, injector).serve(port, token)

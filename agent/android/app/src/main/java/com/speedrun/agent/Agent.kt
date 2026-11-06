@@ -2,10 +2,14 @@ package com.speedrun.agent
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
+import android.content.AttributionSource
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.Binder
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.SystemClock
@@ -952,6 +956,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     private fun key(code: Int) = timedAction { pressKey(code) }
 
     private fun pressKey(code: Int) {
+        if (code == KeyEvent.KEYCODE_DEL && keysThroughField(code, 1)) return
         val t = SystemClock.uptimeMillis()
         injector.inject(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0))
         injector.inject(KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0))
@@ -1048,6 +1053,52 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         }
     }
 
+    private var keyProvider: Any? = null
+
+    /**
+     * Key presses through the focused field's input connection, as a keyboard sends them, by
+     * the key service (KeyService.kt): false when no editable field has the input focus, or the
+     * service is not up (before Android 13, or not turned on), and the keys are injected
+     * instead. A Backspace injected as a hardware key deletes, but React Native's onKeyPress
+     * fires only when the keyboard app turns it into an input connection call (Gboard 18 does,
+     * Gboard 15 does not); through the connection, it fires whatever the keyboard.
+     * The service is asked through its content provider, as `content call` does (hidden API:
+     * ActivityManager.getContentProviderExternal, IContentProvider.call).
+     */
+    private fun keysThroughField(code: Int, count: Int): Boolean {
+        if (Build.VERSION.SDK_INT < 33 || inputFocus() == null) return false
+        repeat(2) { // a second try with the provider looked up again: its process may have restarted
+            val provider = keyProvider ?: try {
+                val am = Class.forName("android.app.ActivityManager").getMethod("getService").invoke(null)!!
+                val holder = am.javaClass.getMethod(
+                    "getContentProviderExternal", String::class.java, Int::class.javaPrimitiveType,
+                    IBinder::class.java, String::class.java,
+                ).invoke(am, KeyProvider.AUTHORITY, 0, Binder(), "speedrun") ?: return false
+                holder.javaClass.getField("provider").get(holder)
+            } catch (e: Throwable) {
+                AgentLog.w("key provider: not found", cause(e))
+                return false
+            } ?: return false
+            keyProvider = provider
+            try {
+                val extras = Bundle().apply {
+                    putInt("code", code)
+                    putInt("count", count)
+                }
+                val source = AttributionSource.Builder(SHELL_UID).setPackageName("com.android.shell").build()
+                val result = provider.javaClass.getMethod(
+                    "call", AttributionSource::class.java, String::class.java, String::class.java,
+                    String::class.java, Bundle::class.java,
+                ).invoke(provider, source, KeyProvider.AUTHORITY, "keys", null, extras) as Bundle?
+                return result?.getBoolean("sent") == true
+            } catch (e: Throwable) {
+                AgentLog.w("key provider: call failed", cause(e))
+                keyProvider = null
+            }
+        }
+        return false
+    }
+
     /**
      * Text no key events can type: replaces the focused field's selection (the cursor), and
      * the cursor goes after it, as an input method's commitText would. One accessibility
@@ -1082,6 +1133,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // applies DELs asynchronously; without the wait, spare DELs (erasing more characters than
     // the field holds) could land after the next command's first typed characters.
     private fun erase(count: Int) = timedAction {
+        if (keysThroughField(KeyEvent.KEYCODE_DEL, count.coerceIn(0, 10_000))) return@timedAction
         val del = arrayOf(
             KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0),
             KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0),

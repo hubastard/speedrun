@@ -111,6 +111,8 @@ Device :: struct {
 	motion_writer:  os.Process, // iOS: the `defaults write` setting it, while motion_writing
 	motion_writing: bool,
 	scales_was:     string, // Android: the three animation scales as found (device_prepare), "" when as wanted
+	keys_on:        bool, // Android: this run turned the key service on (key_service_on)
+	a11y_was:       string, // Android: accessibility_enabled as found, when the key service changed it
 }
 
 // The device adb talks to (--device); empty: adb's default (ANDROID_SERIAL, or the only one).
@@ -299,6 +301,62 @@ restore_scales :: proc(d: ^Device) -> string {
 	return strings.to_string(b)
 }
 
+// The agent's key service (KeyService.kt), which sends Backspace through the focused field's
+// input connection, as a keyboard does: on Android 13 and later, the APK is installed (once a
+// build) and the service turned on for the run, and off again by device_stop. Where it cannot
+// be, keys are injected as before, so a failure is only logged.
+KEY_SERVICE :: AGENT_PACKAGE + "/.KeyService"
+
+@(private = "file")
+key_service_on :: proc(d: ^Device, verbose: bool) {
+	// Right after an install, the system can drop the service from the list (it read the list
+	// before it knew the package's service): until it is bound, it is put back.
+	// Concatenated, not formatted: fmt reads the shell's braces.
+	apk := device_apk()
+	script := strings.concatenate({
+		`[ "$(getprop ro.build.version.sdk)" -ge 33 ] || exit 0; new=0; `,
+		`i=$(cmd package path `, AGENT_PACKAGE, ` 2>/dev/null | head -n 1); i=${i#package:}; `,
+		`if [ -z "$i" ] || ! cmp -s "$i" `, apk, `; then cmd package install -r -t `, apk, ` > /dev/null || exit 1; new=1; fi; `,
+		`on() { s=$(cmd settings get secure enabled_accessibility_services); case ":$s:" in *:`, KEY_SERVICE, `:*) return;; esac; `,
+		`if [ -z "$s" ] || [ "$s" = null ]; then s=`, KEY_SERVICE, `; else s="$s:`, KEY_SERVICE, `"; fi; `,
+		`cmd settings put secure enabled_accessibility_services "$s"; }; `,
+		`echo "a11y $(cmd settings get secure accessibility_enabled)"; on; cmd settings put secure accessibility_enabled 1; `,
+		`n=0; while [ $new = 1 ] && [ $n -lt 30 ] && ! dumpsys accessibility | grep -q 'Speedrun keys'; do sleep 0.1; on; n=$((n + 1)); done`,
+	}, context.temp_allocator)
+	out, ok := adb("shell", script)
+	if !ok {
+		if verbose do fmt.printf("  the key service could not be turned on: %s\n", strings.trim_space(out))
+		return
+	}
+	for line in strings.split_lines(out, context.temp_allocator) {
+		if !strings.has_prefix(line, "a11y ") do continue
+		d.keys_on = true
+		if was := strings.trim_space(line[len("a11y "):]); was != "1" do d.a11y_was = strings.clone(was)
+	}
+}
+
+// The shell commands that turn the key service off again, as key_service_on found things.
+@(private = "file")
+key_service_off :: proc(d: ^Device) -> string {
+	if !d.keys_on do return ""
+	d.keys_on = false
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b,
+		`s=$(cmd settings get secure enabled_accessibility_services | tr ':' '\n' | grep -vx '%s' | paste -s -d : -); ` +
+		`if [ -z "$s" ] || [ "$s" = null ]; then cmd settings delete secure enabled_accessibility_services > /dev/null; ` +
+		`else cmd settings put secure enabled_accessibility_services "$s"; fi; `,
+		KEY_SERVICE,
+	)
+	switch d.a11y_was {
+	case "":
+	case "null": strings.write_string(&b, "cmd settings delete secure accessibility_enabled > /dev/null; ")
+	case "0":    strings.write_string(&b, "cmd settings put secure accessibility_enabled 0; ")
+	}
+	if d.a11y_was != "" do delete(d.a11y_was)
+	d.a11y_was = ""
+	return strings.to_string(b)
+}
+
 // The agent on the device, named by content so a rebuilt agent is pushed again.
 device_apk :: proc() -> string {
 	return fmt.tprintf("/data/local/tmp/speedrun-agent-%08x.apk", AGENT_APK_CRC)
@@ -447,6 +505,7 @@ device_start :: proc(d: ^Device, verbose := false) -> (err: string) {
 			if e := write_local_apk(d); e != "" do return e
 			if out, ok := adb("push", d.local_apk, device_apk()); !ok do return out
 		}
+		key_service_on(d, verbose)
 		log, ok := start_shell_agent(d)
 		if verbose && ok {
 			for l in strings.split_lines(strings.trim_space(log), context.temp_allocator) do fmt.printf("  agent: %s\n", l)
@@ -505,7 +564,7 @@ device_stop :: proc(d: ^Device) {
 		current = nil
 		return
 	}
-	stop_agent(d, restore_scales(d))
+	stop_agent(d, strings.concatenate({restore_scales(d), key_service_off(d)}, context.temp_allocator))
 	if d.forwarded {
 		adb("forward", "--remove", fmt.tprintf("tcp:%d", d.local_port))
 		d.forwarded, d.local_port = false, 0

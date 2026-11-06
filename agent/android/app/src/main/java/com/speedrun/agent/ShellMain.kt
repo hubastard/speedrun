@@ -71,7 +71,9 @@ object ShellMain {
         val ua = UiAutomation::class.java
             .getConstructor(Looper::class.java, Class.forName("android.app.IUiAutomationConnection"))
             .newInstance(thread.looper, connection)
-        UiAutomation::class.java.getMethod("connect").invoke(ua)
+        // Other accessibility services stay on: speedrun's key service (KeyService.kt) among them.
+        UiAutomation::class.java.getMethod("connect", Int::class.javaPrimitiveType)
+            .invoke(ua, UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
         AgentLog.i("UiAutomation connected")
         return ua
     }

@@ -204,6 +204,9 @@ what is still slow: `dev/TO_IMPROVE.md`.
   `session.json`. The session folder is 0700 and its files 0600; `session serve` gets the
   token in its environment, not its command line (`ps` shows those to every user). It serves
   one client at a time: one silent for 5 s, or announcing over 16 MB, is dropped.
+- The key service's provider (`com.speedrun.agent.keys`, exported, KeyService.kt) sends key
+  presses into the focused field: it serves the shell user and root only
+  (`Binder.getCallingUid()`), and the service is on only during a run.
 - The Android agent's `SHELL` is no shell: it splits the command on spaces and runs it, so a
   flow's values (an app id, a link) cannot add commands. Only `adb shell` strings go through
   a shell (launch arguments: quoted, `sh_quote`).
@@ -1123,6 +1126,36 @@ Known differences in how, not what:
   for the app: to lose a key, the app would have to slow down past 600 ms a key within a
   chunk. Waiting for every key works too but costs ~12 ms a key (52 characters: 1.5 s
   instead of 0.9 s); the chunks cost about 12 ms each.
+- **Backspace goes through the focused field's input connection** (`pressKey: Backspace`,
+  `eraseText`; Android 13 and later), as a keyboard sends it. React Native's `onKeyPress`
+  hears only the input connection: a DEL injected as a hardware key deleted, but fired
+  nothing unless the keyboard app turned it into a call on the connection. Gboard 18 does
+  (the API 37 Play image), Gboard 15 does not (the API 36.1 Google APIs image: bench/app's
+  inputs flow failed at "Backspaces: 2", on every build and with `adb shell input keyevent`).
+  UiAutomation gets no input connection: AccessibilityManagerService hands one only to bound
+  services that ask for the input method APIs (`startInput` walks `mBoundServices`). So the
+  agent's APK has one, `KeyService` (`flagInputMethodEditor`, no events, no window content).
+  At start the host installs the APK (`cmd package install`, when the installed one differs
+  from the pushed one) and adds the service to `enabled_accessibility_services`
+  (`accessibility_enabled` 1); `device_stop` puts both back as it found them. Right after an
+  install the system can drop it from that list (1 of 2 tries): until `dumpsys accessibility`
+  shows it bound, it is put back (3 s at most). The host builds that script by concatenation:
+  `fmt` reads the shell's braces (`${i#package:}` came out mangled, so every run reinstalled
+  the APK and hit that race). The agent
+  connects its UiAutomation with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, or the service
+  would be unbound while it runs. It asks the service through its content provider
+  (`KeyProvider`, `getContentProviderExternal` then `IContentProvider.call`, as `content call`
+  does): SELinux denies the shell user `connectto` on an app's local socket, not a binder
+  call. Each press is a DOWN and an UP through the connection, with the soft keyboard's
+  flags, then `getSurroundingText`, which the app answers once it has handled them. The
+  connection comes a moment after a field takes the focus: the service waits for it (1 s at
+  most), and after 200 ms asks for the input method APIs again (the flag off, then on), which
+  binds it to the input under way within ~10 ms (forced on every press: 3 of 3). Once, in a
+  session started as the APK was being reinstalled, the service got no input at all. With no
+  focused editable field, or no service (before Android 13, the install refused, the
+  instrumentation agent), keys are injected as before. Checked on API 36.1 (Gboard 15) and
+  API 37 (Gboard 18): React Native, Flutter and Compose fields; bench/app's 21 flows took the
+  same time with the service on (402 s against 407 s, each flow within 2 s).
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

@@ -4,7 +4,26 @@
     <!-- Needed for the localhost socket the host connects to through `adb forward`. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <application android:label="Speedrun Agent" />
+    <application android:label="Speedrun Agent">
+        <!-- Key presses through the focused field's input connection (KeyService.kt). -->
+        <service
+            android:name=".KeyService"
+            android:exported="true"
+            android:label="Speedrun keys"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/key_service" />
+        </service>
+        <!-- The shell agent's way to KeyService; it takes calls from the shell user only. -->
+        <provider
+            android:name=".KeyProvider"
+            android:authorities="com.speedrun.agent.keys"
+            android:exported="true" />
+    </application>
 
     <!-- Targets its own package: UiAutomation still sees and drives every app on screen. -->
     <instrumentation
