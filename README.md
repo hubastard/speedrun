@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`1ac66b9`](https://github.com/hubastard/speedrun/commit/1ac66b98b36de4d2bc9f095be451a4646a7022ff) Android: typing into a field that restarts input on each key | 2026-11-06 19:37 | 60.6 s | 48.6 s | 3.11 s | 3.89 s | 7.24 s ▲ +32% | 9.14 s |
 | [`04de370`](https://github.com/hubastard/speedrun/commit/04de3701abaeea69afdd491e78acdbd2031cdc0d) Bench: Compose Bench's README takes v0.4.9's numbers | 2026-11-06 19:37 | 41.2 s ▼ −26% | 43.3 s | 3.06 s | 3.53 s | 5.08 s | 6.74 s ▼ −15% |
 | [`9c77858`](https://github.com/hubastard/speedrun/commit/9c7785874c0fe4601d5c6dad560c1f1cc5802be8) Bench: three flows fit a shorter screen (keyboard over a lin | 2026-11-06 17:56 | 56.2 s | 45.5 s | 3.07 s | 3.95 s | 6.07 s | 9.21 s ▲ +16% |
 | [`91bae0e`](https://github.com/hubastard/speedrun/commit/91bae0ed2fd630e5b18e0e32c227544d462b0fa1) Bench: Compose Bench's README takes its first numbers, for v | 2026-11-06 17:29 | 46.4 s ▼ −16% | 40.5 s | 3.15 s | 3.74 s | 5.45 s | 8.06 s |
