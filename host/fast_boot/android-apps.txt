@@ -1,0 +1,30 @@
+# The preinstalled apps of an Android emulator that `speedrun fast-boot` turns off (pm
+# disable-user): package names, one per line. Google APIs and Play Store images have them;
+# what an image lacks is skipped. Left on, as an app reaches them: Chrome (links, custom tabs,
+# sign-in pages), the Play Store (billing, in-app review and updates, Play Integrity), Play
+# services (push, maps, sign-in, location), the keyboard, Messages, the phone, contacts,
+# calendar, clock, camera, Maps and files apps (an app's intents open them), and the text to
+# speech engine.
+
+# Google's apps
+com.google.android.googlequicksearchbox
+com.google.android.gm
+com.google.android.apps.photos
+com.google.android.youtube
+com.google.android.apps.youtube.music
+com.google.android.apps.docs
+# System services that are apps
+com.google.android.apps.wellbeing
+com.google.android.as
+com.google.android.settings.intelligence
+com.google.android.apps.safetyhub
+com.google.android.feedback
+# Accessibility
+com.google.android.marvin.talkback
+com.google.android.marvin.talkbackoverlay
+com.google.android.apps.accessibility.voiceaccess
+# Cars, setup and restore
+com.google.android.projection.gearhead
+com.google.android.apps.restore
+com.google.android.partnersetup
+com.google.android.onetimeinitializer

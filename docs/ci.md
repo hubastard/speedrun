@@ -20,6 +20,45 @@ speedrun test flows/ --format junit --output report.xml --debug-output debug --f
   responding" dialog can take a flow's keys. Speedrun answers the dialog; to keep it from
   coming up, see [Troubleshooting](troubleshooting.md).
 
+## Android: boot the emulator with `speedrun fast-boot`
+
+A new emulator's first minutes go to its preinstalled apps setting themselves up: the Google
+app, Gmail, YouTube, Photos, Drive, Digital Wellbeing, Android System Intelligence and more.
+`speedrun fast-boot` boots the AVD, turns those apps off and waits for the boot; `--headless`
+boots it without a window:
+
+```sh
+speedrun fast-boot --device "$AVD" --headless   # an AVD's name (emulator -list-avds)
+adb install MyApp.apk
+speedrun test -p android flows/ --format junit --output report.xml
+```
+
+Where something else boots the emulator (the
+[Android Emulator Runner](https://github.com/ReactiveCircus/android-emulator-runner) action),
+run `speedrun fast-boot` first in its script: it turns the apps off on the emulator running,
+which saves as much as turning them off during the boot.
+
+A new AVD (Android 16, API 36.1, with Google APIs; 4 cores, 2.5 GB of RAM) on a 10-core Mac:
+
+| | `emulator` | `speedrun fast-boot` |
+|---|---:|---:|
+| Boot | 33 to 35 s | 35 to 36 s |
+| The apps' CPU in the first minute after it | 204 to 212 s | 104 to 117 s |
+| In the second minute | 45 to 57 s | 5 to 14 s |
+| The emulator's memory on the Mac | 5.3 GB | 5.1 GB |
+
+What an app reaches stays on: Chrome (links, custom tabs, sign-in pages), the Play Store
+(billing, in-app reviews and updates, Play Integrity), Play services (push, maps, sign-in,
+location), the keyboard, and the apps an app's links open (Messages, phone, contacts,
+calendar, clock, camera, Maps, files), and text to speech. The list is
+[host/fast_boot/android-apps.txt](../host/fast_boot/android-apps.txt).
+
+- **The apps stay off**, through reboots, until `speedrun fast-boot --off`. A running
+  emulator is not restarted, unless `--headless` takes its window away.
+- **It helps a first boot.** An emulator that has booted before is quiet either way:
+  Speedrun's 21 benchmark flows took 407 s on one with the apps on, and 407 s with them off.
+- **Emulators only.** It refuses a phone or a tablet.
+
 ## iOS: boot the simulator with `speedrun fast-boot`
 
 A CI runner boots its simulator for the first time, and for minutes after that the

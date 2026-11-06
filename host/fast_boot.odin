@@ -1,5 +1,6 @@
 // speedrun fast-boot (`slim` until v0.2.10, still accepted): turns off the background services
 // of an iOS simulator that apps and tests do not use (fast_boot/services.txt), then boots it.
+// An Android emulator's: fast_boot_android.odin.
 // After a first boot they keep a simulator busy for minutes (~3 cores in the first, on a
 // 10-core Mac), when CI runs its first flows.
 // launchd_sim keeps the services turned off in a store on the host
@@ -20,31 +21,45 @@ import "core:time"
 
 FAST_BOOT_SERVICES :: #load("fast_boot/services.txt", string)
 
-FAST_BOOT_USAGE :: `usage: speedrun fast-boot [--device <udid>] [--off]
-Boots an iOS simulator with the background services that apps and tests do not use turned
-off (Siri and Apple Intelligence, Spotlight's indexing, widgets and wallpapers, iCloud and App
-Store syncing, the Health, Fitness, News, Weather and Maps apps' services, diagnostics). It
-boots faster, and does not spend its first minutes on them. Push, universal links, the
-photo library, contacts, calendars, HealthKit, StoreKit's products, Apple Pay, CloudKit and
-the keychain keep working; in-app purchases do not.
-  --device <udid>   the simulator, booted or not (default: the one booted)
-  --off             boot it with them back on
-They stay off, through simctl erase too, until speedrun fast-boot --off. A booted simulator
-is restarted. Before iOS 18.5 (which forgets them) it boots the simulator as it is.`
+FAST_BOOT_USAGE :: `usage: speedrun fast-boot [--device <id>] [--platform android|ios] [--headless] [--off]
+Boots an Android emulator or an iOS simulator with what tests do not use turned off: its
+first minutes go to your tests rather than to its own work (and a simulator boots faster).
+  Android: the preinstalled apps (the Google app, Gmail, YouTube, Photos, Drive, Digital
+  Wellbeing, Android System Intelligence, TalkBack...). Chrome, the Play Store, Play services
+  and the apps an app's links open (Messages, phone, contacts, calendar, Maps...) stay on:
+  links, in-app purchases, push, maps and sign-in keep working.
+  iOS: the background services (Siri and Apple Intelligence, Spotlight's indexing, widgets and
+  wallpapers, iCloud and App Store syncing, the Health, Fitness, News, Weather and Maps apps'
+  services, diagnostics). Push, universal links, the photo library, contacts, calendars,
+  HealthKit, StoreKit's products, Apple Pay, CloudKit and the keychain keep working; in-app
+  purchases do not.
+  --device <id>     an AVD's name (emulator -list-avds), a running emulator's serial, or a
+                    simulator's UDID, booted or not (default: the one running)
+  --platform <p>    android or ios, when both an emulator and a simulator are running
+  --headless        Android: the emulator without its window (one running with a window is
+                    restarted): less memory and CPU on this computer. iOS: simulators have
+                    no window already, unless Simulator.app is open
+  --off             turn them back on
+They stay off, through reboots (iOS: through simctl erase too), until speedrun fast-boot --off.
+A booted simulator is restarted; a running emulator is not (apps turn off at once). Before
+iOS 18.5 (which forgets them) it boots the simulator as it is.`
 
 run_fast_boot_cli :: proc(args: []string) -> int {
-	device, off := "", false
+	device, platform, off, headless := "", "", false, false
 	for i := 0; i < len(args); i += 1 {
 		switch args[i] {
-		case "--device", "--udid":
+		case "--device", "--udid", "--platform", "-p":
 			if i + 1 == len(args) {
 				fmt.eprintln(FAST_BOOT_USAGE)
 				return 2
 			}
 			i += 1
-			device = args[i]
+			if args[i - 1] == "--platform" || args[i - 1] == "-p" do platform = args[i]
+			else do device = args[i]
 		case "--off":
 			off = true
+		case "--headless":
+			headless = true
 		case "-h", "--help":
 			fmt.println(FAST_BOOT_USAGE)
 			return 0
@@ -53,6 +68,19 @@ run_fast_boot_cli :: proc(args: []string) -> int {
 			return 2
 		}
 	}
+	switch platform {
+	case "android", "ios":
+	case "":
+		e: string
+		if platform, e = fast_boot_platform(device); e != "" {
+			fmt.eprintln(e)
+			return 1
+		}
+	case:
+		fmt.eprintf("--platform takes android or ios, not %s\n", platform)
+		return 2
+	}
+	if platform == "android" do return run_fast_boot_android(device, headless, off)
 	sim, err := fast_boot_simulator(device)
 	if err != "" {
 		fmt.eprintln(err)
@@ -114,6 +142,24 @@ run_fast_boot_cli :: proc(args: []string) -> int {
 		fmt.printf("%s: %d background services off, booted in %.1f s.\n", sim.name, len(labels), booted)
 	}
 	return 0
+}
+
+// Without --platform: a simulator's UDID is iOS, anything else named is an emulator or an AVD;
+// with no --device, the platform of what is running. "" (and a message): both, or nothing.
+@(private = "file")
+fast_boot_platform :: proc(device: string) -> (platform: string, err: string) {
+	when ODIN_OS != .Darwin do return "android", ""
+	if device != "" {
+		if _, e := fast_boot_simulator(device); e == "" do return "ios", ""
+		return "android", ""
+	}
+	sims, emus := len(booted_simulators()) > 0, fast_boot_emulators_running()
+	switch {
+	case sims && emus: return "", "An Android emulator and an iOS simulator are running: pick one with --platform android or ios."
+	case emus:         return "android", ""
+	case sims:         return "ios", ""
+	}
+	return "", "Nothing is running: name the Android emulator's AVD (emulator -list-avds) or the iOS simulator's UDID (xcrun simctl list devices) to boot with --device."
 }
 
 // The boot `xcrun simctl bootstatus -b` does, with the services as they are, after saying why.

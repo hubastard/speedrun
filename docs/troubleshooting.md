@@ -16,7 +16,11 @@
   on one of those versions.
 - **Slow or flaky runs on a busy machine.** An emulator stalls when the host is short of
   memory or CPU. Shut iOS simulators down while testing on Android (run
-  `speedrun --stop-agent` first), and rerun before trusting a failure.
+  `speedrun --stop-agent` first), and rerun before trusting a failure. The emulator itself
+  takes less without its window (`speedrun fast-boot --device <AVD> --headless`) and with
+  less RAM: through Speedrun's benchmark suite, an Android 16 Google APIs emulator with
+  2.5 GB of RAM took 5.1 GB on a Mac, where the Android 17 Play Store image (16 KB pages),
+  which the emulator raises to 4 GB of RAM, took 7 to 8 GB.
 - **"Pixel Launcher isn't responding" on a CI emulator.** A freshly booted emulator's
   launcher often stalls. Speedrun answers the dialog (Close app, since it is about another
   app), but one that comes up while a flow types takes the keys. Turn the dialogs off

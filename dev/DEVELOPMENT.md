@@ -150,6 +150,20 @@ what is still slow: `dev/TO_IMPROVE.md`.
     18.5, the store unwritable) or the check finds them on, it warns and the simulator is
     still booted, exit 0: a CI script needs no fallback to simctl. Only first boots gain: a
     settled simulator idles at ~1% of a core either way.
+  - `fast_boot_android.odin`, `fast_boot/android-apps.txt`: the same command for an Android
+    emulator (`--device`: an AVD, booted or not, or a running emulator's serial; phones and
+    tablets are refused). `pm disable-user --user 0` turns the listed preinstalled apps off;
+    it is stored in the AVD's data, so it holds through reboots and needs none. On an AVD it
+    boots (`emulator -avd <name> -no-boot-anim`, `-no-window` with `--headless`, in its own
+    session through perl's setsid, its output in `$TMPDIR/speedrun-emulator-<avd>.log`), the
+    apps go off once it has booted (off during the boot instead, they cost the same after it).
+    `--headless` restarts an emulator running with a window (`adb emu kill`), with the flags
+    its qemu process shows in `ps`, less Android Studio's. Only first boots gain, as on iOS:
+    a new API 36.1 Google APIs AVD (4 cores, 2.5 GB, M1 Pro) spent 204-212 CPU seconds in the
+    minute after its boot and 45-57 in the next; with the apps off, 104-117 and 5-14 (off
+    during the boot, or right after a plain one, as on CI after the emulator action). An emulator
+    that booted before ran bench/app's suite in 407 s with them on or off (no stalls, the
+    same 5.1 GB peak). Kept on: what an app's intents or SDKs reach (the list's header).
 - `build.sh` — builds the agent APK, the JavaScript engine and the image codecs, then
   `./speedrun` around them.
   Run it once (and after changing `agent/android/` or `host/`); nothing rebuilds at run time.

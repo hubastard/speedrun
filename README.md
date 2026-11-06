@@ -119,14 +119,18 @@ notice:
 ## Running on CI
 
 ```sh
+speedrun fast-boot --device "$AVD" --headless   # Android: boots the emulator without the apps tests do not use
 speedrun fast-boot --device "$UDID"   # iOS: boots the simulator without the services tests do not use
 speedrun test flows/ --format junit --output report.xml --debug-output debug --flatten-debug-output
 ```
 
-On a CI runner's first boot, an iOS simulator's background services (Siri, Spotlight's
+On a CI runner's first boot, an Android emulator's preinstalled apps (the Google app, Gmail,
+YouTube, Photos and more) and an iOS simulator's background services (Siri, Spotlight's
 indexing, iCloud syncing and more) take the CPU your tests need for minutes. `speedrun fast-boot`
-turns them off and boots the simulator: use it in place of `xcrun simctl boot`. Speedrun's own
-iOS CI job went from about 10 minutes to about 6, with one more flow than before.
+turns them off and boots the device: use it in place of `emulator -avd` or `xcrun simctl
+boot`. A new emulator then spent half as much CPU in the minute after its boot, and about a
+sixth as much in the next. Speedrun's own iOS CI job went from about 10 minutes to about 6,
+with one more flow than before.
 
 Reports, sharding, what to keep from a failed run, and booting the simulator while your app
 builds: [Running on CI](docs/ci.md).

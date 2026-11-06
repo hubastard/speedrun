@@ -842,13 +842,11 @@ answers_ping :: proc(port: int, timeout: time.Duration = 0) -> bool {
 	return ok
 }
 
-@(private = "file")
 tail :: proc(s: string, n: int) -> string {
 	lines := strings.split_lines(strings.trim_space(s), context.temp_allocator)
 	return strings.join(lines[max(len(lines) - n, 0):], "\n", context.temp_allocator)
 }
 
-@(private = "file")
 indent :: proc(s: string) -> string {
 	lines := strings.split_lines(strings.trim_space(s), context.temp_allocator)
 	for &l in lines do l = strings.concatenate({"    ", l}, context.temp_allocator)
