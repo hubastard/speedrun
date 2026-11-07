@@ -916,6 +916,19 @@ Known differences in how, not what:
   list holds the center (a modal bottom sheet at half height: the center was its top edge,
   Flutter Bench's sheet did not scroll); on Android a tenth of the way in from its edge, as
   long a drag as one from the center.
+- A tap that is the first touch in a window that had just come, and changed nothing at all
+  (no frame, no event), is tapped again 300 ms later, twice at most (not with
+  `retryTapIfNoChange: false`): a team's tap on the notification permission dialog's Allow,
+  ~150 ms after the dialog came, did nothing on both attempts. Compose Bench's Consent dialog
+  takes no touch in its first 400 ms: v0.4.9 failed it, now passes. A tap on a text field that
+  left the focus where it was is tapped again when the screen is as it was, the keyboard's
+  window left out of that comparison (`app_hash`): with a software GPU the keyboard redrew
+  after the tap, and the text went into the field before.
+- A spinner in a list is no loading overlay (`loading_cover`): a scrollable node between the
+  candidate and the spinner (the candidate included) makes it a row's. Compose reports a node
+  at the bounding box of its part left uncovered: a list under inset tabs, at its whole
+  frame, held the tabs' centers, and its running-task rows' spinners made it an overlay; a
+  tap on a tab waited ~17 s (Compose Bench's Tasks). SPEEDRUN_DEBUG names the overlay.
 - Android touches (`TAP`, `PRESS`, `SWIPE`), keys, typing and erasing in another window than
   the last input's wait for window transitions first (keys since v0.4.9: a key goes to the
   focused window, which a closing one can still be; issue #9's reporter saw a second back
@@ -1198,6 +1211,16 @@ Known differences in how, not what:
   waits, input that started on another field after its last touch (`since`) is looked at
   again every 50 ms. Keeping the node cache while the service is up (Compose sending events
   then) was tried and reverted: the lab's Compose screen missed "Count: 3".
+- `SPEEDRUN_PACED_TYPING=1` (opt-in, the user's choice): TYPE_PACED sends each key once the
+  one before changed the field. The key service counts the field's changes the system tells
+  it of (`onUpdateSelection`, and input starting again), as it tells the keyboard app; the
+  agent waits for the next one after each key (`change`, 500 ms at most; after two keys that
+  changed nothing, the rest go unpaced). On a team's CI (API 35 x86_64, software GPU, Gboard's
+  suggestions on) inputText lost one character now and then, never the first ("calendar" as
+  "calendr", then "calenda"; Gboard's suggestions after "Large text" were for "tx"). Not
+  reproduced here, starved or with `-gpu swiftshader_indirect`. Costs about a frame a key
+  (Compose tells the input methods of a change on its next frame): 55 characters in 4.5-4.7 s
+  against 2.8-3.6 s. Maestro types a key every 75 ms.
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

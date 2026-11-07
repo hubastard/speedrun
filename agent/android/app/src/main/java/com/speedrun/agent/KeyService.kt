@@ -43,6 +43,9 @@ class KeyService : AccessibilityService() {
     // keyboard's input on each key: a look-up each, into the app, slowed typing in an app with
     // a large tree to ~0.8 s a key.
     private var typingInto = FIELD_NONE
+    // Changes the system told of in the field with input: its selection moved (as a key went
+    // in), or its input started again. Guarded by [lock].
+    private var changes = 0
     private val lookups = Executors.newSingleThreadExecutor()
 
     // Input starts on a field when it takes the focus: the system tells the keyboard app and
@@ -56,6 +59,7 @@ class KeyService : AccessibilityService() {
             var lookUp = 0
             synchronized(lock) {
                 starts++
+                changes++
                 startedAt = SystemClock.uptimeMillis()
                 started = when {
                     !editor -> FIELD_NONE
@@ -66,6 +70,14 @@ class KeyService : AccessibilityService() {
                 lock.notifyAll()
             }
             if (lookUp != 0) lookups.execute { publish(lookUp, focusedField()) }
+        }
+
+        override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
+            super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+            synchronized(lock) {
+                changes++
+                lock.notifyAll()
+            }
         }
 
         override fun onFinishInput() {
@@ -126,6 +138,27 @@ class KeyService : AccessibilityService() {
             }
         }
     }
+
+    /**
+     * The count of changes in the field with input once it is past [after] ([timeoutMs] at
+     * most): typed keys go one at a time, each once the one before has changed the field. The
+     * system tells the keyboard app of a change as it tells this service: a key the keyboard
+     * app got before then met a keyboard behind the field, which lost it now and then (one
+     * character in a word, on an emulator with a software GPU, the keyboard's suggestions on).
+     */
+    fun awaitChange(after: Int, timeoutMs: Long): Int {
+        val end = SystemClock.uptimeMillis() + timeoutMs
+        synchronized(lock) {
+            while (changes <= after) {
+                val left = end - SystemClock.uptimeMillis()
+                if (left <= 0) break
+                lock.wait(left)
+            }
+            return changes
+        }
+    }
+
+    fun changes(): Int = synchronized(lock) { changes }
 
     /** speedrun types into [field] until [typed]. */
     fun typing(field: Long) = synchronized(lock) { typingInto = field }
@@ -222,9 +255,10 @@ class KeyService : AccessibilityService() {
 
 /**
  * The shell agent's way to [KeyService]: `call("keys", null, {code, count, field?, since})` ->
- * {sent}; `call("input", null, {field, since})` -> {waited} (milliseconds, -1: input did not
- * start on the field; absent: the service is not up, or Android 13), then keys typed into the
- * field until `call("typed")`; `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
+ * {sent}; `call("input", null, {field, since})` -> {waited, changes} (milliseconds, -1: input
+ * did not start on the field; absent: the service is not up, or Android 13), then keys typed
+ * into the field until `call("typed")`, each followed by `call("change", null, {after,
+ * timeout})` -> {changes}; `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
  * shell user make into an app (as `content call` does); a local socket it does not. Only the
  * shell user and root may call.
  */
@@ -250,7 +284,11 @@ class KeyProvider : ContentProvider() {
                 if (service != null && field != null && Build.VERSION.SDK_INT >= 34) {
                     putLong("waited", service.awaitInput(field, since, KeyService.INPUT_WAIT_MS))
                     service.typing(field)
+                    putInt("changes", service.changes())
                 }
+            }
+            "change" -> Bundle().apply {
+                if (service != null) putInt("changes", service.awaitChange(extras.getInt("after"), extras.getLong("timeout")))
             }
             "typed" -> Bundle().apply { service?.typed() }
             "up" -> Bundle().apply { putBoolean("up", service != null) }

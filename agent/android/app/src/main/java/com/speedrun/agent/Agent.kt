@@ -125,6 +125,9 @@ internal object AgentLog {
  *        keyboard app is told of it then; keys before met a keyboard that took the field as
  *        it was): input = 0 not known (before Android 14, the key service not up), 1 started
  *        already, 2 started after input_wait_us, 3 did not start in a second (typed anyway).
+ *  26 TYPE_PACED str text                    -> as TYPE
+ *        TYPE, each key once the one before changed the field (injectPaced), with the key
+ *        service up; SPEEDRUN_PACED_TYPING=1 on the host.
  *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
  *        count DEL key presses.
  *  12 MARK                                   -> (empty)
@@ -199,6 +202,7 @@ private object Op {
     const val LABEL = 21
     const val PERMS = 22
     const val FOCUS = 25
+    const val TYPE_PACED = 26
 }
 
 // SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
@@ -208,6 +212,8 @@ private const val SWIPE_STEP_MS = 8 // one MOVE per ~120 Hz touch sample
 // A drag's lift waits this long after its moves (real time): over a frame, so the app handles
 // the moves and the lift in different frames, as a finger's.
 private const val SWIPE_LIFT_GAP_MS = 25L
+// A typed key that changes nothing in the field is waited for this long (Agent.injectPaced).
+private const val PACE_TIMEOUT_MS = 500L
 
 // An accessibility call the app doesn't answer returns empty after AccessibilityInteraction-
 // Client's 5 s timeout. One that took this long timed out (see child).
@@ -390,7 +396,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 val flags = input.readInt()
                 swipe(x1, y1, x2, y2, duration, fling = flags and 1 != 0, cancel = flags and 2 != 0)
             }
-            Op.TYPE -> type(readStr(input))
+            Op.TYPE -> type(readStr(input), paced = false)
+            Op.TYPE_PACED -> type(readStr(input), paced = true)
             Op.ERASE -> erase(input.readInt())
             Op.SCREEN -> writeScreen()
             Op.SHELL -> shell(readStr(input))
@@ -982,7 +989,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     private val keyMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
 
-    private fun type(text: String) {
+    private fun type(text: String, paced: Boolean) {
         var skipped = 0
         val keys = ArrayList<Array<KeyEvent>>()
         for (ch in text) {
@@ -999,10 +1006,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         // Keys go through the keyboard app: it must have been told of the field first.
         var input = 0
         var inputWaitNs = 0L
+        var changes = -1 // the field's changes so far (the key service's count), -1 unknown
         if (field != null && skipped == 0 && keys.isNotEmpty()) {
             val t = SystemClock.elapsedRealtimeNanos()
-            val waited = awaitFieldInput(field)
+            val result = awaitFieldInput(field)
             inputWaitNs = SystemClock.elapsedRealtimeNanos() - t
+            val waited = if (result != null && result.containsKey("waited")) result.getLong("waited") else null
+            if (result != null && result.containsKey("changes")) changes = result.getInt("changes")
             input = when {
                 waited == null -> 0
                 waited < 0 -> 3
@@ -1016,7 +1026,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 skipped = 0
                 return@timedAction
             }
-            injectKeys(keys)
+            if (paced && changes >= 0) injectPaced(keys, changes) else injectKeys(keys)
         }
         if (input != 0) keyCall("typed", Bundle())
         body.writeInt(skipped)
@@ -1116,17 +1126,53 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     /**
-     * Milliseconds the key service waited for the system to start input on [field] (0: it had),
-     * -1 when it did not start in KeyService.INPUT_WAIT_MS, null when the service is not up or
-     * cannot tell (Android 13).
+     * The key service's wait for the system to start input on [field]: waited (milliseconds, 0:
+     * it had; -1: it did not start in KeyService.INPUT_WAIT_MS) and the field's changes so far;
+     * without them, or null, when the service is not up or cannot tell (Android 13).
      */
-    private fun awaitFieldInput(field: AccessibilityNodeInfo): Long? {
+    private fun awaitFieldInput(field: AccessibilityNodeInfo): Bundle? {
         if (Build.VERSION.SDK_INT < 33) return null
-        val result = keyCall("input", Bundle().apply {
+        return keyCall("input", Bundle().apply {
             putLong("field", KeyService.fieldOf(field))
             putLong("since", lastTouchDown)
-        }) ?: return null
-        return if (result.containsKey("waited")) result.getLong("waited") else null
+        })
+    }
+
+    /**
+     * Key presses one at a time, each once the one before changed the field (the key service
+     * hears of each change as the keyboard app does; [changes]: its count so far). Sent as fast
+     * as the app takes them, a keyboard app showing suggestions lost a character now and then:
+     * one in a word, never the first, on CI's emulators with a software GPU ("calendar" typed
+     * as "calendr", then as "calenda"). A press that changes nothing (the app refused it) is
+     * waited for PACE_TIMEOUT_MS; after two in a row, the rest go as injectKeys sends them.
+     */
+    private fun injectPaced(presses: List<Array<KeyEvent>>, changes: Int) {
+        var seen = changes
+        var misses = 0
+        for ((k, press) in presses.withIndex()) {
+            if (misses >= 2) {
+                injectKeys(presses.subList(k, presses.size))
+                return
+            }
+            val down = SystemClock.uptimeMillis()
+            press.forEachIndexed { j, e ->
+                val sent = KeyEvent(down, SystemClock.uptimeMillis(), e.action, e.keyCode, e.repeatCount,
+                    e.metaState, e.deviceId, e.scanCode, e.flags, e.source)
+                injector.inject(sent, sync = j == press.lastIndex)
+            }
+            val now = keyCall("change", Bundle().apply {
+                putInt("after", seen)
+                putLong("timeout", PACE_TIMEOUT_MS)
+            })?.getInt("changes")
+            if (now == null) {
+                injectKeys(presses.subList(k + 1, presses.size))
+                return
+            }
+            if (now > seen) {
+                seen = now
+                misses = 0
+            } else misses++
+        }
     }
 
     /** A call to the key service's provider (KeyProvider), null when it cannot be reached. */

@@ -27,6 +27,8 @@ MAX_RETRIES_ALLOWED        :: 3
 // "touch & hold delay", 1.5 s at most), 500 ms for iOS's recognizers, React Native and Flutter.
 // A flow does not say how long; the 3 s `input swipe x y x y 3000` holds are mostly waiting.
 SHEET_TAP_RETRIES          :: 3 // tap (iOS sheets and alerts): each waits for a change ~1 s
+NEW_WINDOW_TAP_RETRIES     :: 2 // tap (Android, a window that had just come): each after NEW_WINDOW_TAP_PAUSE_MS
+NEW_WINDOW_TAP_PAUSE_MS    :: 300
 DISABLED_POLL_MS           :: 100 // tap: a disabled element read again this often until it turns on
 DISABLED_WAIT_MS           :: 3_000 // tap: how long at most, then it taps anyway
 UNLISTED_COVER_WAIT_MS     :: 1_500 // tap (iOS): a cover the hit test finds and the tree does not list
@@ -59,6 +61,7 @@ Hierarchy :: struct {
 	roots: [dynamic]int,
 	order:     [dynamic]int, // aggregate(): pre-order of kept nodes
 	hash:      u64, // for retryTapIfNoChange
+	app_hash:  u64, // hash, the keyboard's window left out (it redraws on its own)
 	content:   u64, // what the nodes are and say (class, text, description, id, flags), not where
 	unsettled: bool, // iOS: the screen changed since the last settle ended
 	stalled:   bool, // Android: a window's app did not answer the read, which has it in part
@@ -79,6 +82,7 @@ Record :: struct {
 }
 
 Runner :: struct {
+	new_window_touch:     bool, // Android: the last touch was the first in a window that had just come
 	c:                    ^Conn,
 	dev:                  ^Device, // platform, simulator (iOS app control goes through simctl)
 	alloc:                mem.Allocator, // the run's lifetime
@@ -93,6 +97,7 @@ Runner :: struct {
 	depth:                int,
 	path:                 string, // of the command being run
 	debug:                bool, // SPEEDRUN_DEBUG: print every hierarchy read and shell command
+	paced_typing:         bool, // SPEEDRUN_PACED_TYPING=1 (Android): each typed key once the one before changed the field
 	warning:              string, // the running command succeeded, with this to say: WARNED
 	trace:                Trace, // what debug prints, kept for a failed flow's logs/debug.log
 	view:                 View, // console output (console.odin)
@@ -208,6 +213,7 @@ run_flow :: proc(c: ^Conn, dev: ^Device, path: string, opts: Run_Options, alloc:
 		dev     = dev,
 		alloc   = run_alloc,
 		debug   = os.get_env("SPEEDRUN_DEBUG", run_alloc) != "",
+		paced_typing = os.get_env("SPEEDRUN_PACED_TYPING", run_alloc) == "1",
 		env_gen  = 1,
 		log_rec  = -1,
 		flow_dir = opts.flow_dir,
@@ -877,7 +883,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 }
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
-	res, skipped, focused, input, input_wait_us, ok := op_type(r.c, text, r.alloc)
+	res, skipped, focused, input, input_wait_us, ok := op_type(r.c, text, r.alloc, paced = r.paced_typing && r.dev.platform == .Android)
 	if !ok do return AGENT_LOST
 	#partial switch input {
 	case .Waited:    note(r, "typing waited %d ms for the keyboard to start on the field", input_wait_us / 1000)
@@ -1036,6 +1042,12 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		debug_at(r, el)
 		if blocked, listed := under_loading(r, el) or_return; blocked {
 			t := time.tick_now()
+			// The overlay, for the note (Android's tree names it; read again below).
+			what := ""
+			if cover := loading_cover(r, el) if r.dev.platform == .Android else -1; cover >= 0 {
+				c := r.h.nodes[cover]
+				what = fmt.aprintf(" (#%d %s %d,%d-%d,%d)", cover, c.class, c.left, c.top, c.right, c.bottom, allocator = r.alloc)
+			}
 			limit := time.Duration(adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if c.optional else LOOKUP_TIMEOUT_MS)) * time.Millisecond
 			// Nothing listed in the way (no spinner): a cover the tree does not show yet, such as
 			// an overlay fading in, which takes touches before iOS lists it; waited for briefly.
@@ -1050,7 +1062,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if el < 0 do break
 				if still, _ := under_loading(r, el) or_return; !still do break
 			}
-			note(r, "under a loading overlay: waited %.0f ms", us(t) / 1000)
+			note(r, "under a loading overlay%s: waited %.0f ms", what, us(t) / 1000)
 			settle(r, no_change_ms = 0) or_return
 			el = find_element(r, d.sel, c.optional, -1) or_return
 		}
@@ -1124,6 +1136,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	}
 	frame := frame_hold(r, d.sel == nil || in_sheet, tapped.class)
 	before := r.h.hash
+	app_before := r.h.app_hash
 	content_before := r.h.content
 	typing_before := typing(r)
 	// The screen was read since the last tap: the checks below share that read (one costs
@@ -1163,6 +1176,23 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			n := r.h.nodes[el]
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 			note(r, "a tap in a sheet changed nothing: tapping again")
+			tap_at(r, x, y, frame) or_return
+			again := settle_status(r, d.settle_ms) or_return
+			status = again.status
+		}
+		// Android: the first touch in a window that had just come, which changed nothing at all
+		// (no frame, no event). A system permission dialog ignored it ~150 ms after it came in,
+		// the button still there: tapped again a moment later, as iOS sheets above. A tap that
+		// changed nothing cannot be undone by a second one. Not with retryTapIfNoChange: false.
+		new_window := r.dev.platform == .Android && r.new_window_touch && d.sel != nil && d.point == ""
+		for retry := 0; new_window && status == .No_Change && !d.long_press && d.repeat == 1 && !d.once && retry < NEW_WINDOW_TAP_RETRIES; retry += 1 {
+			time.sleep(NEW_WINDOW_TAP_PAUSE_MS * time.Millisecond)
+			if !read_screen(r) do return AGENT_LOST
+			el := select(r, d.sel) or_return
+			if el < 0 || r.h.hash != before do break // gone, or the screen changed after all
+			n := r.h.nodes[el]
+			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+			note(r, "the first tap in a new window changed nothing: tapping again")
 			tap_at(r, x, y, frame) or_return
 			again := settle_status(r, d.settle_ms) or_return
 			status = again.status
@@ -1251,7 +1281,8 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				read_since_tap = true
 				el := select(r, d.sel) or_return
 				f := field_of(r, el) if el >= 0 else -1
-				if f >= 0 && .Focused not_in r.h.nodes[f].flags && r.h.hash == before {
+				// The keyboard's window left out: with a software GPU it redrew after the tap.
+				if f >= 0 && .Focused not_in r.h.nodes[f].flags && r.h.app_hash == app_before {
 					note(r, "the tap left the text field unfocused and the screen as it was: tapping it again")
 					tap_at(r, x, y, frame) or_return
 					settle(r, d.settle_ms) or_return
@@ -1328,6 +1359,7 @@ tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> Err {
 // down the system dropped down again until it takes one, for up to 2 s. A touch it never took
 // fails the command: the app never saw it.
 touch_taken :: proc(r: ^Runner, res: Action_Result, x, y: i32) -> Err {
+	r.new_window_touch = res.transition_us > 0
 	if res.transition_us > 0 do note(r, "a new window: waited %.0f ms for window transitions", f64(res.transition_us) / 1000)
 	if res.dropped == 0 do return nil
 	ms := f64(res.dropped_us) / 1000
@@ -1483,7 +1515,10 @@ busy_indicator :: proc(n: H_Node) -> bool {
 // hierarchy, but the overlay takes the touches. The tree's order says nothing (Android orders
 // siblings by their place on screen, not as drawn: an overlay from a screen's top edge comes
 // before content below a padding), but its parents are the views' own. A spinner shows at its
-// own size, whatever its container's. -1: none.
+// own size, whatever its container's. A spinner in a list (a scrollable node from the
+// candidate down) is a row's, not an overlay's: Compose reports a list under inset tabs at its
+// whole frame (the bounding box of what the tabs leave uncovered), and a tap on a tab over a
+// list of running tasks waited 17 s for the "overlay" to go (Compose Bench's Tasks). -1: none.
 @(private = "file")
 loading_cover :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
@@ -1495,10 +1530,20 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 		if busy_indicator(c) do return k
 		for p := n.parent; p >= 0; p = r.h.nodes[p].parent do if p == k do continue outer
 		for j := k + 1; j < len(r.h.nodes) && r.h.nodes[j].depth > c.depth; j += 1 {
-			if r.h.nodes[j].kept && busy_indicator(r.h.nodes[j]) do return k
+			if r.h.nodes[j].kept && busy_indicator(r.h.nodes[j]) && !in_list(r, j, k) do return k
 		}
 	}
 	return -1
+}
+
+// Whether node `j` is in a list, at node `top` or below it: a scrollable node on its way up.
+@(private = "file")
+in_list :: proc(r: ^Runner, j, top: int) -> bool {
+	for p := r.h.nodes[j].parent; p >= 0; p = r.h.nodes[p].parent {
+		if .Scrollable in r.h.nodes[p].flags do return true
+		if p == top do break
+	}
+	return false
 }
 
 // Whether a loading overlay would take a tap on the element (see loading_cover). iOS orders its
@@ -3354,6 +3399,28 @@ read_screen :: proc(r: ^Runner) -> bool {
 	return true
 }
 
+// The screen's hash (as read_screen_once makes it) without the keyboard's window: the one
+// holding the input method's input area (android:id/inputArea), whatever the keyboard app.
+@(private = "file")
+app_hash :: proc(r: ^Runner) -> u64 {
+	hash: u64 = 14695981039346656037
+	for root, i in r.h.roots {
+		end := r.h.roots[i + 1] if i + 1 < len(r.h.roots) else len(r.h.nodes)
+		keyboard := false
+		for k in root ..< end do if r.h.nodes[k].id == "android:id/inputArea" {
+			keyboard = true
+			break
+		}
+		if keyboard do continue
+		for k in root ..< end {
+			n := r.h.nodes[k]
+			if .Restless not_in n.flags do for v in ([]i32{n.left, n.top, n.right, n.bottom}) do hash = (hash ~ u64(u32(v))) * 1099511628211
+			for c in transmute([]u8)n.text do hash = (hash ~ u64(c)) * 1099511628211
+		}
+	}
+	return hash
+}
+
 @(private = "file")
 read_screen_once :: proc(r: ^Runner) -> bool {
 	virtual.arena_free_all(&r.screen_arena)
@@ -3409,6 +3476,7 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 		append(&r.marks, mark)
 	}
 	r.h.hash = hash
+	r.h.app_hash = app_hash(r)
 	r.h.content = content
 	// A byte after the nodes. iOS: 1 when the screen differs from where the last settle ended.
 	// Android: 1 when a window's app did not answer the read (read_screen).

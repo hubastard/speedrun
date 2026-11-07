@@ -40,6 +40,7 @@ Op :: enum u8 {
 	Taps        = 23, // iOS agent: repeated taps as one gesture
 	Hit         = 24, // iOS agent: the node of the last screen read a touch at a point reaches
 	Focus       = 25, // Android agent: the editable field with the input focus
+	Type_Paced  = 26, // Android agent: Type, each key once the one before changed the field
 }
 
 KEYCODE_BACK :: 4
@@ -490,9 +491,9 @@ Field_Input :: enum u8 {
 
 // Key events into the focused field; `skipped` characters had no key sequence.
 // `focused`: a text field had the input focus (false: the keys went to whatever had it).
-op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, ok: bool) {
+op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, ok: bool) {
 	body: []byte
-	body, _, ok = call(c, str_request(.Type, text, alloc))
+	body, _, ok = call(c, str_request(.Type_Paced if paced else .Type, text, alloc))
 	if !ok do return
 	res, ok = read_action(body)
 	if !ok do return
