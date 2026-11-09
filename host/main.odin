@@ -118,6 +118,7 @@ Settle_Result :: struct {
 	events:       u32, // accessibility events from the active window observed
 	js_us:        u32, // how long a busy JavaScript thread (React Native) held it off
 	js_ran_us:    u32, // CPU time the JavaScript threads used while it ran
+	clicked:      bool, // Android: a view reported a click after the action (it took the touch)
 }
 
 // Device-side injection route (the byte that used to be the fast_inject flag; 0/1 unchanged).
@@ -491,7 +492,8 @@ Field_Input :: enum u8 {
 
 // Key events into the focused field; `skipped` characters had no key sequence.
 // `focused`: a text field had the input focus (false: the keys went to whatever had it).
-op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, ok: bool) {
+// `retyped`: characters typed again, from the first the field missed (Android 14+).
+op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, retyped: u32, ok: bool) {
 	body: []byte
 	body, _, ok = call(c, str_request(.Type_Paced if paced else .Type, text, alloc))
 	if !ok do return
@@ -500,12 +502,13 @@ op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) ->
 	r := Reader{b = body[9:], ok = true} // after prep_us, inject_us, inject_path
 	skipped = rd_u32(&r)
 	focused = rd_u8(&r) != 0
-	if !r.ok do return res, skipped, focused, input, input_wait_us, false
+	if !r.ok do return res, skipped, focused, input, input_wait_us, retyped, false
 	if len(r.b) - r.off >= 5 { // Android's agent only
 		input = Field_Input(min(rd_u8(&r), u8(Field_Input.Timed_Out)))
 		input_wait_us = rd_u32(&r)
 	}
-	return res, skipped, focused, input, input_wait_us, r.ok
+	if len(r.b) - r.off >= 4 do retyped = rd_u32(&r)
+	return res, skipped, focused, input, input_wait_us, retyped, r.ok
 }
 
 // `count` DEL presses.
@@ -599,6 +602,7 @@ op_settle :: proc(c: ^Conn, quiet_ms, no_change_ms, timeout_ms: i32) -> (res: Se
 	res.events = rd_u32(&r)
 	res.js_us = rd_u32(&r)
 	res.js_ran_us = rd_u32(&r)
+	if r.ok && r.off < len(r.b) do res.clicked = rd_u8(&r) == 1
 	return res, r.ok
 }
 

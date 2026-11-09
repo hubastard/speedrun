@@ -916,11 +916,18 @@ Known differences in how, not what:
   list holds the center (a modal bottom sheet at half height: the center was its top edge,
   Flutter Bench's sheet did not scroll); on Android a tenth of the way in from its edge, as
   long a drag as one from the center.
-- A tap that is the first touch in a window that had just come, and changed nothing at all
-  (no frame, no event), is tapped again 300 ms later, twice at most (not with
-  `retryTapIfNoChange: false`): a team's tap on the notification permission dialog's Allow,
-  ~150 ms after the dialog came, did nothing on both attempts. Compose Bench's Consent dialog
-  takes no touch in its first 400 ms: v0.4.9 failed it, now passes. A tap on a text field that
+- A tap that is the first touch in a window that had just come, and changed nothing in it,
+  is tapped again 300 ms later, twice at most (not with `retryTapIfNoChange: false`): a
+  team's tap on the notification permission dialog's Allow, ~150 ms after the dialog came,
+  did nothing on both attempts. Nothing changed: no view reported a click (the agent's
+  settle tells of a `TYPE_VIEW_CLICKED` after the action), the window drew no frame, the
+  element's window says the same (`window_content`: classes, texts, ids, states, not
+  positions), and no window came. v0.4.10 required the whole screen unchanged and a settle
+  that saw nothing, and never tapped again on the team's CI: as the dialog's transition
+  ended, the app's window under it left the list, and that ended the settle; in Compose
+  Bench, the status bar's signal went from three bars to full. Compose Bench's Consent
+  dialog ignores its first touch in its first second (it took no touch in its first 400 ms
+  before, which a slow tap missed); Notifications asks for Android's own dialog. A tap on a text field that
   left the focus where it was is tapped again when the screen is as it was, the keyboard's
   window left out of that comparison (`app_hash`): with a software GPU the keyboard redrew
   after the tap, and the text went into the field before.
@@ -1150,10 +1157,31 @@ Known differences in how, not what:
   the app took longer than 10 s to handle it all (issue #7: a starved CI emulator, an app
   just installed; reproduced on API 36 with a field that takes 150 ms a key: 29 of 52
   characters arrived; API 37 kept them all). Each chunk is sized to take ~500 ms at the
-  pace of the one before, 16 keys at most (the first is two keys), and its last key waits
-  for the app: to lose a key, the app would have to slow down past 600 ms a key within a
-  chunk. Waiting for every key works too but costs ~12 ms a key (52 characters: 1.5 s
-  instead of 0.9 s); the chunks cost about 12 ms each.
+  pace of the one before, 4 keys at most (the first is two keys), and its last key waits
+  for the app: to lose a key, the app would have to slow down past 2.5 s a key within a
+  chunk. With 16 at most, Compose Bench's Notes on a dot whose frames took 800 ms went from
+  ~30 ms to ~850 ms a key mid-chunk, and "Dark" came out as "Dk" (2 runs of 3). Waiting for
+  every key works too but costs ~12 ms a key (52 characters: 1.5 s instead of 0.9 s); the
+  chunks cost about 12 ms each.
+- The settle after an action times out 10 s after the action's input ended, not after it
+  began: typing 740 characters took 140 s on a team's emulator, and the settle after it ended
+  at once ("Timeout: ui done 140472 ms").
+- **Typing is checked, and what the field missed typed again** (Android 14 and later, the key
+  service up): before the keys, the agent reads the field's text and selection through the
+  key service's input connection (provider `text`: `getSurroundingText`, the whole text, the
+  app answering on its main thread; Compose answers with an offset of -1). After them, it
+  waits for the field to hold the text typed in place of the selection, or, while characters
+  are missing, for 400 ms without a change in it (3 s at most). When it holds that text with
+  characters missing from the typed part only and the cursor after it, the keys from the
+  first one missing are erased (through the connection) and typed again, twice at most, while
+  it helps (`retypeLost`; the note "the field missed characters: typed the last N again").
+  Anything else is left as it is: a field whose app changes what is typed (upper case, a
+  mask), the focus gone to another field (a code's next box), Enter or Tab in the text. A
+  length limit reads as characters missing at the end: typed again once, refused again, and
+  left (about 0.8 s). On a team's CI (API 35 x86_64, software GPU) the keyboard app lost
+  characters paced or not (5 of 217 unpaced, 1 of 740 paced; never the first, never one of a
+  pair; no dispatcher drop in their logcat); not reproduced here even with a software GPU, a
+  slow screen and a starved guest. Compose Bench's Notes field misses its 10th edit once.
 - **Backspace goes through the focused field's input connection** (`pressKey: Backspace`,
   `eraseText`; Android 13 and later), as a keyboard sends it. React Native's `onKeyPress`
   hears only the input connection: a DEL injected as a hardware key deleted, but fired
@@ -1220,7 +1248,9 @@ Known differences in how, not what:
   "calendr", then "calenda"; Gboard's suggestions after "Large text" were for "tx"). Not
   reproduced here, starved or with `-gpu swiftshader_indirect`. Costs about a frame a key
   (Compose tells the input methods of a change on its next frame): 55 characters in 4.5-4.7 s
-  against 2.8-3.6 s. Maestro types a key every 75 ms.
+  against 2.8-3.6 s. Maestro types a key every 75 ms (UiAutomator's `pressKeyCode`, DOWN
+  and UP each waited for, its idle wait turned off). On the team's CI it cut the losses
+  but did not end them: typing is now checked instead (above).
 - A full `TREE` read right after a screen change costs 25–70 ms: about 40 round trips to
   the app's main thread, since prefetching (at most 50 nodes per request) never spans
   sibling list items. Steps avoid it with `FIND` (~4 ms host view). Batched prefetch,

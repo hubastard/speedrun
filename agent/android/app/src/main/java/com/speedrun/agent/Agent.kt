@@ -36,8 +36,12 @@ internal const val TAG = "SpeedrunAgent"
 
 /** How long a chunk of typed keys should take the app, at its last pace (see injectKeys). */
 private const val KEY_CHUNK_MS = 500L
-/** The most key presses in a chunk: a sudden slowdown has to pass 600 ms a key to lose one. */
-private const val KEY_CHUNK_MAX = 16
+/**
+ * The most key presses in a chunk: a sudden slowdown has to pass 2.5 s a key to lose one. With
+ * 16, a screen that went from ~30 ms to ~850 ms a key mid-chunk (an endless animation's frames,
+ * a software GPU) lost the chunk's last keys ("Dark" typed as "Dk").
+ */
+private const val KEY_CHUNK_MAX = 4
 
 /**
  * Logcat, tag SpeedrunAgent. The shell entry point also echoes to stdout: that is what
@@ -215,6 +219,14 @@ private const val SWIPE_LIFT_GAP_MS = 25L
 // A typed key that changes nothing in the field is waited for this long (Agent.injectPaced).
 private const val PACE_TIMEOUT_MS = 500L
 
+// Typing checked (retypeLost): rounds of typing again at most, and how long the field's text
+// is waited for while characters are missing: until RETYPE_QUIET_MS pass without a change in
+// it, RETYPE_WAIT_MS at most, read every RETYPE_POLL_MS.
+private const val RETYPE_ROUNDS = 2
+private const val RETYPE_QUIET_MS = 400L
+private const val RETYPE_WAIT_MS = 3000L
+private const val RETYPE_POLL_MS = 30L
+
 // An accessibility call the app doesn't answer returns empty after AccessibilityInteraction-
 // Client's 5 s timeout. One that took this long timed out (see child).
 private const val STALLED_CALL_MS = 4000L
@@ -263,8 +275,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     // and per window id.
     private val lastChange = AtomicLong(0L)
     private val lastChangeByWindow = ConcurrentHashMap<Int, Long>()
-    // elapsedRealtimeNanos of the most recent injected action.
+    // elapsedRealtimeNanos of the last click a view reported (TYPE_VIEW_CLICKED): a touch it
+    // took. The settle tells whether one came after the action.
+    @Volatile private var lastClick = 0L
+    // elapsedRealtimeNanos of the most recent injected action, and of the end of its input: the
+    // settle's timeout counts from there (typing 740 characters took 140 s, the settle none).
     @Volatile private var lastAction = 0L
+    @Volatile private var actionEnd = 0L
     // Active window when the last action was injected (its frame stats are cleared then).
     private var actionWindow = -1
 
@@ -320,6 +337,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                     lastChange.set(t)
                     lastChangeByWindow[e.windowId] = t
                 }
+                AccessibilityEvent.TYPE_VIEW_CLICKED, AccessibilityEvent.TYPE_VIEW_LONG_CLICKED ->
+                    lastClick = SystemClock.elapsedRealtimeNanos()
                 AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED ->
                     if (e.className?.toString()?.startsWith("android.widget.Toast") == true) {
                         // Its message, and on recent Android versions the app's name too.
@@ -724,6 +743,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             try { ua.clearWindowContentFrameStats(actionWindow) } catch (e: Exception) { }
         }
         lastAction = SystemClock.elapsedRealtimeNanos()
+        actionEnd = lastAction
     }
 
     /** Runs an action and writes its timing breakdown to the response body. */
@@ -733,6 +753,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         val t1 = SystemClock.elapsedRealtimeNanos()
         injectAll()
         val t2 = SystemClock.elapsedRealtimeNanos()
+        actionEnd = t2
         body.writeInt(((t1 - t0) / 1000).toInt())
         body.writeInt(((t2 - t1) / 1000).toInt())
         body.writeByte(injector.path) // after injecting, so a fallback taken mid-action shows
@@ -1020,6 +1041,10 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 else -> 1
             }
         }
+        // What the field holds before the keys, to check what they did (retypeLost). Not for
+        // Enter or Tab, which act (a single-line field sends its text, the focus moves on).
+        val before = if (input != 0 && text.none { it == '\n' || it == '\t' }) fieldText() else null
+        var retyped = 0
         timedAction {
             waitForTransitions()
             if (skipped > 0 && insertText(text)) {
@@ -1027,12 +1052,98 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 return@timedAction
             }
             if (paced && changes >= 0) injectPaced(keys, changes) else injectKeys(keys)
+            if (before != null && field != null) retyped = retypeLost(text, keys, before, KeyService.fieldOf(field))
         }
         if (input != 0) keyCall("typed", Bundle())
         body.writeInt(skipped)
         body.writeByte(if (field != null) 1 else 0)
         body.writeByte(input)
         body.writeInt((inputWaitNs / 1000).toInt())
+        body.writeInt(retyped)
+    }
+
+    /** The focused field's text and selection, by the key service (KeyService.fieldText). */
+    private fun fieldText(): Bundle? = keyCall("text", Bundle())?.takeIf { it.containsKey("text") }
+
+    /**
+     * Characters the field missed, typed again: the keyboard app lost one now and then on CI's
+     * emulators with a software GPU, keys paced or not ("calendar" typed as "calendr", "Large
+     * text" as "Large tex"), and keys the dispatcher held 10 s are dropped. With
+     * [before] the field's text and selection before [presses] typed [text] there: when the
+     * field holds that text with characters missing from the typed part, and the cursor after
+     * it, the keys from the first one missing are erased and typed again, RETYPE_ROUNDS times
+     * at most, while it helps. A field whose app changes what is typed (upper case, a mask)
+     * holds something else, and the focus gone to another field (a code's next box) leaves its
+     * text unread: both are left as they are. Returns the characters typed again.
+     */
+    private fun retypeLost(text: String, presses: List<Array<KeyEvent>>, before: Bundle, field: Long): Int {
+        val t0 = before.getString("text") ?: return 0
+        val s0 = minOf(before.getInt("start"), before.getInt("end"))
+        val e0 = maxOf(before.getInt("start"), before.getInt("end"))
+        if (s0 < 0 || e0 > t0.length || presses.size != text.length) return 0
+        val head = t0.substring(0, s0)
+        val tail = t0.substring(e0)
+        val want = head + text + tail
+        var retyped = 0
+        var previous: String? = null
+        for (round in 0..RETYPE_ROUNDS) {
+            val now = typedText(want, head, tail, text) ?: return retyped
+            val got = now.getString("text")!!
+            val from = lostFrom(got, head, tail, text)
+            if (from < 0 || got == previous || round == RETYPE_ROUNDS) return retyped
+            val cursor = got.length - tail.length
+            if (now.getInt("start") != cursor || now.getInt("end") != cursor) return retyped
+            if (Build.VERSION.SDK_INT >= 34) ua.clearCache()
+            if (inputFocus()?.let { KeyService.fieldOf(it) } != field) return retyped
+            val erase = cursor - head.length - from
+            AgentLog.i("typing: the field missed ${text.length - (cursor - head.length)} of ${text.length} characters: typing again from character ${from + 1}")
+            if (erase > 0 && !keysThroughField(KeyEvent.KEYCODE_DEL, erase)) return retyped
+            // The erase ended the key service's typing into the field: on again (input restarting).
+            keyCall("input", Bundle().apply { putLong("field", field); putLong("since", lastTouchDown) })
+            injectKeys(presses.subList(from, presses.size))
+            retyped += text.length - from
+            previous = got
+        }
+        return retyped
+    }
+
+    /**
+     * The field's text once it holds [want], or has stopped changing (RETYPE_QUIET_MS without a
+     * change, RETYPE_WAIT_MS at most) while it could still be on its way there (characters
+     * missing): the keyboard app's last edits come a frame or more after its keys. At once
+     * when it holds something else. Null when the key service cannot read it.
+     */
+    private fun typedText(want: String, head: String, tail: String, text: String): Bundle? {
+        val end = SystemClock.uptimeMillis() + RETYPE_WAIT_MS
+        var last = fieldText() ?: return null
+        var changedAt = SystemClock.uptimeMillis()
+        while (true) {
+            val got = last.getString("text")
+            if (got == want || got == null || lostFrom(got, head, tail, text) < 0) return last
+            val now = SystemClock.uptimeMillis()
+            if (now - changedAt >= RETYPE_QUIET_MS || now >= end) return last
+            Thread.sleep(RETYPE_POLL_MS)
+            val next = fieldText() ?: return null
+            if (next.getString("text") != got || next.getInt("changes") != last.getInt("changes")) changedAt = SystemClock.uptimeMillis()
+            last = next
+        }
+    }
+
+    /**
+     * Where [text] typed between [head] and [tail] lost its first character, when [got] is that
+     * with characters missing from the typed part only; -1 otherwise (all there, or other text).
+     */
+    private fun lostFrom(got: String, head: String, tail: String, text: String): Int {
+        if (got.length >= head.length + text.length + tail.length || got.length < head.length + tail.length) return -1
+        if (!got.startsWith(head) || !got.endsWith(tail)) return -1
+        val typed = got.substring(head.length, got.length - tail.length)
+        var i = 0
+        var from = -1
+        for ((k, c) in text.withIndex()) {
+            if (i < typed.length && typed[i] == c) i++
+            else if (from < 0) from = k
+        }
+        return if (i == typed.length) from else -1
     }
 
     /**
@@ -1536,7 +1647,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                     steadyReads = 0
                 }
             }
-            if (now - start >= timeout) { status = 2; break }
+            if (now - maxOf(start, actionEnd) >= timeout) { status = 2; break }
             Thread.sleep(5)
         }
 
@@ -1551,6 +1662,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(if (jsFrom != 0L) ((jsLast - jsFrom) / 1000).toInt() else 0)
         val jsEnd = js.runtime()
         body.writeInt(if (jsStart >= 0 && jsEnd >= jsStart) ((jsEnd - jsStart) / 1000).toInt() else 0)
+        body.writeByte(if (lastClick > start) 1 else 0)
     }
 
     /** Fallback: Android coalesces content-change events (~100 ms), hence the larger window. */
@@ -1587,7 +1699,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             } else if (now - start >= noChange) {
                 status = 1; break
             }
-            if (now - start >= timeout) { status = 2; break }
+            if (now - maxOf(start, actionEnd) >= timeout) { status = 2; break }
             Thread.sleep(1)
         }
         val last = if (method == 3) now else lastChange.get()
@@ -1601,5 +1713,6 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(0)
         body.writeInt(0)
         body.writeInt(0)
+        body.writeByte(if (lastClick > start) 1 else 0)
     }
 }

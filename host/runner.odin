@@ -883,8 +883,9 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 }
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
-	res, skipped, focused, input, input_wait_us, ok := op_type(r.c, text, r.alloc, paced = r.paced_typing && r.dev.platform == .Android)
+	res, skipped, focused, input, input_wait_us, retyped, ok := op_type(r.c, text, r.alloc, paced = r.paced_typing && r.dev.platform == .Android)
 	if !ok do return AGENT_LOST
+	if retyped > 0 do note(r, "the field missed characters: typed the last %d again", retyped)
 	#partial switch input {
 	case .Waited:    note(r, "typing waited %d ms for the keyboard to start on the field", input_wait_us / 1000)
 	case .Timed_Out: note(r, "the keyboard did not start on the field in %d ms: typed anyway", input_wait_us / 1000)
@@ -1028,6 +1029,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	on_field := false // the element is a text field or holds one (field_of)
 	to_focus := false // a text field the tap should focus (the focus check after the tap)
 	field_at: [4]i32 // that field's bounds when tapped
+	window_before: u64 // Android: what the element's window said (window_content)
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
 		ok: bool
@@ -1116,6 +1118,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		n := r.h.nodes[el]
 		center = {n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2}
 		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
+		if r.dev.platform == .Android do window_before = window_content(r, el)
 		f := field_of(r, el)
 		on_field = f >= 0
 		if on_field && r.dev.platform != .Web && .Focused not_in r.h.nodes[f].flags {
@@ -1136,6 +1139,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	}
 	frame := frame_hold(r, d.sel == nil || in_sheet, tapped.class)
 	before := r.h.hash
+	windows_before := len(r.h.roots)
 	app_before := r.h.app_hash
 	content_before := r.h.content
 	typing_before := typing(r)
@@ -1180,22 +1184,29 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			again := settle_status(r, d.settle_ms) or_return
 			status = again.status
 		}
-		// Android: the first touch in a window that had just come, which changed nothing at all
-		// (no frame, no event). A system permission dialog ignored it ~150 ms after it came in,
-		// the button still there: tapped again a moment later, as iOS sheets above. A tap that
-		// changed nothing cannot be undone by a second one. Not with retryTapIfNoChange: false.
+		// Android: the first touch in a window that had just come, which changed nothing in it.
+		// A system permission dialog ignored it ~150 ms after it came in, the button still there:
+		// tapped again a moment later, as iOS sheets above. A tap that changed nothing cannot be
+		// undone by a second one. Not with retryTapIfNoChange: false. Nothing changed: no view
+		// reported a click, the window drew no frame, the element's window says the same
+		// (window_content), and no window came. Other windows can change all the same: the
+		// dialog's transition ends and the app's window under it leaves the list, its events
+		// ending the settle (v0.4.10 required no change at all, and never tapped again); the
+		// status bar's signal goes from three bars to full.
 		new_window := r.dev.platform == .Android && r.new_window_touch && d.sel != nil && d.point == ""
-		for retry := 0; new_window && status == .No_Change && !d.long_press && d.repeat == 1 && !d.once && retry < NEW_WINDOW_TAP_RETRIES; retry += 1 {
+		taken := res.clicked || res.frames > 0
+		for retry := 0; new_window && !taken && !d.long_press && d.repeat == 1 && !d.once && retry < NEW_WINDOW_TAP_RETRIES; retry += 1 {
 			time.sleep(NEW_WINDOW_TAP_PAUSE_MS * time.Millisecond)
 			if !read_screen(r) do return AGENT_LOST
 			el := select(r, d.sel) or_return
-			if el < 0 || r.h.hash != before do break // gone, or the screen changed after all
+			if el < 0 || window_content(r, el) != window_before || len(r.h.roots) > windows_before do break // gone, or the tap acted after all
 			n := r.h.nodes[el]
 			x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
 			note(r, "the first tap in a new window changed nothing: tapping again")
 			tap_at(r, x, y, frame) or_return
 			again := settle_status(r, d.settle_ms) or_return
 			status = again.status
+			taken = again.clicked || again.frames > 0
 		}
 		// Android: React Native runs a press on its JavaScript thread, and a busy one (a screen
 		// that just came in, still rendering) runs it later, the main thread idle meanwhile.
@@ -1394,6 +1405,30 @@ window_texts :: proc(r: ^Runner, el: int) -> map[u64]struct{} {
 		}
 	}
 	return set
+}
+
+// What the window holding node `el` says: its nodes' classes, texts, descriptions, ids and
+// states, not where they are (a window still moving in reads the same).
+@(private = "file")
+window_content :: proc(r: ^Runner, el: int) -> u64 {
+	root, end := 0, len(r.h.nodes)
+	for k in r.h.roots {
+		if k > el {
+			end = k
+			break
+		}
+		root = k
+	}
+	h: u64 = 14695981039346656037
+	for k in root ..< end {
+		n := r.h.nodes[k]
+		for s in ([]string{n.class, n.text, n.desc, n.id}) {
+			for c in transmute([]u8)s do h = (h ~ u64(c)) * 1099511628211
+			h = (h ~ 0xff) * 1099511628211
+		}
+		h = (h ~ u64(transmute(u8)(n.flags - {.Restless}))) * 1099511628211
+	}
+	return h
 }
 
 // A text field on Android or iOS: what inputText types into once it has the focus.

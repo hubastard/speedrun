@@ -160,6 +160,28 @@ class KeyService : AccessibilityService() {
 
     fun changes(): Int = synchronized(lock) { changes }
 
+    /**
+     * The text of the field with input, through its connection (the app answers it on its main
+     * thread), with its selection and [changes] count: what typing is checked against. Null
+     * without a connection, when the app does not answer, or when the field holds [TEXT_MAX]
+     * characters or more on either side of the cursor.
+     */
+    fun fieldText(): Bundle? {
+        if (Build.VERSION.SDK_INT < 33) return null
+        val count = changes()
+        val ic = inputMethod?.currentInputConnection ?: return null
+        val st = ic.getSurroundingText(TEXT_MAX, TEXT_MAX, 0) ?: return null
+        // The whole text: less than asked for on both sides. Its offset in the field is 0, or
+        // -1 (unknown) where the app answers with InputConnection's own (Compose).
+        if (st.offset > 0 || st.selectionStart >= TEXT_MAX || st.text.length - st.selectionEnd >= TEXT_MAX) return null
+        return Bundle().apply {
+            putString("text", st.text.toString())
+            putInt("start", st.selectionStart)
+            putInt("end", st.selectionEnd)
+            putInt("changes", count)
+        }
+    }
+
     /** speedrun types into [field] until [typed]. */
     fun typing(field: Long) = synchronized(lock) { typingInto = field }
 
@@ -250,6 +272,7 @@ class KeyService : AccessibilityService() {
         private const val FLAGS = KeyEvent.FLAG_SOFT_KEYBOARD or KeyEvent.FLAG_KEEP_TOUCH_MODE
         private const val CONNECTION_WAIT_MS = 1000L
         private const val ASK_AGAIN_MS = 200L
+        private const val TEXT_MAX = 10_000
     }
 }
 
@@ -258,7 +281,8 @@ class KeyService : AccessibilityService() {
  * {sent}; `call("input", null, {field, since})` -> {waited, changes} (milliseconds, -1: input
  * did not start on the field; absent: the service is not up, or Android 13), then keys typed
  * into the field until `call("typed")`, each followed by `call("change", null, {after,
- * timeout})` -> {changes}; `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
+ * timeout})` -> {changes}; `call("text")` -> {text, start, end, changes} (KeyService.fieldText; empty
+ * without); `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
  * shell user make into an app (as `content call` does); a local socket it does not. Only the
  * shell user and root may call.
  */
@@ -291,6 +315,12 @@ class KeyProvider : ContentProvider() {
                 if (service != null) putInt("changes", service.awaitChange(extras.getInt("after"), extras.getLong("timeout")))
             }
             "typed" -> Bundle().apply { service?.typed() }
+            "text" -> try {
+                service?.fieldText() ?: Bundle()
+            } catch (e: Exception) {
+                AgentLog.w("key service: the field's text could not be read", e)
+                Bundle()
+            }
             "up" -> Bundle().apply { putBoolean("up", service != null) }
             else -> null
         }
