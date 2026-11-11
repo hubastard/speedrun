@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`8dac6e3`](https://github.com/hubastard/speedrun/commit/8dac6e353b9f72ac00641e2b7c002acbe7b6dc46) Android: reads keep their cache past a Compose status bar; w | 2026-11-11 13:15 | 57.0 s | 47.9 s ▲ +16% | 3.11 s | 3.78 s | 5.48 s ▼ −18% | 7.27 s ▼ −26% |
 | [`7eb34e0`](https://github.com/hubastard/speedrun/commit/7eb34e0e50ae6cc7716c8e68a016b5c7573e3257) Bench: Compose Bench's README takes v0.4.11's numbers | 2026-11-09 23:31 | 55.3 s | 46.8 s | 3.08 s | 3.86 s | 5.85 s | 9.83 s |
 | [`04f6bf7`](https://github.com/hubastard/speedrun/commit/04f6bf7b35bf63afddd3793f9d613b53a267cbe4) Android: typing is checked and what the field missed typed a | 2026-11-09 23:13 | 52.5 s | 38.3 s | 3.14 s | 3.94 s | 6.65 s | 10.21 s |
 | [`716c01d`](https://github.com/hubastard/speedrun/commit/716c01d335071c10213faafa8b903bcff5e7b0c8) Bench: Compose Bench's README takes v0.4.10's numbers | 2026-11-07 11:15 | 53.1 s | 41.5 s | 3.08 s | 3.88 s | 6.44 s | 9.41 s |
