@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`a171959`](https://github.com/hubastard/speedrun/commit/a17195946e56a13f4a96ce9bc710c4cfedcf026c) Bench: Compose Bench's README takes v0.4.13's numbers | 2026-11-11 14:40 | 43.3 s | 44.0 s | 3.09 s | 3.74 s | 5.75 s | 9.50 s |
 | [`91c0d78`](https://github.com/hubastard/speedrun/commit/91c0d78033729fb497f608321bab89e717a8297c) Android: a tap that changed nothing is repeated only as a wi | 2026-11-11 14:24 | 38.6 s ▼ −28% | 42.9 s | 3.13 s | 4.04 s | 7.29 s ▲ +25% | 9.59 s |
 | [`d432e3a`](https://github.com/hubastard/speedrun/commit/d432e3ac3c779c76ed55566d1d88f196f87c9c1e) Bench: the READMEs take v0.4.12's numbers | 2026-11-11 13:41 | 64.6 s ✗ 0/1 | 50.6 s | 3.22 s | 3.94 s | 6.29 s | 9.75 s |
 | [`751d47b`](https://github.com/hubastard/speedrun/commit/751d47b5af6227fb93e56c3e962a815f9a9f1109) Docs: the typing notes describe what Gboard did without quot | 2026-11-11 13:36 | 43.4 s ▼ −18% | 52.3 s ▲ +26% | 3.09 s | 3.62 s | 4.73 s ▼ −27% | 6.74 s ▼ −31% |
