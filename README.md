@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`d432e3a`](https://github.com/hubastard/speedrun/commit/d432e3ac3c779c76ed55566d1d88f196f87c9c1e) Bench: the READMEs take v0.4.12's numbers | 2026-11-11 13:41 | 64.6 s ✗ 0/1 | 50.6 s | 3.22 s | 3.94 s | 6.29 s | 9.75 s |
 | [`751d47b`](https://github.com/hubastard/speedrun/commit/751d47b5af6227fb93e56c3e962a815f9a9f1109) Docs: the typing notes describe what Gboard did without quot | 2026-11-11 13:36 | 43.4 s ▼ −18% | 52.3 s ▲ +26% | 3.09 s | 3.62 s | 4.73 s ▼ −27% | 6.74 s ▼ −31% |
 | [`8dac6e3`](https://github.com/hubastard/speedrun/commit/8dac6e353b9f72ac00641e2b7c002acbe7b6dc46) Android: reads keep their cache past a Compose status bar; w | 2026-11-11 13:15 | 57.0 s | 47.9 s ▲ +16% | 3.11 s | 3.78 s | 5.48 s ▼ −18% | 7.27 s ▼ −26% |
 | [`7eb34e0`](https://github.com/hubastard/speedrun/commit/7eb34e0e50ae6cc7716c8e68a016b5c7573e3257) Bench: Compose Bench's README takes v0.4.11's numbers | 2026-11-09 23:31 | 55.3 s | 46.8 s | 3.08 s | 3.86 s | 5.85 s | 9.83 s |
