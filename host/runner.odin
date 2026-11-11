@@ -82,7 +82,7 @@ Record :: struct {
 }
 
 Runner :: struct {
-	new_window_touch:     bool, // Android: the last touch was the first in a window that had just come
+	new_window_touch:     bool, // Android: the last touch was the first in its window (one that had just come)
 	c:                    ^Conn,
 	dev:                  ^Device, // platform, simulator (iOS app control goes through simctl)
 	alloc:                mem.Allocator, // the run's lifetime
@@ -1204,13 +1204,16 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 		}
 		// Android: the first touch in a window that had just come, which changed nothing in it.
 		// A system permission dialog ignored it ~150 ms after it came in, the button still there:
-		// tapped again a moment later, as iOS sheets above. A tap that changed nothing cannot be
-		// undone by a second one. Not with retryTapIfNoChange: false. Nothing changed: no view
+		// tapped again a moment later, as iOS sheets above. Not with retryTapIfNoChange: false.
+		// Nothing changed: no view
 		// reported a click, the window drew no frame, the element's window says the same
 		// (window_content), and no window came. Other windows can change all the same: the
 		// dialog's transition ends and the app's window under it leaves the list, its events
 		// ending the settle (v0.4.10 required no change at all, and never tapped again); the
-		// status bar's signal goes from three bars to full.
+		// status bar's signal goes from three bars to full. Only the first touch a window ever
+		// takes: a press can act later with nothing to show for it (Speedrun Bench's second
+		// order popup, 2 s on), and the first tap in the app's window after a modal closed,
+		// another window than the last touch's, pressed it twice (v0.4.10 to v0.4.12).
 		new_window := r.dev.platform == .Android && r.new_window_touch && d.sel != nil && d.point == ""
 		taken := res.clicked || res.frames > 0
 		for retry := 0; new_window && !taken && !d.long_press && d.repeat == 1 && !d.once && retry < NEW_WINDOW_TAP_RETRIES; retry += 1 {
@@ -1388,7 +1391,7 @@ tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> Err {
 // down the system dropped down again until it takes one, for up to 2 s. A touch it never took
 // fails the command: the app never saw it.
 touch_taken :: proc(r: ^Runner, res: Action_Result, x, y: i32) -> Err {
-	r.new_window_touch = res.transition_us > 0
+	r.new_window_touch = res.window_came
 	if res.transition_us > 0 do note(r, "a new window: waited %.0f ms for window transitions", f64(res.transition_us) / 1000)
 	if res.dropped == 0 do return nil
 	ms := f64(res.dropped_us) / 1000

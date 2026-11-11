@@ -138,11 +138,13 @@ Action_Result :: struct {
 	// Android touches (TAP, PRESS, SWIPE): DOWNs the system dropped (no window took touches
 	// there: one opening) before it took one, and how long they held the touch off. untaken:
 	// it dropped every one, for 2 s. transition_us: how long the touch waited for window
-	// transitions (a new window active since the last touch).
+	// transitions (a new window active since the last touch). window_came: the first touch or
+	// key in its window.
 	dropped:       int,
 	dropped_us:    u32,
 	untaken:       bool,
 	transition_us: u32,
+	window_came:   bool,
 }
 
 Conn :: struct {
@@ -422,6 +424,7 @@ read_touch :: proc(body: []byte) -> (res: Action_Result, ok: bool) {
 	res.dropped_us = rd_u32(&r)
 	res.untaken = rd_u8(&r) == 0
 	res.transition_us = rd_u32(&r)
+	if len(r.b) - r.off >= 1 do res.window_came = rd_u8(&r) != 0
 	return res, r.ok
 }
 

@@ -920,8 +920,13 @@ Known differences in how, not what:
   list holds the center (a modal bottom sheet at half height: the center was its top edge,
   Flutter Bench's sheet did not scroll); on Android a tenth of the way in from its edge, as
   long a drag as one from the center.
-- A tap that is the first touch in a window that had just come, and changed nothing in it,
-  is tapped again 300 ms later, twice at most (not with `retryTapIfNoChange: false`): a
+- A tap that is the first touch in a window that had just come (no touch or key went to it
+  before: the agent keeps the windows input went to), and changed nothing in it, is tapped
+  again 300 ms later, twice at most (not with `retryTapIfNoChange: false`). A window back from
+  under another is none that came: the app's window leaves the window list while a React
+  Native modal shows, and from v0.4.10 to v0.4.12 its first tap after the modal closed, on
+  Speedrun Bench's second order popup (a press that acts 2 s later with nothing drawn), was
+  tapped again and pressed it twice (Popups ~1.2 s longer; Compose Bench's Send checks it). A
   team's tap on the notification permission dialog's Allow, ~150 ms after the dialog came,
   did nothing on both attempts. Nothing changed: no view reported a click (the agent's
   settle tells of a `TYPE_VIEW_CLICKED` after the action), the window drew no frame, the

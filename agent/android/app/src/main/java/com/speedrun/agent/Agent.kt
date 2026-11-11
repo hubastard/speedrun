@@ -96,18 +96,19 @@ internal object AgentLog {
  *        accessibility delegate is not searched; fall back to TREE when FIND finds nothing.
  *   3 TAP    i32 x, i32 y                    -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u16 dropped, u32 dropped_us, u8 taken,
- *                                               u32 transition_us
+ *                                               u32 transition_us, u8 came
  *   4 KEY    i32 keycode                     -> u32 prep_us, u32 inject_us, u8 inject_path
  *        prep = active-window lookup + frame-stats clear; inject_path = see InjectPath
  *        (formerly fast_inject: 0 and 1 keep their meaning, 2 = shell-uid InputManager).
  *        dropped = DOWNs the system dropped before one was taken (no window took touches
  *        there: a window opening), dropped_us = how long they held the touch off, taken = 0
  *        when it dropped them all for TOUCH_DROPPED_MAX_MS; transition_us = how long the
- *        touch waited for window transitions, a new window being active (see touchDown).
+ *        touch waited for window transitions, a new window being active (see touchDown);
+ *        came = 1 when it is the first touch or key in that window.
  *   7 SWIPE  i32 x1, i32 y1, i32 x2, i32 y2, i32 duration_ms, i32 flags
  *                                            -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u16 dropped, u32 dropped_us, u8 taken,
- *                                               u32 transition_us
+ *                                               u32 transition_us, u8 came
  *        a drag from (x1,y1) to (x2,y2) lasting duration_ms. flags & 1 (fling): lift at
  *        the end, like `adb shell input swipe`, so the content keeps its speed and flings.
  *        Otherwise the pointer stays still for SWIPE_HOLD_MS before lifting: no fling, the
@@ -117,7 +118,7 @@ internal object AgentLog {
  *        are injected right away, ending now; only the first MOVE waits for the app (~1 frame).
  *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u16 dropped, u32 dropped_us, u8 taken,
- *                                               u32 transition_us
+ *                                               u32 transition_us, u8 came
  *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u32 skipped, u8 focused, u8 input,
@@ -794,11 +795,13 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     // The last touch's DOWNs the system dropped (touchDown), how long they held it off,
-    // whether it took one in the end, and how long it waited for window transitions.
+    // whether it took one in the end, how long it waited for window transitions, and whether
+    // it was the first input in its window (windowCame).
     private var dropped = 0
     private var droppedNs = 0L
     private var touchTaken = true
     private var transitionNs = 0L
+    private var windowCame = false
     // The last touch's down time (uptime ms): input started before it can be the field before.
     private var lastTouchDown = 0L
 
@@ -807,10 +810,15 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt((droppedNs / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         body.writeByte(if (touchTaken) 1 else 0)
         body.writeInt((transitionNs / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        body.writeByte(if (windowCame) 1 else 0)
     }
 
     // The active window at the last touch or key.
     private var inputWindow = Int.MIN_VALUE
+    // Every window a touch or key went to. A window back from under another is none that came:
+    // the app's window leaves the window list while a React Native modal shows, and its first
+    // tap after the modal closed is not the first it ever took.
+    private val inputWindows = HashSet<Int>()
 
     // UiAutomation.syncInputTransactions(waitForAnimations), hidden: with true, the window
     // manager waits (up to 5 s) until no transition or window animation runs, then until the
@@ -833,6 +841,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      */
     private fun waitForTransitions() {
         transitionNs = 0
+        windowCame = false
         if (actionWindow == inputWindow) return
         val m = syncInput ?: return
         val t = SystemClock.elapsedRealtimeNanos()
@@ -846,6 +855,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         transitionNs = SystemClock.elapsedRealtimeNanos() - t
         beginAction() // the settle measures from the input, not from before the transition
         inputWindow = actionWindow
+        windowCame = inputWindows.add(actionWindow)
     }
 
     /**
