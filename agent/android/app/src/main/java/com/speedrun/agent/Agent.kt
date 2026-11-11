@@ -1132,8 +1132,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      * text with characters missing from the typed part, and the cursor after it, the typed part
      * is replaced with [text] through the field's connection (KeyService.replace), RETYPE_ROUNDS
      * times at most, while it helps. Not with keys: typed again through the keyboard app, they
-     * met a keyboard behind the field, which put its own word back ("scroll@example.com" came out
-     * as "srroll@example.com"). Letters are compared without their case: a field whose app
+     * met a keyboard behind the field, which put its own word back (letters out of place on
+     * CI). Letters are compared without their case: a field whose app
      * changes it (upper case) starts input again on every key, and Gboard 18 lost 1 to 3 of 18
      * characters there on every run ("speedrun runs fast" as "SPEEDRU RUNSFAT"); what is put in
      * goes through the app's change too. A field whose app changes what is typed otherwise (a

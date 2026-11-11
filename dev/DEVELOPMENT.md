@@ -1203,10 +1203,9 @@ Known differences in how, not what:
   for another field (the node's identity) and left it. A field of the same kind, as wide, whose
   rows overlap (it grows as its text wraps), is now the same (`TypedField`).
   v0.4.11 typed what was missing again with keys, after erasing through the connection: on
-  their CI runners it left "scroll@example.com" as "srroll@example.com" and
-  "qa.c2024@example.com" as "qa.c2024@examplome.com". Edits through the connection go behind
-  the keyboard app's back, and Gboard, composing a word, put its word back as it had it (an
-  erase of 40 and the address typed after it gave "qa.c2024om@example.com", no retype). The
+  their CI runners it left letters out of place in the fields. Edits through the connection
+  go behind the keyboard app's back, and Gboard, composing a word, put its word back as it had
+  it (an erase and the text typed after it came out the same way, no retype). The
   connection (`AccessibilityInputConnection`) has no `finishComposingText` or batch edits: the
   key service keeps the composing region the system tells it of (`onUpdateSelection`'s
   candidates), and commits the word as it is (`commitText` replaces the composing text) before

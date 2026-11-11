@@ -196,8 +196,8 @@ class KeyService : AccessibilityService() {
     /**
      * The keyboard app's word in progress, committed as it is: an edit through this service's
      * connection while the keyboard app is composing a word goes behind its back, and it puts its
-     * word back as it had it (Gboard on CI: "qa.c2024@example.com" typed after an erase came out
-     * as "qa.c2024om@example.com"). Committed, the system tells it its word is done. The
+     * word back as it had it (Gboard on CI: text typed after an erase came out with letters out
+     * of place). Committed, the system tells it its word is done. The
      * connection has no finishComposingText: its commitText replaces the composing text.
      */
     private fun finishComposing(ic: InputMethod.AccessibilityInputConnection) {
