@@ -20,6 +20,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -30,6 +31,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
 import kotlin.math.hypot
 
 internal const val TAG = "SpeedrunAgent"
@@ -219,13 +221,31 @@ private const val SWIPE_LIFT_GAP_MS = 25L
 // A typed key that changes nothing in the field is waited for this long (Agent.injectPaced).
 private const val PACE_TIMEOUT_MS = 500L
 
-// Typing checked (retypeLost): rounds of typing again at most, and how long the field's text
-// is waited for while characters are missing: until RETYPE_QUIET_MS pass without a change in
-// it, RETYPE_WAIT_MS at most, read every RETYPE_POLL_MS.
+// Typing checked (checkTyped): rounds of putting in what the field missed at most, and how long
+// the field's text is waited for while characters are missing: until RETYPE_QUIET_MS pass with
+// no change in it and no input started on it (a keyboard app that starts again drops the key it
+// gets meanwhile, and the keys after it can come late), RETYPE_WAIT_MS at most, read every
+// RETYPE_POLL_MS; a field the key service cannot read (its input starting again) is read again for
+// RETYPE_UNREAD_MS (a field gone after its last key, a code sent, costs that). A field made
+// again while it was typed into is the same within RETYPE_SAME_PX (TypedField).
 private const val RETYPE_ROUNDS = 2
-private const val RETYPE_QUIET_MS = 400L
-private const val RETYPE_WAIT_MS = 3000L
+private const val RETYPE_QUIET_MS = 800L
+private const val RETYPE_WAIT_MS = 4000L
 private const val RETYPE_POLL_MS = 30L
+private const val RETYPE_UNREAD_MS = 200L
+private const val RETYPE_SAME_PX = 8
+
+// What the check of typed text found, in TYPE's reply (the host's type_text notes it).
+private const val CHECK_NONE = 0         // not checked: no keys typed, or Enter or Tab in the text
+private const val CHECK_UNREAD = 1       // not checked: the field's text could not be read before
+private const val CHECK_AS_TYPED = 2     // the field holds the text typed
+private const val CHECK_OTHER = 3        // it holds other text: an app that changes what is typed
+private const val CHECK_ELSEWHERE = 4    // characters missing, the input focus on another field
+private const val CHECK_CURSOR = 5       // characters missing, the cursor not after the typed text
+private const val CHECK_UNREAD_AFTER = 6 // the field's text could not be read after the keys
+private const val CHECK_PUT_IN = 7       // characters missing, put in: the field holds the text typed
+private const val CHECK_STILL = 8        // characters missing, put in, and it still differs
+private const val CHECK_NO_REPLACE = 9   // characters missing, the key service could not put them in
 
 // An accessibility call the app doesn't answer returns empty after AccessibilityInteraction-
 // Client's 5 s timeout. One that took this long timed out (see child).
@@ -313,7 +333,9 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      * they were (a node removed stays, as long as the views' sizes hold). While it shows, each
      * read starts from an empty cache (freshNodes); View-based apps send events, and keep it.
      * The key service (KeyService.kt) is an enabled service: while it is on, Compose sends
-     * events too.
+     * events too. Only the active window and the app's own windows count: Android 17's status
+     * bar is Compose, and it emptied the cache before every read of every app (a 94-node React
+     * Native list read in ~85 ms against ~22 ms cached, since v0.2.3).
      */
     private var composeShown = false
 
@@ -605,7 +627,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         if (active != null) {
             seen.add(active.windowId)
             active.getBoundsInScreen(screen)
-            count += walkVisible(active)
+            count += walkVisible(active, app = true)
             anyStalled = anyStalled || stalled
         }
         val windows = try { ua.windows } catch (e: Exception) { emptyList() }
@@ -616,7 +638,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             anyStalled = anyStalled || stalled
             if (root == null) continue
             if (screen.isEmpty) root.getBoundsInScreen(screen)
-            count += walkVisible(root)
+            count += walkVisible(root, app = w.type == AccessibilityWindowInfo.TYPE_APPLICATION)
             anyStalled = anyStalled || stalled
         }
         count += writeToast(screen)
@@ -627,11 +649,15 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeByte(if (anyStalled) 1 else 0)
     }
 
-    /** walkVisible met Compose content (composeShown). */
+    /** walkVisible met Compose content in an app's window (composeShown). */
     private var walkCompose = false
 
-    /** Pre-order from a window root, skipping subtrees not visible to the user. */
-    private fun walkVisible(root: AccessibilityNodeInfo): Int {
+    /**
+     * Pre-order from a window root, skipping subtrees not visible to the user. [app]: the active
+     * window or one of an app's, whose Compose content counts (composeShown); a system window's
+     * (the status bar's) does not.
+     */
+    private fun walkVisible(root: AccessibilityNodeInfo, app: Boolean): Int {
         var count = 0
         val nodes = ArrayDeque<AccessibilityNodeInfo>()
         val depths = ArrayDeque<Int>()
@@ -647,7 +673,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             val web = inWebView.removeLast() || n.className?.contains("WebView") == true
             writeNode(n, depth)
             count++
-            if (!walkCompose && isCompose(n)) walkCompose = true
+            if (app && !walkCompose && isCompose(n)) walkCompose = true
             for (i in n.childCount - 1 downTo 0) {
                 val c = child(n, i) ?: continue
                 if (!web && !c.isVisibleToUser) continue
@@ -1041,10 +1067,12 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 else -> 1
             }
         }
-        // What the field holds before the keys, to check what they did (retypeLost). Not for
+        // What the field holds before the keys, to check what they did (checkTyped). Not for
         // Enter or Tab, which act (a single-line field sends its text, the focus moves on).
-        val before = if (input != 0 && text.none { it == '\n' || it == '\t' }) fieldText() else null
-        var retyped = 0
+        val acts = text.any { it == '\n' || it == '\t' }
+        val before = if (input != 0 && !acts) fieldText() else null
+        val typed = field?.let { TypedField(it) }
+        var checked = Checked(CHECK_NONE)
         timedAction {
             waitForTransitions()
             if (skipped > 0 && insertText(text)) {
@@ -1052,95 +1080,150 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
                 return@timedAction
             }
             if (paced && changes >= 0) injectPaced(keys, changes) else injectKeys(keys)
-            if (before != null && field != null) retyped = retypeLost(text, keys, before, KeyService.fieldOf(field))
+            checked = when {
+                typed == null || skipped > 0 || acts -> Checked(CHECK_NONE)
+                before == null -> Checked(CHECK_UNREAD)
+                else -> checkTyped(text, before, typed)
+            }
         }
         if (input != 0) keyCall("typed", Bundle())
         body.writeInt(skipped)
         body.writeByte(if (field != null) 1 else 0)
         body.writeByte(input)
         body.writeInt((inputWaitNs / 1000).toInt())
-        body.writeInt(retyped)
+        body.writeInt(checked.putIn)
+        body.writeByte(checked.status)
+        body.writeInt(checked.missed)
     }
 
     /** The focused field's text and selection, by the key service (KeyService.fieldText). */
     private fun fieldText(): Bundle? = keyCall("text", Bundle())?.takeIf { it.containsKey("text") }
 
+    /** What checkTyped found: CHECK_*, the characters missing first, the characters put in. */
+    private class Checked(val status: Int, val missed: Int = 0, val putIn: Int = 0)
+
     /**
-     * Characters the field missed, typed again: the keyboard app lost one now and then on CI's
-     * emulators with a software GPU, keys paced or not ("calendar" typed as "calendr", "Large
-     * text" as "Large tex"), and keys the dispatcher held 10 s are dropped. With
-     * [before] the field's text and selection before [presses] typed [text] there: when the
-     * field holds that text with characters missing from the typed part, and the cursor after
-     * it, the keys from the first one missing are erased and typed again, RETYPE_ROUNDS times
-     * at most, while it helps. A field whose app changes what is typed (upper case, a mask)
-     * holds something else, and the focus gone to another field (a code's next box) leaves its
-     * text unread: both are left as they are. Returns the characters typed again.
+     * The field typing started in: its node's identity, kind and place. An app can make its
+     * field again while it is typed into: a Compose app that showed the keyboard again started
+     * input again, on another node in the same place, and the keyboard app dropped the key it
+     * got meanwhile. A focused field of the same kind, as wide and at the same place (rows that
+     * overlap: a field grows as its text wraps) is that field; a code's next box (beside it) or
+     * a form's next field (below) is not.
      */
-    private fun retypeLost(text: String, presses: List<Array<KeyEvent>>, before: Bundle, field: Long): Int {
-        val t0 = before.getString("text") ?: return 0
-        val s0 = minOf(before.getInt("start"), before.getInt("end"))
-        val e0 = maxOf(before.getInt("start"), before.getInt("end"))
-        if (s0 < 0 || e0 > t0.length || presses.size != text.length) return 0
-        val head = t0.substring(0, s0)
-        val tail = t0.substring(e0)
-        val want = head + text + tail
-        var retyped = 0
-        var previous: String? = null
-        for (round in 0..RETYPE_ROUNDS) {
-            val now = typedText(want, head, tail, text) ?: return retyped
-            val got = now.getString("text")!!
-            val from = lostFrom(got, head, tail, text)
-            if (from < 0 || got == previous || round == RETYPE_ROUNDS) return retyped
-            val cursor = got.length - tail.length
-            if (now.getInt("start") != cursor || now.getInt("end") != cursor) return retyped
-            if (Build.VERSION.SDK_INT >= 34) ua.clearCache()
-            if (inputFocus()?.let { KeyService.fieldOf(it) } != field) return retyped
-            val erase = cursor - head.length - from
-            AgentLog.i("typing: the field missed ${text.length - (cursor - head.length)} of ${text.length} characters: typing again from character ${from + 1}")
-            if (erase > 0 && !keysThroughField(KeyEvent.KEYCODE_DEL, erase)) return retyped
-            // The erase ended the key service's typing into the field: on again (input restarting).
-            keyCall("input", Bundle().apply { putLong("field", field); putLong("since", lastTouchDown) })
-            injectKeys(presses.subList(from, presses.size))
-            retyped += text.length - from
-            previous = got
+    private class TypedField(node: AccessibilityNodeInfo) {
+        val id = KeyService.fieldOf(node)
+        val kind = node.className?.toString()
+        val at = Rect().also { node.getBoundsInScreen(it) }
+
+        fun matches(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            if (KeyService.fieldOf(node) == id) return true
+            val r = Rect().also { node.getBoundsInScreen(it) }
+            return node.className?.toString() == kind && abs(r.left - at.left) <= RETYPE_SAME_PX &&
+                abs(r.right - at.right) <= RETYPE_SAME_PX && r.top < at.bottom && at.top < r.bottom
         }
-        return retyped
     }
 
     /**
-     * The field's text once it holds [want], or has stopped changing (RETYPE_QUIET_MS without a
-     * change, RETYPE_WAIT_MS at most) while it could still be on its way there (characters
-     * missing): the keyboard app's last edits come a frame or more after its keys. At once
-     * when it holds something else. Null when the key service cannot read it.
+     * Typing checked, and what the field missed put in: the keyboard app lost a character now
+     * and then on CI's emulators with a software GPU, keys paced or not ("calendar" typed as
+     * "calendr"), most as it started again in the middle of the typing. With [before] the
+     * field's text and selection before the keys typed [text] there: when the field holds that
+     * text with characters missing from the typed part, and the cursor after it, the typed part
+     * is replaced with [text] through the field's connection (KeyService.replace), RETYPE_ROUNDS
+     * times at most, while it helps. Not with keys: typed again through the keyboard app, they
+     * met a keyboard behind the field, which put its own word back ("scroll@example.com" came out
+     * as "srroll@example.com"). Letters are compared without their case: a field whose app
+     * changes it (upper case) starts input again on every key, and Gboard 18 lost 1 to 3 of 18
+     * characters there on every run ("speedrun runs fast" as "SPEEDRU RUNSFAT"); what is put in
+     * goes through the app's change too. A field whose app changes what is typed otherwise (a
+     * mask, a length limit) holds something else, and the focus gone to another field (a code's
+     * next box) leaves the text unread: both are left as they are.
+     */
+    private fun checkTyped(text: String, before: Bundle, field: TypedField): Checked {
+        val t0 = before.getString("text") ?: return Checked(CHECK_UNREAD)
+        val s0 = minOf(before.getInt("start"), before.getInt("end"))
+        val e0 = maxOf(before.getInt("start"), before.getInt("end"))
+        if (s0 < 0 || e0 > t0.length) return Checked(CHECK_UNREAD)
+        val head = t0.substring(0, s0)
+        val tail = t0.substring(e0)
+        val want = head + text + tail
+        var missed = 0
+        var putIn = 0
+        var previous: String? = null
+        for (round in 0..RETYPE_ROUNDS) {
+            val now = typedText(want, head, tail, text) ?: return Checked(CHECK_UNREAD_AFTER, missed, putIn)
+            val got = now.getString("text")!!
+            if (got == want) return Checked(if (round == 0) CHECK_AS_TYPED else CHECK_PUT_IN, missed, putIn)
+            if (got.equals(want, ignoreCase = true)) return Checked(if (round == 0) CHECK_OTHER else CHECK_PUT_IN, missed, putIn)
+            val from = lostFrom(got, head, tail, text)
+            if (from < 0) return Checked(if (round == 0) CHECK_OTHER else CHECK_STILL, missed, putIn)
+            if (round == 0) missed = want.length - got.length
+            if (got == previous || round == RETYPE_ROUNDS) return Checked(CHECK_STILL, missed, putIn)
+            val cursor = got.length - tail.length
+            if (now.getInt("start") != cursor || now.getInt("end") != cursor) return Checked(CHECK_CURSOR, missed, putIn)
+            if (Build.VERSION.SDK_INT >= 34) ua.clearCache()
+            if (!field.matches(inputFocus())) return Checked(CHECK_ELSEWHERE, missed, putIn)
+            AgentLog.i("typing: the field missed ${want.length - got.length} of ${text.length} characters, the first at ${from + 1}: putting them in")
+            val done = keyCall("replace", Bundle().apply {
+                putInt("start", head.length)
+                putInt("end", cursor)
+                putString("text", text)
+            })?.getBoolean("done") == true
+            if (!done) return Checked(CHECK_NO_REPLACE, missed, putIn)
+            putIn += want.length - got.length
+            previous = got
+        }
+        return Checked(CHECK_STILL, missed, putIn)
+    }
+
+    /**
+     * The field's text once it holds [want], or has been still (RETYPE_QUIET_MS with no change in
+     * it and no input started on it, RETYPE_WAIT_MS at most) while it could still be on its way
+     * there (characters missing): the keyboard app's last edits come a frame or more after its
+     * keys, later as it starts again. At once when it holds something else. Read again for
+     * RETYPE_UNREAD_MS while the key service cannot read it: a field whose input starts again
+     * on every key has no connection for a moment (2 runs in 4 of Compose Bench's upper-case
+     * field). Null when it could not.
      */
     private fun typedText(want: String, head: String, tail: String, text: String): Bundle? {
         val end = SystemClock.uptimeMillis() + RETYPE_WAIT_MS
-        var last = fieldText() ?: return null
-        var changedAt = SystemClock.uptimeMillis()
+        var last: Bundle? = null
+        var changedAt = 0L
+        var unreadSince = -1L
         while (true) {
-            val got = last.getString("text")
-            if (got == want || got == null || lostFrom(got, head, tail, text) < 0) return last
+            val next = fieldText()
             val now = SystemClock.uptimeMillis()
-            if (now - changedAt >= RETYPE_QUIET_MS || now >= end) return last
+            if (next != null) {
+                unreadSince = -1L
+                if (last == null || next.getString("text") != last.getString("text") ||
+                    next.getInt("changes") != last.getInt("changes")) changedAt = now
+                last = next
+                val got = next.getString("text")
+                if (got == null || got.equals(want, ignoreCase = true) || lostFrom(got, head, tail, text) < 0) return next
+            } else {
+                if (unreadSince < 0) unreadSince = now
+                if (now - unreadSince >= RETYPE_UNREAD_MS) return last
+            }
+            if (now >= end) return last
+            if (last != null && now - maxOf(changedAt, last.getLong("started")) >= RETYPE_QUIET_MS) return last
             Thread.sleep(RETYPE_POLL_MS)
-            val next = fieldText() ?: return null
-            if (next.getString("text") != got || next.getInt("changes") != last.getInt("changes")) changedAt = SystemClock.uptimeMillis()
-            last = next
         }
     }
 
     /**
      * Where [text] typed between [head] and [tail] lost its first character, when [got] is that
-     * with characters missing from the typed part only; -1 otherwise (all there, or other text).
+     * with characters missing from the typed part only, letters in any case; -1 otherwise (all
+     * there, or other text).
      */
     private fun lostFrom(got: String, head: String, tail: String, text: String): Int {
         if (got.length >= head.length + text.length + tail.length || got.length < head.length + tail.length) return -1
-        if (!got.startsWith(head) || !got.endsWith(tail)) return -1
+        if (!got.startsWith(head, ignoreCase = true) || !got.endsWith(tail, ignoreCase = true)) return -1
         val typed = got.substring(head.length, got.length - tail.length)
         var i = 0
         var from = -1
         for ((k, c) in text.withIndex()) {
-            if (i < typed.length && typed[i] == c) i++
+            if (i < typed.length && typed[i].equals(c, ignoreCase = true)) i++
             else if (from < 0) from = k
         }
         return if (i == typed.length) from else -1

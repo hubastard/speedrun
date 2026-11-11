@@ -94,7 +94,7 @@ speedrun mcp                    # the session's verbs as an MCP server, on stdin
 | `SPEEDRUN_NO_BROWSER_UPDATE=1` | Web: do not check once a day for a newer Chrome for Testing or Firefox than the one in Speedrun's cache (see [Web](web.md#chrome)). |
 | `SPEEDRUN_SESSION_IDLE_S` | Seconds without a command before a session ends (default 3600). |
 | `SPEEDRUN_LONG_PRESS_MS` | How long `longPressOn` holds, for an app whose own long-press delay is longer than usual. |
-| `SPEEDRUN_PACED_TYPING=1` | Android 14 and later: `inputText` sends each key once the one before has changed the field, instead of as fast as the app takes them. About one frame more per character. `inputText` already checks the field and types again what it missed; pacing makes a keyboard app on a slow emulator (a software GPU) lose fewer characters to begin with. |
+| `SPEEDRUN_PACED_TYPING=1` | Android 14 and later: `inputText` sends each key once the one before has changed the field, instead of as fast as the app takes them. About one frame more per character. `inputText` already checks the field and puts in what it missed; pacing makes a keyboard app on a slow emulator (a software GPU) lose fewer characters to begin with. |
 | `SPEEDRUN_CLEAR_STATE_REINSTALL=1` | iOS: `clearState` reinstalls the app, as Maestro does, instead of emptying its folders (~0.7 s slower). |
 | `SPEEDRUN_CONDITION_TIMEOUT_MS` | How long a `when: visible` (or `notVisible`) waits for its element (default 7000, as Maestro); a condition's own `timeout` takes precedence. See [Conditions take up to 7 s](maestro-compatibility.md#conditions-take-up-to-7-s). |
 | `MAESTRO_*` | Passed to flows as variables, as in Maestro. |

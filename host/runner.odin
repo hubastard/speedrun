@@ -702,14 +702,20 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		case .Hide_Keyboard:
 			if r.dev.platform == .IOS do return true, ios_hide_keyboard(r)
 			if r.dev.platform == .Web do return true, nil // no keyboard on screen (Maestro: a no-op)
-			// BACK, then a failure if (G)board ids are still on screen.
+			// BACK, then a failure if (G)board ids are still on screen KEYBOARD_GONE_MS after
+			// it: on a team's CI the settle after it ended 47 ms in, before the keyboard had
+			// started to go, and the one read then still showed it.
 			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, AGENT_LOST
 			if e := settle(r); e != nil do return true, e
-			if !read_screen(r) do return true, AGENT_LOST
-			for &n in r.h.nodes do if n.kept && strings.contains(n.id, GBOARD_ID) {
-				return true, "Couldn't hide the keyboard"
+			t := time.tick_now()
+			for {
+				if !read_screen(r) do return true, AGENT_LOST
+				shown := false
+				for &n in r.h.nodes do if n.kept && strings.contains(n.id, GBOARD_ID) do shown = true
+				if !shown do return true, nil
+				if time.duration_milliseconds(time.tick_since(t)) >= KEYBOARD_GONE_MS do return true, "Couldn't hide the keyboard"
+				time.sleep(50 * time.Millisecond)
 			}
-			return true, nil
 		case .Scroll:
 			return true, swipe_points(r, r.w / 2, r.h_px / 2, r.w / 2, i32(f32(r.h_px) * 0.1), 400, nil)
 		case .Clear_Keychain:
@@ -883,9 +889,21 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 }
 
 type_text :: proc(r: ^Runner, text: string) -> Err {
-	res, skipped, focused, input, input_wait_us, retyped, ok := op_type(r.c, text, r.alloc, paced = r.paced_typing && r.dev.platform == .Android)
+	res, skipped, focused, input, input_wait_us, check, ok := op_type(r.c, text, r.alloc, paced = r.paced_typing && r.dev.platform == .Android)
 	if !ok do return AGENT_LOST
-	if retyped > 0 do note(r, "the field missed characters: typed the last %d again", retyped)
+	n, chars := check.missed, "character" if check.missed == 1 else "characters"
+	switch check.status {
+	case .None:
+	case .Unread:       note(r, "typing not checked: the field's text could not be read")
+	case .As_Typed:     note(r, "typing checked: the field holds the text typed")
+	case .Other:        note(r, "typing checked: the field holds other text (an app that changes what is typed): left as it is")
+	case .Elsewhere:    note(r, "the field missed %d %s, and the input focus is on another field: left as it is", n, chars)
+	case .Cursor:       note(r, "the field missed %d %s, and its cursor is not after the typed text: left as it is", n, chars)
+	case .Unread_After: note(r, "typing not checked: the field's text could not be read after the keys")
+	case .Put_In:       note(r, "the field missed %d %s: put in through its connection, it holds the text typed", n, chars)
+	case .Still:        note(r, "the field missed %d %s: put in through its connection (%d), and it still differs", n, chars, check.put_in)
+	case .No_Replace:   note(r, "the field missed %d %s, and the key service could not put them in", n, chars)
+	}
 	#partial switch input {
 	case .Waited:    note(r, "typing waited %d ms for the keyboard to start on the field", input_wait_us / 1000)
 	case .Timed_Out: note(r, "the keyboard did not start on the field in %d ms: typed anyway", input_wait_us / 1000)
@@ -1553,7 +1571,10 @@ busy_indicator :: proc(n: H_Node) -> bool {
 // own size, whatever its container's. A spinner in a list (a scrollable node from the
 // candidate down) is a row's, not an overlay's: Compose reports a list under inset tabs at its
 // whole frame (the bounding box of what the tabs leave uncovered), and a tap on a tab over a
-// list of running tasks waited 17 s for the "overlay" to go (Compose Bench's Tasks). -1: none.
+// list of running tasks waited 17 s for the "overlay" to go (Compose Bench's Tasks). A list
+// whose rows all show is not scrollable: what the element is drawn over (drawn_over) is no
+// overlay either (the same screen on API 37's taller one, the 12 rows fitting, waited 17 s
+// again). -1: none.
 @(private = "file")
 loading_cover :: proc(r: ^Runner, el: int) -> int {
 	n := r.h.nodes[el]
@@ -1562,6 +1583,7 @@ loading_cover :: proc(r: ^Runner, el: int) -> int {
 	for end < len(r.h.nodes) && r.h.nodes[end].depth > n.depth do end += 1
 	outer: for c, k in r.h.nodes {
 		if (k >= el && k < end) || !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+		if drawn_over(r, el, k) do continue
 		if busy_indicator(c) do return k
 		for p := n.parent; p >= 0; p = r.h.nodes[p].parent do if p == k do continue outer
 		for j := k + 1; j < len(r.h.nodes) && r.h.nodes[j].depth > c.depth; j += 1 {
@@ -3372,6 +3394,9 @@ script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 }
 
 // ---- device ---------------------------------------------------------------------------
+
+// How long hideKeyboard waits for the keyboard to go after its BACK (Android).
+KEYBOARD_GONE_MS :: 1500
 
 // How long read_screen reads again a screen whose app does not answer (Android).
 STALLED_READ_MAX_MS :: 60_000

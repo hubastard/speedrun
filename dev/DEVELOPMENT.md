@@ -27,6 +27,10 @@ what is still slow: `dev/TO_IMPROVE.md`.
   v0.4.7 hid it, Compose sending events while a service is on). That
   costs the app building every node again, ~0.5 ms each (a 134-node screen: ~100 ms a
   read against ~10 ms cached; no prefetch strategy did better); View-based apps keep it.
+  Only Compose in the active window or an app's window (`TYPE_APPLICATION`: its dialogs,
+  sheets, popups) counts: Android 17's status bar is Compose, and from v0.2.3 to v0.4.11 it
+  emptied the cache before every read of every app (bench/app's lists read in ~85 ms
+  against ~22 ms cached; Drag 17.4–18.1 s, now 16.5–16.7 s).
   Two entry points share that logic (`Agent.kt`) and differ in how input is injected
   (`Injectors.kt`):
   - `ShellMain` (default): started with `app_process` as the shell user, which holds
@@ -935,7 +939,11 @@ Known differences in how, not what:
   candidate and the spinner (the candidate included) makes it a row's. Compose reports a node
   at the bounding box of its part left uncovered: a list under inset tabs, at its whole
   frame, held the tabs' centers, and its running-task rows' spinners made it an overlay; a
-  tap on a tab waited ~17 s (Compose Bench's Tasks). SPEEDRUN_DEBUG names the overlay.
+  tap on a tab waited ~17 s (Compose Bench's Tasks). A list whose rows all show is not
+  scrollable (Medium_Phone's taller screen fits the 12 rows: 17 s again, v0.4.10 and v0.4.11
+  alike), so a node the element is drawn over (`drawn_over`: the tabs' branch has the higher
+  drawing order where the two part) is no overlay either; an overlay is drawn over what it
+  covers. SPEEDRUN_DEBUG names the overlay.
 - Android touches (`TAP`, `PRESS`, `SWIPE`), keys, typing and erasing in another window than
   the last input's wait for window transitions first (keys since v0.4.9: a key goes to the
   focused window, which a closing one can still be; issue #9's reporter saw a second back
@@ -1166,22 +1174,45 @@ Known differences in how, not what:
 - The settle after an action times out 10 s after the action's input ended, not after it
   began: typing 740 characters took 140 s on a team's emulator, and the settle after it ended
   at once ("Timeout: ui done 140472 ms").
-- **Typing is checked, and what the field missed typed again** (Android 14 and later, the key
+- **Typing is checked, and what the field missed put in** (Android 14 and later, the key
   service up): before the keys, the agent reads the field's text and selection through the
   key service's input connection (provider `text`: `getSurroundingText`, the whole text, the
   app answering on its main thread; Compose answers with an offset of -1). After them, it
   waits for the field to hold the text typed in place of the selection, or, while characters
-  are missing, for 400 ms without a change in it (3 s at most). When it holds that text with
-  characters missing from the typed part only and the cursor after it, the keys from the
-  first one missing are erased (through the connection) and typed again, twice at most, while
-  it helps (`retypeLost`; the note "the field missed characters: typed the last N again").
-  Anything else is left as it is: a field whose app changes what is typed (upper case, a
-  mask), the focus gone to another field (a code's next box), Enter or Tab in the text. A
-  length limit reads as characters missing at the end: typed again once, refused again, and
-  left (about 0.8 s). On a team's CI (API 35 x86_64, software GPU) the keyboard app lost
-  characters paced or not (5 of 217 unpaced, 1 of 740 paced; never the first, never one of a
-  pair; no dispatcher drop in their logcat); not reproduced here even with a software GPU, a
-  slow screen and a starved guest. Compose Bench's Notes field misses its 10th edit once.
+  are missing, for 800 ms with no change in it and no input started on it (4 s at most). When
+  it holds that text with characters missing from the typed part only and the cursor after it,
+  the typed part is replaced with the text through the connection (provider `replace`:
+  `setSelection`, `commitText`), twice at most, while it helps (`checkTyped`). Letters are
+  compared without their case: Compose Bench's upper-case Handle field starts input again on
+  every key, and on Medium_Phone (API 37, Gboard 18.5) it lost 1 to 4 of 18 characters on
+  every run, keys paced or not ("speedrun runs fast" as "SPEEDRU RUNSFAT"; v0.4.11 too); what
+  is put in goes through the app's upper-casing too (6 runs in 6, ~1.1 s for the field). A
+  field the key service cannot read (no connection while its input starts again: 2 runs in 4
+  there) is read again for 200 ms. Anything else is left as it is: a field whose app changes
+  what is typed otherwise (a mask), the focus gone to another field (a code's next box),
+  Enter or Tab in the text. A length limit reads as
+  characters missing at the end: put in once, refused again, and left. Every check is noted
+  (`SPEEDRUN_DEBUG`: "typing checked: the field holds the text typed", "the field missed N
+  characters: put in through its connection, ...", or why it was not checked).
+  On a team's CI (API 35 x86_64, software GPU) the keyboard app lost characters paced or not,
+  never the first, never one of a pair, most as it started again in the middle of the typing:
+  their Compose app showed the keyboard again (`show(ime())`, `SHOW_SOFT_INPUT_BY_INSETS_API`),
+  Gboard finished and started input again and built its keyboard anew, and dropped the key it
+  got meanwhile ("Skip consuming an event as keyboard status is 0", ~40 ms before
+  "onKeyboardReady"). Input started again on another node in the same place: v0.4.11 took it
+  for another field (the node's identity) and left it. A field of the same kind, as wide, whose
+  rows overlap (it grows as its text wraps), is now the same (`TypedField`).
+  v0.4.11 typed what was missing again with keys, after erasing through the connection: on
+  their CI runners it left "scroll@example.com" as "srroll@example.com" and
+  "qa.c2024@example.com" as "qa.c2024@examplome.com". Edits through the connection go behind
+  the keyboard app's back, and Gboard, composing a word, put its word back as it had it (an
+  erase of 40 and the address typed after it gave "qa.c2024om@example.com", no retype). The
+  connection (`AccessibilityInputConnection`) has no `finishComposingText` or batch edits: the
+  key service keeps the composing region the system tells it of (`onUpdateSelection`'s
+  candidates), and commits the word as it is (`commitText` replaces the composing text) before
+  its own edits, Backspace included. Here Gboard 14.2 composes nothing for injected keys
+  (candidates -1 throughout): neither was reproduced. Compose Bench's Notes field misses its
+  10th edit once.
 - **Backspace goes through the focused field's input connection** (`pressKey: Backspace`,
   `eraseText`; Android 13 and later), as a keyboard sends it. React Native's `onKeyPress`
   hears only the input connection: a DEL injected as a hardware key deleted, but fired

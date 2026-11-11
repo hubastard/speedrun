@@ -490,10 +490,28 @@ Field_Input :: enum u8 {
 	Timed_Out, // it did not start in a second: typed anyway
 }
 
+// What the agent's check of typed text found (Android 14+, the key service up).
+Type_Check :: enum u8 {
+	None,         // not checked: no field, Enter or Tab in the text, iOS, the web
+	Unread,       // not checked: the field's text could not be read before the keys
+	As_Typed,     // the field holds the text typed
+	Other,        // it holds other text: an app that changes what is typed
+	Elsewhere,    // characters missing, the input focus on another field
+	Cursor,       // characters missing, the cursor not after the typed text
+	Unread_After, // the field's text could not be read after the keys
+	Put_In,       // characters missing, put in: the field holds the text typed
+	Still,        // characters missing, put in, and it still differs
+	No_Replace,   // characters missing, the key service could not put them in
+}
+
+Typed_Check :: struct {
+	status:         Type_Check,
+	missed, put_in: u32, // characters missing at first, and put in
+}
+
 // Key events into the focused field; `skipped` characters had no key sequence.
 // `focused`: a text field had the input focus (false: the keys went to whatever had it).
-// `retyped`: characters typed again, from the first the field missed (Android 14+).
-op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, retyped: u32, ok: bool) {
+op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) -> (res: Action_Result, skipped: u32, focused: bool, input: Field_Input, input_wait_us: u32, check: Typed_Check, ok: bool) {
 	body: []byte
 	body, _, ok = call(c, str_request(.Type_Paced if paced else .Type, text, alloc))
 	if !ok do return
@@ -502,13 +520,17 @@ op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) ->
 	r := Reader{b = body[9:], ok = true} // after prep_us, inject_us, inject_path
 	skipped = rd_u32(&r)
 	focused = rd_u8(&r) != 0
-	if !r.ok do return res, skipped, focused, input, input_wait_us, retyped, false
+	if !r.ok do return res, skipped, focused, input, input_wait_us, check, false
 	if len(r.b) - r.off >= 5 { // Android's agent only
 		input = Field_Input(min(rd_u8(&r), u8(Field_Input.Timed_Out)))
 		input_wait_us = rd_u32(&r)
 	}
-	if len(r.b) - r.off >= 4 do retyped = rd_u32(&r)
-	return res, skipped, focused, input, input_wait_us, retyped, r.ok
+	if len(r.b) - r.off >= 4 do check.put_in = rd_u32(&r)
+	if len(r.b) - r.off >= 5 {
+		check.status = Type_Check(min(rd_u8(&r), u8(Type_Check.No_Replace)))
+		check.missed = rd_u32(&r)
+	}
+	return res, skipped, focused, input, input_wait_us, check, r.ok
 }
 
 // `count` DEL presses.

@@ -46,6 +46,10 @@ class KeyService : AccessibilityService() {
     // Changes the system told of in the field with input: its selection moved (as a key went
     // in), or its input started again. Guarded by [lock].
     private var changes = 0
+    // The keyboard app's word in progress (its composing text) in the field, as the system told
+    // of it with the last change: start and end, -1 with none. Guarded by [lock].
+    private var composingStart = -1
+    private var composingEnd = -1
     private val lookups = Executors.newSingleThreadExecutor()
 
     // Input starts on a field when it takes the focus: the system tells the keyboard app and
@@ -61,6 +65,8 @@ class KeyService : AccessibilityService() {
                 starts++
                 changes++
                 startedAt = SystemClock.uptimeMillis()
+                composingStart = -1
+                composingEnd = -1
                 started = when {
                     !editor -> FIELD_NONE
                     typingInto != FIELD_NONE -> typingInto
@@ -76,6 +82,8 @@ class KeyService : AccessibilityService() {
             super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
             synchronized(lock) {
                 changes++
+                composingStart = candidatesStart
+                composingEnd = candidatesEnd
                 lock.notifyAll()
             }
         }
@@ -86,6 +94,8 @@ class KeyService : AccessibilityService() {
                 started = FIELD_NONE
                 typingInto = FIELD_NONE
                 starts++
+                composingStart = -1
+                composingEnd = -1
                 lock.notifyAll()
             }
         }
@@ -179,7 +189,41 @@ class KeyService : AccessibilityService() {
             putInt("start", st.selectionStart)
             putInt("end", st.selectionEnd)
             putInt("changes", count)
+            putLong("started", synchronized(lock) { startedAt })
         }
+    }
+
+    /**
+     * The keyboard app's word in progress, committed as it is: an edit through this service's
+     * connection while the keyboard app is composing a word goes behind its back, and it puts its
+     * word back as it had it (Gboard on CI: "qa.c2024@example.com" typed after an erase came out
+     * as "qa.c2024om@example.com"). Committed, the system tells it its word is done. The
+     * connection has no finishComposingText: its commitText replaces the composing text.
+     */
+    private fun finishComposing(ic: InputMethod.AccessibilityInputConnection) {
+        val (start, end) = synchronized(lock) { composingStart to composingEnd }
+        if (start < 0 || end <= start) return
+        val st = ic.getSurroundingText(TEXT_MAX, TEXT_MAX, 0) ?: return
+        val offset = maxOf(st.offset, 0)
+        val from = start - offset
+        val to = end - offset
+        if (from < 0 || to > st.text.length) return
+        ic.commitText(st.text.subSequence(from, to), 1, null)
+    }
+
+    /**
+     * [text] in place of the field's characters [start] to [end], the cursor after it, through
+     * the field's connection: what typing missed put in at once, with no keys for the keyboard
+     * app to lose again. False without a connection.
+     */
+    fun replace(start: Int, end: Int, text: String): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        val ic = inputMethod?.currentInputConnection ?: return false
+        finishComposing(ic)
+        ic.setSelection(start, end)
+        ic.commitText(text, 1, null)
+        ic.getSurroundingText(0, 0, 0) // answered once the app has handled the calls before it
+        return true
     }
 
     /** speedrun types into [field] until [typed]. */
@@ -234,6 +278,7 @@ class KeyService : AccessibilityService() {
             ic = inputMethod?.currentInputConnection
         }
         if (ic == null) return false
+        finishComposing(ic!!)
         repeat(count) {
             // A field the app changes on each key restarts input, and with it the connection.
             ic = inputMethod?.currentInputConnection ?: ic
@@ -281,8 +326,9 @@ class KeyService : AccessibilityService() {
  * {sent}; `call("input", null, {field, since})` -> {waited, changes} (milliseconds, -1: input
  * did not start on the field; absent: the service is not up, or Android 13), then keys typed
  * into the field until `call("typed")`, each followed by `call("change", null, {after,
- * timeout})` -> {changes}; `call("text")` -> {text, start, end, changes} (KeyService.fieldText; empty
- * without); `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
+ * timeout})` -> {changes}; `call("text")` -> {text, start, end, changes, started}
+ * (KeyService.fieldText; empty without); `call("replace", null, {start, end, text})` -> {done}
+ * (KeyService.replace); `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
  * shell user make into an app (as `content call` does); a local socket it does not. Only the
  * shell user and root may call.
  */
@@ -315,6 +361,15 @@ class KeyProvider : ContentProvider() {
                 if (service != null) putInt("changes", service.awaitChange(extras.getInt("after"), extras.getLong("timeout")))
             }
             "typed" -> Bundle().apply { service?.typed() }
+            "replace" -> Bundle().apply {
+                val done = try {
+                    service != null && service.replace(extras.getInt("start"), extras.getInt("end"), extras.getString("text") ?: "")
+                } catch (e: Exception) {
+                    AgentLog.w("key service: the field's text could not be replaced", e)
+                    false
+                }
+                putBoolean("done", done)
+            }
             "text" -> try {
                 service?.fieldText() ?: Bundle()
             } catch (e: Exception) {
