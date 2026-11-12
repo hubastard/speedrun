@@ -83,6 +83,8 @@ Record :: struct {
 
 Runner :: struct {
 	new_window_touch:     bool, // Android: the last touch was the first in its window (one that had just come)
+	keyboard_came:        bool, // Android: the last tap was not made, the keyboard come over its point (op_tap)
+	keyboard_redo:        bool, // Android: tap is finding its element again after keyboard_came
 	c:                    ^Conn,
 	dev:                  ^Device, // platform, simulator (iOS app control goes through simctl)
 	alloc:                mem.Allocator, // the run's lifetime
@@ -702,20 +704,10 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 		case .Hide_Keyboard:
 			if r.dev.platform == .IOS do return true, ios_hide_keyboard(r)
 			if r.dev.platform == .Web do return true, nil // no keyboard on screen (Maestro: a no-op)
-			// BACK, then a failure if (G)board ids are still on screen KEYBOARD_GONE_MS after
-			// it: on a team's CI the settle after it ended 47 ms in, before the keyboard had
-			// started to go, and the one read then still showed it.
-			if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return true, AGENT_LOST
-			if e := settle(r); e != nil do return true, e
-			t := time.tick_now()
-			for {
-				if !read_screen(r) do return true, AGENT_LOST
-				shown := false
-				for &n in r.h.nodes do if n.kept && strings.contains(n.id, GBOARD_ID) do shown = true
-				if !shown do return true, nil
-				if time.duration_milliseconds(time.tick_since(t)) >= KEYBOARD_GONE_MS do return true, "Couldn't hide the keyboard"
-				time.sleep(50 * time.Millisecond)
-			}
+			gone, e := android_hide_keyboard(r)
+			if e != nil do return true, e
+			if !gone do return true, "Couldn't hide the keyboard"
+			return true, nil
 		case .Scroll:
 			return true, swipe_points(r, r.w / 2, r.h_px / 2, r.w / 2, i32(f32(r.h_px) * 0.1), 400, nil)
 		case .Clear_Keychain:
@@ -894,7 +886,9 @@ type_text :: proc(r: ^Runner, text: string) -> Err {
 	n, chars := check.missed, "character" if check.missed == 1 else "characters"
 	switch check.status {
 	case .None:
-	case .Unread:       note(r, "typing not checked: the field's text could not be read")
+	case .Unread:       note(r, "typing not checked: the field did not answer the read of its text")
+	case .No_Service:   note(r, "typing not checked: speedrun's key service (an accessibility service the run turns on) is not up, so neither this check nor Backspace through the field works")
+	case .No_Connection: note(r, "typing not checked: the key service has no input connection to the field")
 	case .As_Typed:     note(r, "typing checked: the field holds the text typed")
 	case .Other:        note(r, "typing checked: the field holds other text (an app that changes what is typed): left as it is")
 	case .Elsewhere:    note(r, "the field missed %d %s, and the input focus is on another field: left as it is", n, chars)
@@ -930,6 +924,23 @@ ios_flutter :: proc(r: ^Runner, app: string) -> bool {
 	v := ok && os.exists(fmt.tprintf("%s/Frameworks/Flutter.framework", strings.trim_space(out)))
 	r.flutter_apps[strings.clone(app, r.alloc)] = v
 	return v
+}
+
+// Android hideKeyboard: BACK, then gone = false if (G)board ids are still on screen
+// KEYBOARD_GONE_MS after it: on a team's CI the settle after it ended 47 ms in, before the
+// keyboard had started to go, and the one read then still showed it.
+android_hide_keyboard :: proc(r: ^Runner) -> (gone: bool, err: Err) {
+	if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return false, AGENT_LOST
+	settle(r) or_return
+	t := time.tick_now()
+	for {
+		if !read_screen(r) do return false, AGENT_LOST
+		shown := false
+		for &n in r.h.nodes do if n.kept && strings.contains(n.id, GBOARD_ID) do shown = true
+		if !shown do return true, nil
+		if time.duration_milliseconds(time.tick_since(t)) >= KEYBOARD_GONE_MS do return false, nil
+		time.sleep(50 * time.Millisecond)
+	}
 }
 
 // iOS hideKeyboard: how long a keyboard that moves is waited for, read every
@@ -1048,6 +1059,7 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 	to_focus := false // a text field the tap should focus (the focus check after the tap)
 	field_at: [4]i32 // that field's bounds when tapped
 	window_before: u64 // Android: what the element's window said (window_content)
+	off_keyboard := false // Android: the element is the app's, the keyboard not over it (op_tap)
 	if d.sel == nil {
 		p := eval(r, d.point) or_return
 		ok: bool
@@ -1133,6 +1145,8 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 			}
 		}
 		if d.point == "" do el, x, y = uncovered_point(r, d.sel, el, c.optional) or_return
+		off_keyboard = r.dev.platform == .Android && d.point == "" && !r.keyboard_redo && !in_keyboard(r, el) &&
+			!keyboard_at(r, x, y)
 		n := r.h.nodes[el]
 		center = {n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2}
 		tapped = {strings.clone(n.text, r.alloc), strings.clone(n.desc, r.alloc), strings.clone(n.class, r.alloc), n.flags, class_path(r, el), window_texts(r, el)}
@@ -1176,7 +1190,17 @@ tap :: proc(r: ^Runner, c: ^Cmd, d: Tap) -> Err {
 				if !ok do return AGENT_LOST
 				touch_taken(r, res, x, y) or_return
 			} else {
-				tap_at(r, x, y, frame) or_return
+				tap_at(r, x, y, frame, off_keyboard) or_return
+				// The keyboard came over the element since the read (a sheet focusing its field
+				// as it opened): nothing tapped. Found again, the keyboard hidden first when it
+				// covers all of it (uncovered_point), and tapped, once.
+				if r.keyboard_came {
+					settle(r) or_return
+					r.keyboard_redo = true
+					e := tap(r, c, d)
+					r.keyboard_redo = false
+					return e
+				}
 			}
 			if d.repeat > 1 {
 				left := f64(d.delay_ms) - us(t) / 1000
@@ -1372,14 +1396,14 @@ frame_hold :: proc(r: ^Runner, unknown: bool, class: string) -> bool {
 }
 
 @(private = "file")
-tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> Err {
+tap_at :: proc(r: ^Runner, x, y: i32, frame: bool, off_keyboard := false) -> Err {
 	note(r, "tap at %d,%d%s", x, y, fmt.tprintf(" (held %d ms)", IOS_FRAME_TAP_MS) if frame else "")
 	res: Action_Result
 	ok: bool
 	if frame {
 		res, ok = op_press(r.c, x, y, IOS_FRAME_TAP_MS)
 	} else {
-		res, ok = op_tap(r.c, x, y)
+		res, ok = op_tap(r.c, x, y, off_keyboard)
 	}
 	if !ok do return AGENT_LOST
 	return touch_taken(r, res, x, y)
@@ -1392,7 +1416,9 @@ tap_at :: proc(r: ^Runner, x, y: i32, frame: bool) -> Err {
 // fails the command: the app never saw it.
 touch_taken :: proc(r: ^Runner, res: Action_Result, x, y: i32) -> Err {
 	r.new_window_touch = res.window_came
+	r.keyboard_came = res.keyboard
 	if res.transition_us > 0 do note(r, "a new window: waited %.0f ms for window transitions", f64(res.transition_us) / 1000)
+	if res.keyboard do note(r, "the keyboard came over %d,%d since the screen was read: not tapped", x, y)
 	if res.dropped == 0 do return nil
 	ms := f64(res.dropped_us) / 1000
 	if res.untaken do return fmt.aprintf("The touch at %d,%d never reached the app: for %.1f s the system dropped it, no window taking touches there (a window still opening, or the screen off)", x, y, ms / 1000, allocator = r.alloc)
@@ -1716,7 +1742,10 @@ tap_cover :: proc(r: ^Runner, el: int) -> (int, Err) {
 // scrolls the cover's way is dragged just clear (clear_of; up to MAX_COVER_CLEARS drags, while
 // it moves) and found again. One still covered (no such list: the keyboard over a screen that
 // does not scroll) is tapped in the middle of the largest part of it that shows, if that part
-// is no sliver; else at its center, as before. idx: the element as found last.
+// is no sliver. On Android, one the keyboard hides all of (a dialog's button under it, the
+// dialog's field focused) is tapped once the keyboard is hidden, as hideKeyboard does it:
+// at its center, the tap landed on the keyboard (a team's CI: Gboard's clipboard opened, the
+// dialog stayed). Else at its center, as before. idx: the element as found last.
 @(private = "file")
 uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> (idx: int, x, y: i32, err: Err) {
 	idx = el
@@ -1787,8 +1816,30 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		if !vertical do asked, moved = tx - cx, (n.left - frame[0] if tx < cx else n.right - frame[2])
 		if asked != 0 && moved * asked > 0 do gain = clamp(f64(moved) / f64(asked), 0.2, 1)
 	}
+	p, shows := part_shown(r, idx, cover)
+	if !shows && r.dev.platform == .Android && in_keyboard(r, cover) {
+		note(r, "%s under the keyboard: hiding it first", r.h.nodes[idx].class)
+		if gone := android_hide_keyboard(r) or_return; !gone do note(r, "the keyboard stayed up")
+		idx = find_element(r, sel, optional, -1) or_return
+		n = r.h.nodes[idx]
+		x, y = n.left + (n.right - n.left) / 2, n.top + (n.bottom - n.top) / 2
+		cover = tap_cover(r, idx) or_return
+		if cover < 0 do return
+		p, shows = part_shown(r, idx, cover)
+	}
+	if !shows do return
 	n = r.h.nodes[idx]
-	c := r.h.nodes[cover]
+	px, py := p[0] + (p[2] - p[0]) / 2, p[1] + (p[3] - p[1]) / 2
+	if cover_at(r, idx, px, py) >= 0 do return
+	note(r, "%s covered by %s: tapping its part that shows, at %d,%d", n.class, r.h.nodes[cover].class, px, py)
+	return idx, px, py, nil
+}
+
+// The largest part of element `el` that `cover` leaves showing (above, below, left or right
+// of it), if it is no sliver.
+@(private = "file")
+part_shown :: proc(r: ^Runner, el, cover: int) -> (part: [4]i32, ok: bool) {
+	n, c := r.h.nodes[el], r.h.nodes[cover]
 	parts := [4][4]i32 {
 		{n.left, n.top, n.right, min(n.bottom, c.top)}, // above the cover
 		{n.left, max(n.top, c.bottom), n.right, n.bottom}, // below
@@ -1796,18 +1847,45 @@ uncovered_point :: proc(r: ^Runner, sel: ^Selector, el: int, optional: bool) -> 
 		{max(n.left, c.right), n.top, n.right, n.bottom}, // right of it
 	}
 	least := max(r.w / 60, 4)
-	best, area := -1, i64(0)
-	for p, k in parts {
+	area := i64(0)
+	for p in parts {
 		w, h := p[2] - p[0], p[3] - p[1]
 		if w < least || h < least || i64(w) * i64(h) <= area do continue
-		best, area = k, i64(w) * i64(h)
+		part, ok, area = p, true, i64(w) * i64(h)
 	}
-	if best < 0 do return
-	p := parts[best]
-	px, py := p[0] + (p[2] - p[0]) / 2, p[1] + (p[3] - p[1]) / 2
-	if cover_at(r, idx, px, py) >= 0 do return
-	note(r, "%s covered by %s: tapping its part that shows, at %d,%d", n.class, c.class, px, py)
-	return idx, px, py, nil
+	return
+}
+
+// Android: node `k` is in the keyboard's window, the one holding the input method's input
+// area (android:id/inputArea), whatever the keyboard app.
+in_keyboard :: proc(r: ^Runner, k: int) -> bool {
+	for root, i in r.h.roots {
+		end := r.h.roots[i + 1] if i + 1 < len(r.h.roots) else len(r.h.nodes)
+		if k >= root && k < end do return keyboard_window(r, root, end)
+	}
+	return false
+}
+
+// Android: the keyboard is at x, y: a node of its window holds the point, one smaller than half
+// the screen (cover_at's rule: the window's own containers span it).
+@(private = "file")
+keyboard_at :: proc(r: ^Runner, x, y: i32) -> bool {
+	for root, i in r.h.roots {
+		end := r.h.roots[i + 1] if i + 1 < len(r.h.roots) else len(r.h.nodes)
+		if !keyboard_window(r, root, end) do continue
+		for k in root ..< end {
+			c := r.h.nodes[k]
+			if !c.kept || x < c.left || x >= c.right || y < c.top || y >= c.bottom do continue
+			if 2 * i64(c.right - c.left) * i64(c.bottom - c.top) < i64(r.w) * i64(r.h_px) do return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+keyboard_window :: proc(r: ^Runner, root, end: int) -> bool {
+	for k in root ..< end do if r.h.nodes[k].id == "android:id/inputArea" do return true
+	return false
 }
 
 // What the screen holds at the element's center, in tree order, the window-wide containers
@@ -3469,12 +3547,7 @@ app_hash :: proc(r: ^Runner) -> u64 {
 	hash: u64 = 14695981039346656037
 	for root, i in r.h.roots {
 		end := r.h.roots[i + 1] if i + 1 < len(r.h.roots) else len(r.h.nodes)
-		keyboard := false
-		for k in root ..< end do if r.h.nodes[k].id == "android:id/inputArea" {
-			keyboard = true
-			break
-		}
-		if keyboard do continue
+		if keyboard_window(r, root, end) do continue
 		for k in root ..< end {
 			n := r.h.nodes[k]
 			if .Restless not_in n.flags do for v in ([]i32{n.left, n.top, n.right, n.bottom}) do hash = (hash ~ u64(u32(v))) * 1099511628211

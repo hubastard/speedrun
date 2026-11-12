@@ -672,8 +672,21 @@ Known differences in how, not what:
   list less than the finger (half of a short one on Speedrun Bench's product page, on
   Android): the second goes as much farther. Still covered (the keyboard over a screen that
   does not scroll), it is tapped in the middle of the largest part that shows, unless that
-  is a sliver (under a 60th of the screen's width) or under something else; else at its
-  center, as before. On a 320x640 emulator (CI's default), the journey's size and quantity
+  is a sliver (under a 60th of the screen's width) or under something else. On Android, one
+  the keyboard hides all of is found again once the keyboard is hidden (hideKeyboard's BACK
+  and wait), then tapped: a dialog whose field takes the focus as it opens, its buttons under
+  the keyboard (a team's CI: the tap at the center opened Gboard's clipboard, the dialog
+  stayed). Compose Bench's form checks it on Api35 with a full-width dialog
+  whose window stays put for the keyboard (a Material AlertDialog moves out of its way). There
+  Compose leaves out of the tree what the keyboard covers all of (a button's text, a whole
+  button: not found at all), so the check has Cancel's top edge show above the keyboard, its
+  center under it; the team's app listed its button though the keyboard covered all of it.
+  Else at its center, as before. A tap on an element of the app's goes as
+  `TAP_OFF_KEYBOARD`: the agent does not make it when the keyboard takes touches at its point
+  by then (its window's touchable region), and the tap finds its element again, once. A sheet
+  that focuses its field as it opens brought the keyboard up while a tap in it waited for the
+  sheet's window transition (a team's slow emulator: the tap on a link at the sheet's foot,
+  found before the keyboard came, landed on it). On a 320x640 emulator (CI's default), the journey's size and quantity
   taps hit the product page's footer, and the sign-in's Next the keyboard; they now pass.
   A cover inside the same list (an OTP field's digit boxes drawn over its hidden input)
   moves with the element: no drag, the center. On Android a node within the element's frame,
@@ -1208,15 +1221,30 @@ Known differences in how, not what:
   for another field (the node's identity) and left it. A field of the same kind, as wide, whose
   rows overlap (it grows as its text wraps), is now the same (`TypedField`).
   v0.4.11 typed what was missing again with keys, after erasing through the connection: on
-  their CI runners it left letters out of place in the fields. Edits through the connection
-  go behind the keyboard app's back, and Gboard, composing a word, put its word back as it had
-  it (an erase and the text typed after it came out the same way, no retype). The
-  connection (`AccessibilityInputConnection`) has no `finishComposingText` or batch edits: the
-  key service keeps the composing region the system tells it of (`onUpdateSelection`'s
-  candidates), and commits the word as it is (`commitText` replaces the composing text) before
-  its own edits, Backspace included. Here Gboard 14.2 composes nothing for injected keys
-  (candidates -1 throughout): neither was reproduced. Compose Bench's Notes field misses its
-  10th edit once.
+  their CI runners it left letters out of place in the fields. That was taken for Gboard
+  putting back a word it was composing (edits through the connection go behind its back), so
+  the key service commits the keyboard app's word in progress as it is before its own edits,
+  Backspace included: the connection (`AccessibilityInputConnection`) has no
+  `finishComposingText` or batch edits; the service keeps the composing region the system tells
+  it of (`onUpdateSelection`'s candidates), and `commitText` replaces the composing text. It
+  was not that (v0.4.14): the letters out of place were the end of the field's old text, left
+  by an erase. The tap on the field had put the cursor inside its text, `eraseText` deleted
+  only what was before it, and the text typed next went in front of the
+  rest; when the field's input started again mid-typing, the cursor went to the text's end and
+  a key was lost, so the rest of the text came after the old text's end. `eraseText` now
+  erases all of a field that holds no more than it erases (below). Compose Bench's Notes field
+  misses its 10th edit once.
+- **`eraseText` erases all of a field that holds no more characters than it erases**,
+  wherever the cursor is: the cursor goes to the text's end first (the key service's
+  `setSelection` on the connection, after committing the keyboard app's word; without the
+  service, Ctrl+End and End before the DELs: an EditText goes to its text's end with the first,
+  End alone only to the line's, and Compose maps no Ctrl+End but goes to the line's end with
+  End). A tap puts the cursor where it lands, and at the center of a field whose text is longer
+  than half of it that is inside the text: on Compose Bench, "abcdefghijklmnopqrstuvwxyz" tapped
+  at the center, erased by 40, then "new@example.com" typed read "new@example.compqrstuvwxyz".
+  A field holding more is erased from the cursor, as before. Accessibility's set-selection was tried before the injected DELs: it returned once
+  Compose had taken it, yet Compose's key handling went on from the old cursor until the next
+  frame.
 - **Backspace goes through the focused field's input connection** (`pressKey: Backspace`,
   `eraseText`; Android 13 and later), as a keyboard sends it. React Native's `onKeyPress`
   hears only the input connection: a DEL injected as a hardware key deleted, but fired
@@ -1231,7 +1259,13 @@ Known differences in how, not what:
   from the pushed one) and adds the service to `enabled_accessibility_services`
   (`accessibility_enabled` 1); `device_stop` puts both back as it found them. Right after an
   install the system can drop it from that list (1 of 2 tries): until `dumpsys accessibility`
-  shows it bound, it is put back (3 s at most). The host builds that script by concatenation:
+  shows it bound, it is put back (3 s at most). It can also skip one still listed ("disallowed
+  by AppOps", logged as the package was not known there yet), and once in ~10 local runs after
+  the agent was replaced the service stayed unbound for the whole run (not reproduced in 8
+  tries since): every 0.5 s unbound, it is taken out of the list and put back. The provider's
+  first call waits for the service up to 2 s (it binds a moment after the run starts), and the
+  typing check notes which part failed: the service not up, no input connection to the field,
+  or the field not answering the read. The host builds that script by concatenation:
   `fmt` reads the shell's braces (`${i#package:}` came out mangled, so every run reinstalled
   the APK and hit that race). The agent
   connects its UiAutomation with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, or the service

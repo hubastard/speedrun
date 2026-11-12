@@ -172,18 +172,18 @@ class KeyService : AccessibilityService() {
 
     /**
      * The text of the field with input, through its connection (the app answers it on its main
-     * thread), with its selection and [changes] count: what typing is checked against. Null
-     * without a connection, when the app does not answer, or when the field holds [TEXT_MAX]
-     * characters or more on either side of the cursor.
+     * thread), with its selection and [changes] count: what typing is checked against. Without
+     * them, why: no connection ("connection"), the app does not answer ("answer"), or the field
+     * holds [TEXT_MAX] characters or more on either side of the cursor ("long").
      */
-    fun fieldText(): Bundle? {
-        if (Build.VERSION.SDK_INT < 33) return null
+    fun fieldText(): Bundle {
+        if (Build.VERSION.SDK_INT < 33) return Bundle()
         val count = changes()
-        val ic = inputMethod?.currentInputConnection ?: return null
-        val st = ic.getSurroundingText(TEXT_MAX, TEXT_MAX, 0) ?: return null
+        val ic = inputMethod?.currentInputConnection ?: return why("connection")
+        val st = ic.getSurroundingText(TEXT_MAX, TEXT_MAX, 0) ?: return why("answer")
         // The whole text: less than asked for on both sides. Its offset in the field is 0, or
         // -1 (unknown) where the app answers with InputConnection's own (Compose).
-        if (st.offset > 0 || st.selectionStart >= TEXT_MAX || st.text.length - st.selectionEnd >= TEXT_MAX) return null
+        if (st.offset > 0 || st.selectionStart >= TEXT_MAX || st.text.length - st.selectionEnd >= TEXT_MAX) return why("long")
         return Bundle().apply {
             putString("text", st.text.toString())
             putInt("start", st.selectionStart)
@@ -193,12 +193,15 @@ class KeyService : AccessibilityService() {
         }
     }
 
+    private fun why(reason: String) = Bundle().apply { putString("why", reason) }
+
     /**
      * The keyboard app's word in progress, committed as it is: an edit through this service's
-     * connection while the keyboard app is composing a word goes behind its back, and it puts its
-     * word back as it had it (Gboard on CI: text typed after an erase came out with letters out
-     * of place). Committed, the system tells it its word is done. The
-     * connection has no finishComposingText: its commitText replaces the composing text.
+     * connection while the keyboard app is composing a word goes behind its back, and it can put
+     * its word back as it had it. Committed, the system tells it its word is done. (Letters out
+     * of place in a team's fields after an erase were taken for that; they were the old text's
+     * end, left after the cursor: toEnd.) The connection has no finishComposingText: its
+     * commitText replaces the composing text.
      */
     private fun finishComposing(ic: InputMethod.AccessibilityInputConnection) {
         val (start, end) = synchronized(lock) { composingStart to composingEnd }
@@ -250,7 +253,7 @@ class KeyService : AccessibilityService() {
     // field's connection a moment after the field takes the focus: input on [field] is waited
     // for (the connection held until then is the field before's), then the connection, up to
     // [CONNECTION_WAIT_MS], asked for again after [ASK_AGAIN_MS]. False with none.
-    fun send(code: Int, count: Int, field: Long?, since: Long): Boolean {
+    fun send(code: Int, count: Int, field: Long?, since: Long, whole: Boolean = false): Boolean {
         if (Build.VERSION.SDK_INT < 33) return false
         if (field != null && Build.VERSION.SDK_INT >= 34) {
             if (awaitInput(field, since, INPUT_WAIT_MS) < 0) {
@@ -259,13 +262,13 @@ class KeyService : AccessibilityService() {
             typing(field)
         }
         try {
-            return sendKeys(code, count)
+            return sendKeys(code, count, whole)
         } finally {
             typed()
         }
     }
 
-    private fun sendKeys(code: Int, count: Int): Boolean {
+    private fun sendKeys(code: Int, count: Int, whole: Boolean): Boolean {
         val start = SystemClock.uptimeMillis()
         var ic = inputMethod?.currentInputConnection
         var asked = false
@@ -279,6 +282,7 @@ class KeyService : AccessibilityService() {
         }
         if (ic == null) return false
         finishComposing(ic!!)
+        if (whole) toEnd(ic!!, count)
         repeat(count) {
             // A field the app changes on each key restarts input, and with it the connection.
             ic = inputMethod?.currentInputConnection ?: ic
@@ -288,6 +292,24 @@ class KeyService : AccessibilityService() {
         }
         (inputMethod?.currentInputConnection ?: ic)!!.getSurroundingText(0, 0, 0)
         return true
+    }
+
+    /**
+     * The cursor at the end of the field's text when it holds no more than [count] characters:
+     * eraseText erases all of it, wherever the cursor is. A tap puts the cursor where it lands,
+     * inside a text longer than half the field, and deletes from there left the text after it,
+     * the next text typed in front of it (Compose Bench: a tap at
+     * the center of a field holding "abcdefghijklmnopqrstuvwxyz", eraseText: 40, then
+     * "new@example.com" typed, read "new@example.compqrstuvwxyz"). On the same connection as
+     * the keys, after the keyboard app's word is committed: the field takes them in order.
+     */
+    private fun toEnd(ic: InputMethod.AccessibilityInputConnection, count: Int) {
+        val st = ic.getSurroundingText(TEXT_MAX, TEXT_MAX, 0) ?: return
+        if (st.offset > 0 || st.selectionStart >= TEXT_MAX || st.text.length - st.selectionEnd >= TEXT_MAX) return
+        val n = st.text.length
+        if (n == 0 || n > count || (st.selectionStart == n && st.selectionEnd == n)) return
+        ic.setSelection(n, n)
+        AgentLog.i("key service: the cursor at the end of the field's $n characters, to erase them all")
     }
 
     // The input method APIs asked for again (the flag off, then on): the system then binds the
@@ -322,12 +344,12 @@ class KeyService : AccessibilityService() {
 }
 
 /**
- * The shell agent's way to [KeyService]: `call("keys", null, {code, count, field?, since})` ->
- * {sent}; `call("input", null, {field, since})` -> {waited, changes} (milliseconds, -1: input
+ * The shell agent's way to [KeyService]: `call("keys", null, {code, count, field?, since,
+ * whole?})` -> {sent} (whole: eraseText's, the cursor first at the end of what it erases all of); `call("input", null, {field, since})` -> {waited, changes} (milliseconds, -1: input
  * did not start on the field; absent: the service is not up, or Android 13), then keys typed
  * into the field until `call("typed")`, each followed by `call("change", null, {after,
  * timeout})` -> {changes}; `call("text")` -> {text, start, end, changes, started}
- * (KeyService.fieldText; empty without); `call("replace", null, {start, end, text})` -> {done}
+ * (KeyService.fieldText; without them {why}, "service" when the service is not up); `call("replace", null, {start, end, text})` -> {done}
  * (KeyService.replace); `call("up")` -> {up}. A call is a binder transaction, which SELinux lets the
  * shell user make into an app (as `content call` does); a local socket it does not. Only the
  * shell user and root may call.
@@ -337,13 +359,14 @@ class KeyProvider : ContentProvider() {
         val uid = Binder.getCallingUid()
         if (uid != SHELL_UID && uid != 0) throw SecurityException("speedrun's agent only")
         if (extras == null) return null
-        val service = KeyService.instance
+        val service = KeyService.instance ?: firstWait()
         val field = if (extras.containsKey("field")) extras.getLong("field") else null
         val since = extras.getLong("since")
         return when (method) {
             "keys" -> {
                 val sent = try {
-                    service != null && service.send(extras.getInt("code"), extras.getInt("count").coerceIn(0, 10_000), field, since)
+                    service != null && service.send(extras.getInt("code"), extras.getInt("count").coerceIn(0, 10_000), field, since,
+                        extras.getBoolean("whole"))
                 } catch (e: Exception) {
                     AgentLog.w("key service: send failed", e)
                     false
@@ -371,7 +394,7 @@ class KeyProvider : ContentProvider() {
                 putBoolean("done", done)
             }
             "text" -> try {
-                service?.fieldText() ?: Bundle()
+                service?.fieldText() ?: Bundle().apply { putString("why", "service") }
             } catch (e: Exception) {
                 AgentLog.w("key service: the field's text could not be read", e)
                 Bundle()
@@ -379,6 +402,22 @@ class KeyProvider : ContentProvider() {
             "up" -> Bundle().apply { putBoolean("up", service != null) }
             else -> null
         }
+    }
+
+    // The service turned on as the run starts is bound a moment later, seconds on a slow
+    // emulator: the first call waits for it, SERVICE_WAIT_MS at most; later ones do not.
+    @Volatile private var waited = false
+
+    private fun firstWait(): KeyService? {
+        if (waited) return null
+        waited = true
+        val end = SystemClock.uptimeMillis() + SERVICE_WAIT_MS
+        while (SystemClock.uptimeMillis() < end) {
+            Thread.sleep(20)
+            KeyService.instance?.let { return it }
+        }
+        AgentLog.w("key service: not up after $SERVICE_WAIT_MS ms")
+        return null
     }
 
     override fun onCreate() = true
@@ -391,5 +430,6 @@ class KeyProvider : ContentProvider() {
     companion object {
         const val AUTHORITY = "com.speedrun.agent.keys"
         private const val SHELL_UID = 2000
+        private const val SERVICE_WAIT_MS = 2000L
     }
 }

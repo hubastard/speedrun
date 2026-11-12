@@ -5,11 +5,6 @@ the commands where speedrun is still closest to Maestro, with what is known abou
 
 ## Open questions from the benchmark app (bench/app, 2026-10-26)
 
-- **A tap on an element under the keyboard hits the keyboard** (Maestro too): the target's
-  center is inside the keyboard's frame, so the tap types a key or a suggestion, and the
-  next typing goes to the field that still has the focus. Speedrun could fail such a tap at
-  once ("covered by the keyboard: hideKeyboard first") instead of typing junk; that would
-  fail flows that pass by accident today, so it is not done.
 - **One field per digit, the focus jumping after each key**: both tools lose digits on iOS
   (Maestro 2/2 runs failed, speedrun most). Speedrun types key by key once it sees the focus
   move, which helps but does not make it reliable; the app now uses one field drawn as six

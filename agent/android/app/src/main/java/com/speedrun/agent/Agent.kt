@@ -6,6 +6,7 @@ import android.content.AttributionSource
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.graphics.Region
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
@@ -96,7 +97,10 @@ internal object AgentLog {
  *        accessibility delegate is not searched; fall back to TREE when FIND finds nothing.
  *   3 TAP    i32 x, i32 y                    -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u16 dropped, u32 dropped_us, u8 taken,
- *                                               u32 transition_us, u8 came
+ *                                               u32 transition_us, u8 came, u8 keyboard
+ *  27 TAP_OFF_KEYBOARD i32 x, i32 y          -> as TAP
+ *        TAP on an element of the app's that the keyboard did not cover in the host's read:
+ *        not made (keyboard = 1) when the keyboard takes touches there now.
  *   4 KEY    i32 keycode                     -> u32 prep_us, u32 inject_us, u8 inject_path
  *        prep = active-window lookup + frame-stats clear; inject_path = see InjectPath
  *        (formerly fast_inject: 0 and 1 keep their meaning, 2 = shell-uid InputManager).
@@ -104,11 +108,12 @@ internal object AgentLog {
  *        there: a window opening), dropped_us = how long they held the touch off, taken = 0
  *        when it dropped them all for TOUCH_DROPPED_MAX_MS; transition_us = how long the
  *        touch waited for window transitions, a new window being active (see touchDown);
- *        came = 1 when it is the first touch or key in that window.
+ *        came = 1 when it is the first touch or key in that window; keyboard = 1 when the
+ *        touch was not made, the keyboard there (TAP_OFF_KEYBOARD; 0 for the others).
  *   7 SWIPE  i32 x1, i32 y1, i32 x2, i32 y2, i32 duration_ms, i32 flags
  *                                            -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u16 dropped, u32 dropped_us, u8 taken,
- *                                               u32 transition_us, u8 came
+ *                                               u32 transition_us, u8 came, u8 keyboard
  *        a drag from (x1,y1) to (x2,y2) lasting duration_ms. flags & 1 (fling): lift at
  *        the end, like `adb shell input swipe`, so the content keeps its speed and flings.
  *        Otherwise the pointer stays still for SWIPE_HOLD_MS before lifting: no fling, the
@@ -118,7 +123,7 @@ internal object AgentLog {
  *        are injected right away, ending now; only the first MOVE waits for the app (~1 frame).
  *  13 PRESS  i32 x, i32 y, i32 hold_ms       -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u16 dropped, u32 dropped_us, u8 taken,
- *                                               u32 transition_us, u8 came
+ *                                               u32 transition_us, u8 came, u8 keyboard
  *        DOWN, held for hold_ms in real time (long press), UP.
  *   8 TYPE   str text                        -> u32 prep_us, u32 inject_us, u8 inject_path,
  *                                               u32 skipped, u8 focused, u8 input,
@@ -136,7 +141,8 @@ internal object AgentLog {
  *        TYPE, each key once the one before changed the field (injectPaced), with the key
  *        service up; SPEEDRUN_PACED_TYPING=1 on the host.
  *   9 ERASE  i32 count                       -> u32 prep_us, u32 inject_us, u8 inject_path
- *        count DEL key presses.
+ *        count DEL key presses; first the cursor at the end of the field's text when it holds
+ *        no more than count characters (erase), so that they erase all of it.
  *  12 MARK                                   -> (empty)
  *        an action without input: the next SETTLE measures from here (waiting for a screen
  *        that is already changing, e.g. waitForAnimationToEnd).
@@ -210,6 +216,7 @@ private object Op {
     const val PERMS = 22
     const val FOCUS = 25
     const val TYPE_PACED = 26
+    const val TAP_OFF_KEYBOARD = 27
 }
 
 // SWIPE without fling: pointer still for this long before lifting. Past the VelocityTracker's
@@ -247,6 +254,8 @@ private const val CHECK_UNREAD_AFTER = 6 // the field's text could not be read a
 private const val CHECK_PUT_IN = 7       // characters missing, put in: the field holds the text typed
 private const val CHECK_STILL = 8        // characters missing, put in, and it still differs
 private const val CHECK_NO_REPLACE = 9   // characters missing, the key service could not put them in
+private const val CHECK_NO_SERVICE = 10  // not checked: the key service is not up (Android 14+)
+private const val CHECK_NO_CONNECTION = 11 // not checked: the key service has no input connection to the field
 
 // An accessibility call the app doesn't answer returns empty after AccessibilityInteraction-
 // Client's 5 s timeout. One that took this long timed out (see child).
@@ -426,6 +435,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             Op.PING -> Unit
             Op.TREE -> writeTree()
             Op.TAP -> tap(input.readInt().toFloat(), input.readInt().toFloat())
+            Op.TAP_OFF_KEYBOARD -> tap(input.readInt().toFloat(), input.readInt().toFloat(), offKeyboard = true)
             Op.KEY -> key(input.readInt())
             Op.SETTLE -> settle(input.readInt(), input.readInt(), input.readInt())
             Op.FIND -> writeFind(readStr(input))
@@ -786,22 +796,33 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeByte(injector.path) // after injecting, so a fallback taken mid-action shows
     }
 
-    private fun tap(x: Float, y: Float) {
+    /**
+     * A tap at x, y. [offKeyboard]: on an element of the app's that the keyboard did not cover
+     * when the host read the screen (TAP_OFF_KEYBOARD); not made when the keyboard has come over
+     * that point since (keyboardCame), as the host would then tap the keyboard. A sheet that
+     * focuses its field as it opens brings the keyboard up while a tap in it waits for its
+     * transition (a team's slow emulator: a tap on a link at the sheet's foot, found before
+     * the keyboard came, landed on it).
+     */
+    private fun tap(x: Float, y: Float, offKeyboard: Boolean = false) {
         timedAction {
-            val downTime = touchDown(x, y)
+            val downTime = touchDown(x, y, offKeyboard)
+            if (keyboardCame) return@timedAction
             injectMotion(touch(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
         }
         writeTouch()
     }
 
     // The last touch's DOWNs the system dropped (touchDown), how long they held it off,
-    // whether it took one in the end, how long it waited for window transitions, and whether
-    // it was the first input in its window (windowCame).
+    // whether it took one in the end, how long it waited for window transitions, whether it
+    // was the first input in its window (windowCame), and whether the keyboard came over its
+    // point meanwhile, so that it was not made (keyboardCame).
     private var dropped = 0
     private var droppedNs = 0L
     private var touchTaken = true
     private var transitionNs = 0L
     private var windowCame = false
+    private var keyboardCame = false
     // The last touch's down time (uptime ms): input started before it can be the field before.
     private var lastTouchDown = 0L
 
@@ -811,6 +832,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeByte(if (touchTaken) 1 else 0)
         body.writeInt((transitionNs / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         body.writeByte(if (windowCame) 1 else 0)
+        body.writeByte(if (keyboardCame) 1 else 0)
     }
 
     // The active window at the last touch or key.
@@ -859,6 +881,27 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
     }
 
     /**
+     * The keyboard's window takes touches at x, y: its touchable region (Android 13 and later;
+     * before, its bounds).
+     */
+    private fun keyboardAt(x: Float, y: Float): Boolean {
+        val windows = try { ua.windows } catch (e: Exception) { return false }
+        for (w in windows) {
+            if (w.type != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+            if (Build.VERSION.SDK_INT >= 33) {
+                val region = Region()
+                w.getRegionInScreen(region)
+                if (region.contains(x.toInt(), y.toInt())) return true
+            } else {
+                val r = Rect()
+                w.getBoundsInScreen(r)
+                if (r.contains(x.toInt(), y.toInt())) return true
+            }
+        }
+        return false
+    }
+
+    /**
      * Puts a finger down at x, y, stamped at() (now by default), and returns its down time. A
      * window that is opening takes no touches until its transition lets it, and the one under
      * it none either: the system drops a DOWN there ("no touchable window"), and its gesture
@@ -871,11 +914,18 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      * the DOWN, and the dispatcher counts that as delivered. So a touch in a window that just
      * came first waits for window transitions (waitForTransitions).
      */
-    private fun touchDown(x: Float, y: Float, at: () -> Long = { SystemClock.uptimeMillis() }): Long {
+    private fun touchDown(x: Float, y: Float, offKeyboard: Boolean = false, at: () -> Long = { SystemClock.uptimeMillis() }): Long {
         dropped = 0
         droppedNs = 0
         touchTaken = true
         waitForTransitions()
+        keyboardCame = offKeyboard && keyboardAt(x, y)
+        if (keyboardCame) {
+            if (windowCame) inputWindows.remove(actionWindow)
+            windowCame = false
+            AgentLog.i("the keyboard came over $x,$y since the screen was read: the touch not made")
+            return 0
+        }
         val start = SystemClock.elapsedRealtimeNanos()
         while (true) {
             val down = at()
@@ -1080,7 +1130,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         // What the field holds before the keys, to check what they did (checkTyped). Not for
         // Enter or Tab, which act (a single-line field sends its text, the focus moves on).
         val acts = text.any { it == '\n' || it == '\t' }
-        val before = if (input != 0 && !acts) fieldText() else null
+        val read = if (input != 0 && !acts) keyCall("text", Bundle()) else null
+        val before = read?.takeIf { it.containsKey("text") }
         val typed = field?.let { TypedField(it) }
         var checked = Checked(CHECK_NONE)
         timedAction {
@@ -1092,7 +1143,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             if (paced && changes >= 0) injectPaced(keys, changes) else injectKeys(keys)
             checked = when {
                 typed == null || skipped > 0 || acts -> Checked(CHECK_NONE)
-                before == null -> Checked(CHECK_UNREAD)
+                before == null -> Checked(unread(input, read))
                 else -> checkTyped(text, before, typed)
             }
         }
@@ -1104,6 +1155,14 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
         body.writeInt(checked.putIn)
         body.writeByte(checked.status)
         body.writeInt(checked.missed)
+    }
+
+    /** Why the field's text was not read before the keys ([read]: the key service's answer). */
+    private fun unread(input: Int, read: Bundle?): Int = when {
+        input == 0 && Build.VERSION.SDK_INT >= 34 -> CHECK_NO_SERVICE
+        read?.getString("why") == "service" -> CHECK_NO_SERVICE
+        read?.getString("why") == "connection" -> CHECK_NO_CONNECTION
+        else -> CHECK_UNREAD
     }
 
     /** The focused field's text and selection, by the key service (KeyService.fieldText). */
@@ -1142,8 +1201,8 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      * text with characters missing from the typed part, and the cursor after it, the typed part
      * is replaced with [text] through the field's connection (KeyService.replace), RETYPE_ROUNDS
      * times at most, while it helps. Not with keys: typed again through the keyboard app, they
-     * met a keyboard behind the field, which put its own word back (letters out of place on
-     * CI). Letters are compared without their case: a field whose app
+     * can be lost again, and come one at a time. Letters are compared without their case: a
+     * field whose app
      * changes it (upper case) starts input again on every key, and Gboard 18 lost 1 to 3 of 18
      * characters there on every run ("speedrun runs fast" as "SPEEDRU RUNSFAT"); what is put in
      * goes through the app's change too. A field whose app changes what is typed otherwise (a
@@ -1316,7 +1375,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
      * The service is asked through its content provider, as `content call` does (hidden API:
      * ActivityManager.getContentProviderExternal, IContentProvider.call).
      */
-    private fun keysThroughField(code: Int, count: Int): Boolean {
+    private fun keysThroughField(code: Int, count: Int, whole: Boolean = false): Boolean {
         if (Build.VERSION.SDK_INT < 33) return false
         if (Build.VERSION.SDK_INT >= 34) ua.clearCache()
         val field = inputFocus() ?: return false
@@ -1325,6 +1384,7 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
             putInt("count", count)
             putLong("field", KeyService.fieldOf(field))
             putLong("since", lastTouchDown)
+            putBoolean("whole", whole)
         }
         return keyCall("keys", extras)?.getBoolean("sent") == true
     }
@@ -1441,15 +1501,42 @@ class Agent(private val ua: UiAutomation, private val injector: Injector) {
 
     // The last DEL waits until the app has handled it (and so every DEL before it). The IME
     // applies DELs asynchronously; without the wait, spare DELs (erasing more characters than
-    // the field holds) could land after the next command's first typed characters.
+    // the field holds) could land after the next command's first typed characters. Erasing at
+    // least what the field holds erases all of it, wherever a tap put the cursor
+    // (KeyService.toEnd; without the key service, Ctrl+End and End before the DELs: erasesAll).
     private fun erase(count: Int) = timedAction {
         waitForTransitions()
-        if (keysThroughField(KeyEvent.KEYCODE_DEL, count.coerceIn(0, 10_000))) return@timedAction
+        val n = count.coerceIn(0, 10_000)
+        if (keysThroughField(KeyEvent.KEYCODE_DEL, n, whole = true)) return@timedAction
+        val keys = ArrayList<Array<KeyEvent>>()
+        if (erasesAll(n)) {
+            val ctrl = KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+            for (meta in intArrayOf(ctrl, 0)) keys += arrayOf(
+                KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MOVE_END, 0, meta),
+                KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MOVE_END, 0, meta),
+            )
+        }
         val del = arrayOf(
             KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0),
             KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0),
         )
-        injectKeys(List(count.coerceIn(0, 10_000)) { del })
+        repeat(n) { keys += del }
+        injectKeys(keys)
+    }
+
+    /**
+     * The focused field holds no more than [count] characters, its cursor not at their end
+     * (KeyService.toEnd's rule, for injected DELs): Ctrl+End and End first move it there, an
+     * EditText's to the end of its text with the first (End alone: of the line), a Compose
+     * field's with the second (it maps no Ctrl+End; End goes to the line's end). Keys, in order
+     * with the DELs: accessibility's set-selection returned once Compose had taken it, yet its
+     * key handling went on from the old cursor until the next frame.
+     */
+    private fun erasesAll(count: Int): Boolean {
+        if (Build.VERSION.SDK_INT >= 34) ua.clearCache()
+        val field = inputFocus() ?: return false
+        val n = if (field.isShowingHintText) 0 else field.text?.length ?: return false
+        return n in 1..count && !(field.textSelectionStart == n && field.textSelectionEnd == n)
     }
 
     // ---- settle -----------------------------------------------------------------------

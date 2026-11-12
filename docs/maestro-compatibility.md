@@ -110,6 +110,15 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   **scrolls it clear first**, as a user would, when it is in a list; otherwise it lands on
   the part of the element that shows. Maestro taps the element's center, which hits what is
   on top: on a small screen, a footer's button instead of the element under it.
+- **On Android, a tap on an element the keyboard hides entirely hides the keyboard first**
+  (as `hideKeyboard` does), then taps the element where it is: a dialog's button under the
+  keyboard that the dialog's field brought up. Maestro taps the keyboard there. A tap whose
+  element the keyboard has come over since the screen was read is not made, and the element
+  is found again.
+- **`eraseText` erases all of a field that holds no more characters than it erases**,
+  wherever the cursor is. A tap puts the cursor where it lands, often inside the text, and
+  Maestro erases only what is before the cursor: the rest stays, and the text typed next
+  goes in front of it. A field holding more is erased from the cursor, as in Maestro.
 - **`longPressOn` holds for 1.2 s**, where Maestro holds 3 s: past the 0.4–0.8 s after which
   apps take a touch as a long press (on Android, at least the device's touch & hold delay
   plus 0.7 s). For an app that waits longer, set `SPEEDRUN_LONG_PRESS_MS`.

@@ -310,8 +310,11 @@ KEY_SERVICE :: AGENT_PACKAGE + "/.KeyService"
 @(private = "file")
 key_service_on :: proc(d: ^Device, verbose: bool) {
 	// Right after an install, the system can drop the service from the list (it read the list
-	// before it knew the package's service): until it is bound, it is put back.
-	// Concatenated, not formatted: fmt reads the shell's braces.
+	// before it knew the package's service): until it is bound, it is put back. It can also
+	// skip one still listed ("disallowed by AppOps", the package not known there yet), and
+	// one skipped while the agent was replaced stayed unbound for a whole run, once in ~10
+	// (the setting unchanged, nothing reads it again): every 0.5 s unbound, it is taken out
+	// of the list and put back. Concatenated, not formatted: fmt reads the shell's braces.
 	apk := device_apk()
 	script := strings.concatenate({
 		`[ "$(getprop ro.build.version.sdk)" -ge 33 ] || exit 0; new=0; `,
@@ -320,8 +323,12 @@ key_service_on :: proc(d: ^Device, verbose: bool) {
 		`on() { s=$(cmd settings get secure enabled_accessibility_services); case ":$s:" in *:`, KEY_SERVICE, `:*) return;; esac; `,
 		`if [ -z "$s" ] || [ "$s" = null ]; then s=`, KEY_SERVICE, `; else s="$s:`, KEY_SERVICE, `"; fi; `,
 		`cmd settings put secure enabled_accessibility_services "$s"; }; `,
+		`off() { s=$(cmd settings get secure enabled_accessibility_services | tr ':' '\n' | grep -vx '`, KEY_SERVICE, `' | paste -s -d : -); `,
+		`if [ -z "$s" ] || [ "$s" = null ]; then cmd settings delete secure enabled_accessibility_services > /dev/null; `,
+		`else cmd settings put secure enabled_accessibility_services "$s"; fi; }; `,
 		`echo "a11y $(cmd settings get secure accessibility_enabled)"; on; cmd settings put secure accessibility_enabled 1; `,
-		`n=0; while [ $new = 1 ] && [ $n -lt 30 ] && ! dumpsys accessibility | grep -q 'Speedrun keys'; do sleep 0.1; on; n=$((n + 1)); done`,
+		`n=0; while [ $new = 1 ] && [ $n -lt 30 ] && ! dumpsys accessibility | grep -q 'Speedrun keys'; do sleep 0.1; `,
+		`if [ $((n % 5)) = 4 ]; then off; fi; on; n=$((n + 1)); done`,
 	}, context.temp_allocator)
 	out, ok := adb("shell", script)
 	if !ok {

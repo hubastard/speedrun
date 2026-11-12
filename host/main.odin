@@ -41,6 +41,7 @@ Op :: enum u8 {
 	Hit         = 24, // iOS agent: the node of the last screen read a touch at a point reaches
 	Focus       = 25, // Android agent: the editable field with the input focus
 	Type_Paced  = 26, // Android agent: Type, each key once the one before changed the field
+	Tap_Off_Keyboard = 27, // Android agent: Tap, not made when the keyboard has come over the point
 }
 
 KEYCODE_BACK :: 4
@@ -139,12 +140,14 @@ Action_Result :: struct {
 	// there: one opening) before it took one, and how long they held the touch off. untaken:
 	// it dropped every one, for 2 s. transition_us: how long the touch waited for window
 	// transitions (a new window active since the last touch). window_came: the first touch or
-	// key in its window.
+	// key in its window. keyboard: not made, the keyboard over the point (op_tap's
+	// off_keyboard).
 	dropped:       int,
 	dropped_us:    u32,
 	untaken:       bool,
 	transition_us: u32,
 	window_came:   bool,
+	keyboard:      bool,
 }
 
 Conn :: struct {
@@ -425,12 +428,16 @@ read_touch :: proc(body: []byte) -> (res: Action_Result, ok: bool) {
 	res.untaken = rd_u8(&r) == 0
 	res.transition_us = rd_u32(&r)
 	if len(r.b) - r.off >= 1 do res.window_came = rd_u8(&r) != 0
+	if len(r.b) - r.off >= 1 do res.keyboard = rd_u8(&r) != 0
 	return res, r.ok
 }
 
-op_tap :: proc(c: ^Conn, x, y: i32) -> (res: Action_Result, ok: bool) {
+// off_keyboard (Android): a tap on an element of the app's that the keyboard did not cover in
+// the last read, which the agent does not make when the keyboard takes touches there now
+// (res.keyboard).
+op_tap :: proc(c: ^Conn, x, y: i32, off_keyboard := false) -> (res: Action_Result, ok: bool) {
 	req: [9]byte
-	req[0] = u8(Op.Tap)
+	req[0] = u8(Op.Tap_Off_Keyboard if off_keyboard else Op.Tap)
 	put_i32(req[1:5], x)
 	put_i32(req[5:9], y)
 	body: []byte
@@ -505,6 +512,8 @@ Type_Check :: enum u8 {
 	Put_In,       // characters missing, put in: the field holds the text typed
 	Still,        // characters missing, put in, and it still differs
 	No_Replace,   // characters missing, the key service could not put them in
+	No_Service,   // not checked: the key service is not up (Android 14+)
+	No_Connection, // not checked: the key service has no input connection to the field
 }
 
 Typed_Check :: struct {
@@ -530,7 +539,7 @@ op_type :: proc(c: ^Conn, text: string, alloc: mem.Allocator, paced := false) ->
 	}
 	if len(r.b) - r.off >= 4 do check.put_in = rd_u32(&r)
 	if len(r.b) - r.off >= 5 {
-		check.status = Type_Check(min(rd_u8(&r), u8(Type_Check.No_Replace)))
+		check.status = Type_Check(min(rd_u8(&r), u8(Type_Check.No_Connection)))
 		check.missed = rd_u32(&r)
 	}
 	return res, skipped, focused, input, input_wait_us, check, r.ok
