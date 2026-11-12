@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`19bcdb7`](https://github.com/hubastard/speedrun/commit/19bcdb7d5a073429595fd12bebbe547c82db31a4) Bench: Compose Bench's README takes v0.4.14's numbers | 2026-11-12 22:38 | 54.2 s ▲ +25% | 43.8 s | 3.10 s | 3.82 s | 6.57 s | 9.28 s |
 | [`00c3b3e`](https://github.com/hubastard/speedrun/commit/00c3b3e239f1167504c38ca2bbc88feb4f66f688) Android: eraseText erases all of a field wherever the cursor | 2026-11-12 22:15 | 57.2 s ▲ +32% | 41.4 s | 3.09 s | 3.88 s | 6.99 s ▲ +21% | 9.91 s |
 | [`a171959`](https://github.com/hubastard/speedrun/commit/a17195946e56a13f4a96ce9bc710c4cfedcf026c) Bench: Compose Bench's README takes v0.4.13's numbers | 2026-11-11 14:40 | 43.3 s | 44.0 s | 3.09 s | 3.74 s | 5.75 s | 9.50 s |
 | [`91c0d78`](https://github.com/hubastard/speedrun/commit/91c0d78033729fb497f608321bab89e717a8297c) Android: a tap that changed nothing is repeated only as a wi | 2026-11-11 14:24 | 38.6 s ▼ −28% | 42.9 s | 3.13 s | 4.04 s | 7.29 s ▲ +25% | 9.59 s |
