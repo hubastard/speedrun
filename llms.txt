@@ -1,0 +1,17 @@
+# speedrun
+
+> A fast end-to-end UI test runner for Android, iOS and the web that runs black-box tests written as plain YAML files, with nothing added to the app under test.
+
+Tests are YAML flows run via `speedrun test` against an Android emulator or device, a booted iOS simulator, or Chrome/Firefox. Install with Homebrew or the install script. It reads Maestro flow files for compatibility, includes `speedrun fast-boot` for CI device booting, `speedrun mcp` for MCP tools, and sessions that let AI agents drive apps step by step.
+
+## Docs
+
+- [speedrun README](https://raw.githubusercontent.com/hubastard/speedrun/main/README.md): Black-box UI tests for Android, iOS and the web in plain YAML, with speed, stability and benchmark comparisons.
+- [Install](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/install.md): Installing with Homebrew, install script or releases, updating, and building from source with JDK 17 and Odin.
+- [Command line](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/cli.md): Command options, speedrun update, fast-boot emulator trimming, sessions, and the update check.
+- [Troubleshooting](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/troubleshooting.md): Fixing slow iOS agent starts, UiAutomation conflicts, leaking emulators, and busy-machine stalls.
+- [Running on CI](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/ci.md): JUnit and HTML reports, failure artifacts, sharding across devices, headless web runs, and fast-boot on CI emulators.
+- [Writing flows](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/flows.md): Writing YAML flows on Android, iOS and web: configuration, steps, waiting, and finding elements with selectors.
+- [Maestro compatibility](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/maestro-compatibility.md): Which Maestro commands, selectors, conditions and scripts are supported on Android, iOS and web, and unsupported features.
+- [Sessions: drive an app a command at a time](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/sessions.md): Keeping a device connected between commands to explore an app step by step and save working steps as a flow.
+- [Web](https://raw.githubusercontent.com/hubastard/speedrun/main/docs/web.md): Testing websites in Chrome or Firefox with flow files, browser selection, headless mode and automatic browser downloads.
