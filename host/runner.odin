@@ -3884,7 +3884,10 @@ shell :: proc(r: ^Runner, format: string, args: ..any) -> string {
 	return out
 }
 
-// LaunchAppCommand: the package's launcher activity (cached).
+// LaunchAppCommand: the package's launcher activity (cached). With two launcher activities (a
+// debug build's LeakCanary adds one), resolve-activity answers the system's chooser (issue #24):
+// then the activity Android's getLaunchIntentForPackage picks, the package's front door, as
+// flows expect: its INFO activity, else its first launcher activity.
 launcher :: proc(r: ^Runner, app: string) -> (comp: string, err: Err) {
 	if c, ok := r.launchers[app]; ok do return c, nil
 	out := shell(r, "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER %s", app)
@@ -3892,6 +3895,23 @@ launcher :: proc(r: ^Runner, app: string) -> (comp: string, err: Err) {
 	last := strings.trim_space(lines[len(lines) - 1]) if len(lines) > 0 else ""
 	if !strings.contains(last, "/") {
 		return "", fmt.aprintf("No launcher intent found for package %s (is it installed?)", app, allocator = r.alloc)
+	}
+	if !strings.has_prefix(last, strings.concatenate({app, "/"}, context.temp_allocator)) {
+		front: string
+		for category in ([]string{"INFO", "LAUNCHER"}) {
+			found := shell(r, "cmd package query-activities --components -a android.intent.action.MAIN -c android.intent.category.%s %s", category, app)
+			for l in strings.split_lines(found, context.temp_allocator) {
+				c := strings.trim_space(l)
+				if strings.has_prefix(c, app) && strings.has_prefix(c[len(app):], "/") {
+					front = c
+					break
+				}
+			}
+			if front != "" do break
+		}
+		if front == "" do return "", fmt.aprintf("No launcher activity of %s found: the system resolves its launcher intent to %s", app, last, allocator = r.alloc)
+		note(r, "%s has several launcher activities: launching %s", app, front)
+		last = strings.clone(front, r.alloc)
 	}
 	r.launchers[app] = last
 	return last, nil
