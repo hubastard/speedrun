@@ -32,6 +32,13 @@ the commands where speedrun is still closest to Maestro, with what is known abou
   `scrollUntilVisible` drags until its timeout (20 s by default), as Maestro does; failing
   there would only shorten failing runs.
 
+- **A tap that brings up a frame-clock endless animation settles in 3-9 s on Android**
+  (2026-11-27, Compose Bench's Player: "Tap on Play", 9.3 s the first time, 3.0 s after;
+  13.7 s with 400 ms frames). Animations off stops `rememberInfiniteTransition`, not a loop on
+  `withFrameNanos` (a level meter, a waveform): frames go on, and the settle only ends through
+  its restless method, which reads the tree until it holds still but for the moving elements.
+  Not yet measured against Maestro on the same screen.
+
 ## Measuring
 
 ```
