@@ -1149,25 +1149,36 @@ Known differences in how, not what:
   once with the timing of a real drag, so the app sees the right speed without the tool
   waiting it out. Only the first two MOVEs wait about one frame each for the app (a scroll
   container must intercept one of them before the rest, which come as one batched MOVE: an
-  intercepting parent spends that MOVE on intercepting, so nothing would scroll), and the
-  lift ~25 ms after the moves, a frame later. Two, because the view under the finger may keep
-  its parent from intercepting until the first MOVE: React Native's TextInput does on DOWN,
-  and gives the gesture back on its first MOVE when it cannot scroll itself. With one, a drag
-  that started on a form's field did not scroll (issue #6: on a CI emulator, unless the batch
-  happened to span two frames). The flow's `swipe`
-  and `scroll` (the fling flag) play out in real time instead, as a finger's: sent at once, a
-  React Native Gesture Handler pan sometimes ended with no movement (1 run in 3 of the
-  benchmark app's gestures flow). Flows fling like `adb shell input swipe`, as Maestro does;
-  without the fling flag the pointer stops before lifting and the content moves by the drag
-  distance: a still MOVE more than VelocityTracker's 40 ms "pointer stopped" threshold after
-  the last moving one clears the velocity. Lifting late is not enough for `ScrollView`
-  (React Native's lists), which reads the velocity before adding the UP to its tracker;
-  `RecyclerView` adds it first. That kept a fast emulator from flinging, not CI's starved
-  one: with the cancel flag (the host sets it for up and down drags) the gesture ends with a
-  CANCEL instead, and scroll views fling only on an UP (`ScrollView` and `RecyclerView` end
-  a cancelled drag where it is, Compose and Flutter with no velocity). A cancelled drag
-  skips what a lift does after it: a paging list does not snap (an old `ViewPager` snaps
-  back), and React Native sends no `onScrollEndDrag`.
+  intercepting parent spends that MOVE on intercepting, so nothing would scroll), and the lift
+  ~25 ms after the moves, a frame later. Two, because the view under the finger may keep its
+  parent from intercepting until the first MOVE: React Native's TextInput does on DOWN, and
+  gives the gesture back on its first MOVE when it cannot scroll itself. With one, a drag that
+  started on a form's field did not scroll (issue #6: on a CI emulator, unless the batch
+  happened to span two frames). The flow's `swipe` and `scroll` (the fling flag) play out in
+  real time instead, as a finger's: sent at once, a React Native Gesture Handler pan sometimes
+  ended with no movement (1 run in 3 of the benchmark app's gestures flow). They play out as
+  `adb shell input swipe` does: each MOVE once the app has handled the one before (injected
+  waiting for it to finish), where the finger is at the time it carries, the last with the
+  lift. A slow app then takes one MOVE a frame. At 120 Hz regardless, a software-rendered
+  emulator (400 ms a frame) got dozens a frame, and Compose's `draggable`
+  (`AnchoredDraggable`, `SwipeToDismissBox`; Compose 1.12 keeps its fix behind
+  `isDraggableVelocityTrackerFixEnabled`, off) measures the finger from the element it drags,
+  which moves once a frame: the positions jump back at each frame, and a lift within 100 ms of
+  one read the velocity backward, past the 125 dp/s that sends the element back (~1 swipe in 3
+  at 400 ms frames: Compose Bench's Player). An agent that fell behind and sent the steps it
+  missed stamped late but placed on schedule made the same jumps. The response reports the
+  moves, the longest gap between two events and the gesture's length (`the swipe played out
+  in`, in the trace). Flows fling like `adb shell input swipe`, as Maestro does; without the
+  fling flag the pointer stops before lifting and the content moves by the drag distance: a
+  still MOVE more than VelocityTracker's 40 ms "pointer stopped" threshold after the last
+  moving one clears the velocity. Lifting late is not enough for `ScrollView` (React Native's
+  lists), which reads the velocity before adding the UP to its tracker; `RecyclerView` adds it
+  first. That kept a fast emulator from flinging, not CI's starved one: with the cancel flag
+  (the host sets it for up and down drags) the gesture ends with a CANCEL instead, and scroll
+  views fling only on an UP (`ScrollView` and `RecyclerView` end a cancelled drag where it is,
+  Compose and Flutter with no velocity). A cancelled drag skips what a lift does after it: a
+  paging list does not snap (an old `ViewPager` snaps back), and React Native sends no
+  `onScrollEndDrag`.
 - **`TYPE` uses the virtual keyboard key map**, like `adb shell input text`. Text with a
   character no key produces (most non-ASCII, emoji) goes in whole through accessibility
   instead: it replaces the focused field's selection and the cursor moves after it, as the

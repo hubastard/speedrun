@@ -2546,6 +2546,7 @@ swipe :: proc(r: ^Runner, c: ^Cmd, d: Swipe) -> Err {
 swipe_points :: proc(r: ^Runner, x1, y1, x2, y2, duration: i32, settle_ms: Maybe(int)) -> Err {
 	res, ok := op_swipe(r.c, x1, y1, x2, y2, duration, fling = true)
 	if !ok do return AGENT_LOST
+	if res.moves > 0 do note(r, "the swipe played out in %d ms (%d asked): %d moves, at most %d ms apart", res.gesture_ms, duration, res.moves, res.gap_ms)
 	touch_taken(r, res, x1, y1) or_return
 	return settle(r, settle_ms)
 }

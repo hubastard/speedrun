@@ -148,6 +148,11 @@ Action_Result :: struct {
 	transition_us: u32,
 	window_came:   bool,
 	keyboard:      bool,
+	// Android's flinging SWIPE as played out: its MOVEs, the longest time between two of its
+	// events, its DOWN to UP (0 for the others).
+	moves:      int,
+	gap_ms:     u32,
+	gesture_ms: u32,
 }
 
 Conn :: struct {
@@ -429,6 +434,11 @@ read_touch :: proc(body: []byte) -> (res: Action_Result, ok: bool) {
 	res.transition_us = rd_u32(&r)
 	if len(r.b) - r.off >= 1 do res.window_came = rd_u8(&r) != 0
 	if len(r.b) - r.off >= 1 do res.keyboard = rd_u8(&r) != 0
+	if len(r.b) - r.off >= 10 {
+		res.moves = int(rd_u16(&r))
+		res.gap_ms = rd_u32(&r)
+		res.gesture_ms = rd_u32(&r)
+	}
 	return res, r.ok
 }
 
