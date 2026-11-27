@@ -80,7 +80,7 @@ platform_name :: proc(p: Platform) -> string {
 	return ""
 }
 
-IOS_PORT :: 7778 // default: Android's 7777 is often forwarded to an emulator already
+IOS_PORT :: 7778 // the first simulator's runner (ios_port_for); Android's 7777 is often forwarded to an emulator already
 IOS_RUNNER_APP :: "com.speedrun.agent.uitests.xctrunner"
 AGENT_PING_TIMEOUT :: 5 * time.Second // device_restart: an agent that does not answer by then is started again
 // In the test run file's name (SpeedrunAgent_iphonesimulator<SDK>-<archs>.xctestrun), on a
@@ -90,6 +90,7 @@ IOS_AGENT_FOLDER :: "ios-agent-" // + IOS_AGENT_ID, in the user's cache
 // A just-booted CI simulator took 37-78 s to start the runner, and over 90 s in 4 of 5 runs
 // on a busy day.
 IOS_START_TIMEOUT :: 4 * time.Minute
+IOS_INFO_TIMEOUT :: 500 * time.Millisecond // a runner looked up among others' that has not answered by then serves another run
 
 Device :: struct {
 	platform:   Platform,
@@ -372,7 +373,6 @@ device_apk :: proc() -> string {
 // Picks the platform and the device. --platform and --device win; otherwise a connected
 // Android device, else the one booted simulator.
 device_select :: proc(d: ^Device, platform, device: string, port_given: bool) -> (err: string) {
-	ios_port := d.port if port_given else IOS_PORT
 	is_sim :: proc(sims: []Simulator, id: string) -> (Simulator, bool) {
 		for s in sims do if s.udid == id do return s, true
 		return {}, false
@@ -388,15 +388,16 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 		if device == WEB_DEVICE || device == WEB_FIREFOX {
 			d.platform = .Web
 		} else if device != "" {
-			udid, _, _, warm := ios_info(ios_port)
-			sim := warm && udid == device
+			// A simulator a runner was started for, else a booted one.
+			sim := false
+			for r in ios_records() do if r.udid == device do sim = true
 			if !sim do _, sim = is_sim(booted_simulators(), device)
 			d.platform = .IOS if sim else .Android
 		} else if !ANDROID_AGENT {
 			d.platform = .IOS // an iOS-only build
 		} else if out, ok := adb("devices"); ok && strings.count(out, "\tdevice") > 0 {
 			d.platform = .Android
-		} else if answers_ping(ios_port) || len(booted_simulators()) > 0 {
+		} else if len(booted_simulators()) > 0 {
 			d.platform = .IOS
 		} else {
 			return "No device: connect an Android device or emulator (adb devices), or boot an iOS simulator."
@@ -415,19 +416,47 @@ device_select :: proc(d: ^Device, platform, device: string, port_given: bool) ->
 		adb_serial = device
 		return ""
 	}
-	if !port_given do d.port = IOS_PORT
+	want := device
+	sims: []Simulator
+	listed := false
+	if !port_given {
+		// The simulator's own port (ios_port_for). Without --device, one runner of this build
+		// up is reused without listing the simulators, as when they all shared one port.
+		if want == "" {
+			for r in ios_records() {
+				udid, _, build, ok := ios_info(r.port, IOS_INFO_TIMEOUT)
+				if !ok || udid != r.udid || build != ios_build_id() do continue
+				if want != "" {
+					want = ""
+					break
+				}
+				want = udid
+			}
+		}
+		if want == "" {
+			sims, listed = booted_simulators(), true
+			if len(sims) == 1 do want = sims[0].udid
+		}
+		if want != "" {
+			port, e := ios_port_for(want)
+			if e != "" do return e
+			d.port = port
+		}
+	}
 	// A runner kept from an earlier run: reuse it when it runs this build on this simulator
 	// (then the simulator list is not even needed), else stop it.
-	if udid, name, build, ok := ios_info(d.port); ok {
-		if (device == "" || device == udid) && build == ios_build_id() {
-			// Heap copies: a session outlives the temp allocator its requests free.
-			d.udid, d.name, d.warm = strings.clone(udid), strings.clone(name), true // name: the description, from INFO
-			return ""
+	if want != "" || port_given {
+		if udid, name, build, ok := ios_info(d.port); ok {
+			if (want == "" || want == udid) && build == ios_build_id() {
+				// Heap copies: a session outlives the temp allocator its requests free.
+				d.udid, d.name, d.warm = strings.clone(udid), strings.clone(name), true // name: the description, from INFO
+				return ""
+			}
+			ios_quit(d.port)
+			time.sleep(500 * time.Millisecond) // let it release the port
 		}
-		ios_quit(d.port)
-		time.sleep(500 * time.Millisecond) // let it release the port
 	}
-	sims := booted_simulators()
+	if !listed do sims = booted_simulators()
 	switch {
 	case device != "":
 		sim, ok := is_sim(sims, device)
@@ -651,6 +680,7 @@ ios_start :: proc(d: ^Device) -> string {
 	}
 	if xctestrun == "" do return fmt.tprintf("The iOS agent in %s has no test run file: delete the folder, then run again.", products)
 	ios_end_runners(d.udid)
+	ios_record(d.port, d.udid)
 
 	log := ios_runner_log(d.port)
 	// The previous runner's log is kept: after a lost agent (reconnect), its end says why.
@@ -795,15 +825,96 @@ ios_token_path :: proc(port: int) -> string {
 
 @(private = "file")
 ios_save_token :: proc(port: int, token: string) -> string {
+	if e := ios_save_token_dir(); e != "" do return e
 	path := ios_token_path(port)
-	dir := path[:strings.last_index_byte(path, '/')]
+	if err := os.write_entire_file(path, token, {.Read_User, .Write_User}); err != nil {
+		return fmt.tprintf("could not write %s: %v", path, err)
+	}
+	return ""
+}
+
+// Each simulator's runner listens on a port of its own (issue #23: they share the Mac's
+// loopback). ~/.speedrun/agents/ios-<port>.udid names the simulator a runner was started for
+// on that port: a later run on that simulator reuses it there, and a new simulator's runner
+// takes the first port from IOS_PORT with no record, nothing listening and no runner starting.
+IOS_PORTS :: 64
+
+@(private = "file")
+ios_record_path :: proc(port: int) -> string {
+	return fmt.tprintf("%s/.speedrun/agents/ios-%d.udid", os.get_env("HOME", context.temp_allocator), port)
+}
+
+Ios_Record :: struct {
+	port: int,
+	udid: string,
+	age:  time.Duration, // since it was written: a runner starting has a young one
+}
+
+// The ports with a record, and the simulator each names.
+ios_records :: proc() -> []Ios_Record {
+	dir := fmt.tprintf("%s/.speedrun/agents", os.get_env("HOME", context.temp_allocator))
+	entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
+	if err != nil do return nil
+	records := make([dynamic]Ios_Record, context.temp_allocator)
+	for e in entries {
+		if !strings.has_prefix(e.name, "ios-") || !strings.has_suffix(e.name, ".udid") do continue
+		port, ok := strconv.parse_int(e.name[len("ios-"):len(e.name) - len(".udid")])
+		if !ok do continue
+		data, rerr := os.read_entire_file(e.fullpath, context.temp_allocator)
+		if rerr != nil do continue
+		append(&records, Ios_Record{port, strings.trim_space(string(data)), time.since(e.modification_time)})
+	}
+	return records[:]
+}
+
+// Something listens on 127.0.0.1:port.
+@(private = "file")
+port_listening :: proc(port: int) -> bool {
+	s, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
+	if err != nil do return false
+	net.close(s)
+	return true
+}
+
+// The port of simulator udid's runner: the one its record names, else the first free one from
+// IOS_PORT, claimed by creating its record (exclusively: runs starting at once on two
+// simulators each get their own). Another simulator's record is taken over once nothing listens
+// on its port and it is older than a runner's start.
+@(private = "file")
+ios_port_for :: proc(udid: string) -> (port: int, err: string) {
+	records := ios_records()
+	for r in records do if r.udid == udid do return r.port, ""
+	if e := ios_save_token_dir(); e != "" do return 0, e
+	ports: for p in IOS_PORT ..< IOS_PORT + IOS_PORTS {
+		for r in records do if r.port == p {
+			if r.age < IOS_START_TIMEOUT || port_listening(p) do continue ports
+			os.remove(ios_record_path(p)) // that simulator's runner is gone
+		}
+		if port_listening(p) do continue
+		f, ferr := os.open(ios_record_path(p), {.Write, .Create, .Excl}, {.Read_User, .Write_User})
+		if ferr != nil do continue // a record: another simulator's, or claimed just now
+		os.write_string(f, udid)
+		os.close(f)
+		return p, ""
+	}
+	return 0, fmt.tprintf("No free port for the iOS agent from %d to %d: name one with --port.", IOS_PORT, IOS_PORT + IOS_PORTS - 1)
+}
+
+// Records that the runner on port is simulator udid's, the only one: a simulator runs one.
+@(private = "file")
+ios_record :: proc(port: int, udid: string) {
+	for r in ios_records() do if r.udid == udid && r.port != port do os.remove(ios_record_path(r.port))
+	_ = os.write_entire_file(ios_record_path(port), udid, {.Read_User, .Write_User})
+}
+
+// ~/.speedrun/agents, the user's alone: the iOS runners' tokens and records.
+@(private = "file")
+ios_save_token_dir :: proc() -> string {
+	dir := fmt.tprintf("%s/.speedrun/agents", os.get_env("HOME", context.temp_allocator))
 	if err := os.make_directory_all(dir, {.Read_User, .Write_User, .Execute_User}); err != nil && err != .Exist {
 		return fmt.tprintf("could not create %s: %v", dir, err)
 	}
 	_ = os.change_mode(dir, {.Read_User, .Write_User, .Execute_User})
-	if err := os.write_entire_file(path, token, {.Read_User, .Write_User}); err != nil {
-		return fmt.tprintf("could not write %s: %v", path, err)
-	}
 	return ""
 }
 
@@ -836,12 +947,14 @@ ios_quit :: proc(port: int) -> bool {
 	return op_quit(&c)
 }
 
-// The simulator and build of the runner serving on port; ok is false when none answers.
+// The simulator and build of the runner serving on port; ok is false when none answers. With a
+// timeout, one busy with another run (it serves one at a time) counts as not answering.
 @(private = "file")
-ios_info :: proc(port: int) -> (udid, name, build: string, ok: bool) {
+ios_info :: proc(port: int, timeout: time.Duration = 0) -> (udid, name, build: string, ok: bool) {
 	sock, dialed := agent_dial(port)
 	if !dialed do return
 	defer net.close(sock)
+	if timeout > 0 && net.set_option(sock, .Receive_Timeout, timeout) != nil do return
 	c := Conn{sock = sock}
 	defer delete(c.buf)
 	return op_info(&c, context.temp_allocator)

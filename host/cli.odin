@@ -591,11 +591,11 @@ run_shards :: proc(o: ^Test_Options, plan: ^Plan, requested: int, debug_dir: str
 			fmt.eprintln("could not create a temp file for the shards' results")
 			return 1
 		}
-		base_port := o.port if o.port_given else (IOS_PORT if d.platform == "ios" else 7777)
 		args: [dynamic]string
 		append(&args, exe, "test", "--shard-worker", fmt.aprintf("%d", k), "--shard-result", results[k],
-			"--device", d.id, "-p", d.platform, "--port", fmt.aprintf("%d", base_port + 2 * k),
-			"--debug-output", debug_dir, "--flatten-debug-output")
+			"--device", d.id, "-p", d.platform, "--debug-output", debug_dir, "--flatten-debug-output")
+		// An iOS shard's runner takes its simulator's own port (ios_port_for), unless --port.
+		if o.port_given || d.platform != "ios" do append(&args, "--port", fmt.aprintf("%d", (o.port if o.port_given else 7777) + 2 * k))
 		if o.plain do append(&args, "--plain")
 		if o.instrument do append(&args, "--instrument")
 		if o.headless do append(&args, "--headless")

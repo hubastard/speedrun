@@ -981,7 +981,8 @@ USAGE :: `usage:
                                          tests do not use (speedrun fast-boot --help)
   speedrun --flow <file.yaml> [-e KEY=VALUE]... [--timings <out.json>] [--plain]
   speedrun --bench ["<on-screen text>" [iterations]]
-  speedrun --stop-agent        stop the iOS agent kept running between runs
+  speedrun --stop-agent        stop the iOS agents kept running between runs (--device: that
+                               simulator's)
   speedrun --version
   speedrun --licenses
 options:
@@ -991,7 +992,8 @@ options:
                       flows, else a connected Android device, else the one booted simulator)
   --headless          web: no browser window (--screen-size <W>x<H> sets its size)
   --port <n>          the agent's port (default 7777 on Android, on the device: a free port
-                      of this machine is forwarded to it; 7778 on iOS)
+                      of this machine is forwarded to it; on iOS, each simulator's own, from
+                      7778)
   --instrument        Android: run the agent as an instrumentation (~60 ms slower per action)
 Starts the agent on the device, runs, then stops it; on iOS the agent stays up for the next
 run (starting it takes seconds) and stops after 10 idle minutes (SPEEDRUN_IDLE_S). On Android,
@@ -1121,12 +1123,26 @@ run_cli :: proc(args: []string) -> int {
 	file, target := "", ""
 	iters := 10
 	if mode == .Stop_Agent {
-		port := dev.port if port_given else IOS_PORT
-		if ios_quit(port) {
-			fmt.printf("Stopped the iOS agent on port %d.\n", port)
+		// --port's runner, else every simulator's (--device's alone), and one a speedrun
+		// before the per-simulator ports left on IOS_PORT.
+		ports := make([dynamic]int, context.temp_allocator)
+		if port_given {
+			append(&ports, dev.port)
 		} else {
-			fmt.printf("No iOS agent is running on port %d.\n", port)
+			legacy := device == ""
+			for r in ios_records() do if device == "" || r.udid == device {
+				append(&ports, r.port)
+				if r.port == IOS_PORT do legacy = false
+			}
+			if legacy do append(&ports, IOS_PORT)
 		}
+		stopped := 0
+		for port in ports do if ios_quit(port) {
+			fmt.printf("Stopped the iOS agent on port %d.\n", port)
+			stopped += 1
+		}
+		if stopped == 0 && port_given do fmt.printf("No iOS agent is running on port %d.\n", dev.port)
+		else if stopped == 0 do fmt.println("No iOS agent is running.")
 		return 0
 	}
 	// A web flow runs in the browser.

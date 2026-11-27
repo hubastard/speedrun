@@ -213,6 +213,14 @@ what is still slow: `dev/TO_IMPROVE.md`.
   Android (an app cannot read another user id's), in the runner's environment on iOS and in
   `~/.speedrun/agents/ios-<port>.token` (0600), which a later run reads to use the runner
   still up. The agent closes a connection that does not start with it within 5 s.
+- Each simulator's runner has a port of its own (simulators share the Mac's loopback, issue
+  #23): `~/.speedrun/agents/ios-<port>.udid` names the simulator it was started for. A run
+  takes its simulator's record, else claims the first port from 7778 with none, nothing
+  listening and no runner starting (`ios_port_for`: the record is created exclusively, so runs
+  starting at once on two simulators get two ports); another simulator's record is taken over
+  once nothing listens on its port and it is older than a runner's start. `--port` wins and
+  moves the simulator's record there. Before, every run looked for its runner on 7778 and quit
+  one serving another simulator, mid-run included.
 - The session server (127.0.0.1, a random port): each request carries the token from
   `session.json`. The session folder is 0700 and its files 0600; `session serve` gets the
   token in its environment, not its command line (`ps` shows those to every user). It serves

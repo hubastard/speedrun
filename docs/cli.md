@@ -34,7 +34,7 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 |---|---|
 | `--plain`, `--no-ansi` | Plain line-by-line output instead of the live view (the default when the output is not a terminal). |
 | `--timings <file.json>` | Write each command's timing to a JSON file. |
-| `--port <n>` | The agent's port (default 7777 on Android, on the device: speedrun forwards a free port of this machine to it, so runs on several devices at once never share one; 7778 on iOS). |
+| `--port <n>` | The agent's port (default 7777 on Android, on the device: speedrun forwards a free port of this machine to it, so runs on several devices at once never share one). On iOS, each simulator's agent listens on a port of its own, 7778 for the first, the next free one for each other, and a later run on that simulator reuses its agent there: runs on several simulators at once need no `--port`. |
 | `--instrument` | Android: run the agent as an instrumentation (a fallback; ~60 ms slower per action). |
 | `--animations off\|fast\|normal\|default` | How the device runs animations during the run. `off`: Android's animation scales at 0, the iOS simulator's Reduce Motion on (React Native's animations end at once) and UIKit's 10x faster, the web page's `prefers-reduced-motion` and its animations 100x faster. `fast`: Android's scales at 0.1, UIKit's 10x faster, the web page's animations 10x faster. `normal`: every platform at 1x. `default` (or no option): `off` on Android, `fast` on iOS, `normal` on the web. Android's scales and iOS's Reduce Motion are put back as they were found when the run ends. |
 
@@ -42,7 +42,7 @@ Speedrun takes `maestro test`'s options. `-p` and `--device` may also come befor
 
 
 ```
-speedrun --stop-agent      # stop the iOS agent kept running between runs
+speedrun --stop-agent      # stop the iOS agents kept running between runs
 speedrun update [version]  # install the latest release (or the one named) where this one is
 speedrun fast-boot [--device <id>] [--headless] [--off]  # boot an emulator or a simulator without what tests do not use
 speedrun --version

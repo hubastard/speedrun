@@ -33,7 +33,8 @@
   ```
 - **The iOS agent does not start.** A release's agent is built with one Xcode (the release
   notes name it). With a much different Xcode, build Speedrun from source. The
-  agent's own log is `$TMPDIR/speedrun-ios-runner-7778.log`.
+  agent's own log is `$TMPDIR/speedrun-ios-runner-<port>.log`, 7778 for the first
+  simulator (each simulator's agent has a port of its own).
 - **More detail:** `SPEEDRUN_DEBUG=1 speedrun test …` prints every screen read and shell
   command with its time, and for each tap where it landed and what lies there. A failed
   flow's debug output keeps the end of the same trace without it, in `logs/debug.log` (and on
