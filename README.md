@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`84bf362`](https://github.com/hubastard/speedrun/commit/84bf362156ad7f874595becc6b91a8f69972d10b) Bench: Compose Bench's README takes v0.4.15's numbers | 2026-11-27 19:10 | 52.6 s | 40.1 s | 3.07 s | 3.58 s | 4.84 s ▼ −26% | 6.82 s ▼ −28% |
 | [`38da57c`](https://github.com/hubastard/speedrun/commit/38da57c56e50bfe16ea379580b957d292efff44f) Bench: Compose Bench's Player swipes a card away over slow f | 2026-11-27 16:37 | 49.5 s | 51.1 s ▲ +17% | 3.08 s | 3.65 s | 5.50 s ▼ −16% | 7.54 s ▼ −21% |
 | [`19bcdb7`](https://github.com/hubastard/speedrun/commit/19bcdb7d5a073429595fd12bebbe547c82db31a4) Bench: Compose Bench's README takes v0.4.14's numbers | 2026-11-12 22:38 | 54.2 s ▲ +25% | 43.8 s | 3.10 s | 3.82 s | 6.57 s | 9.28 s |
 | [`00c3b3e`](https://github.com/hubastard/speedrun/commit/00c3b3e239f1167504c38ca2bbc88feb4f66f688) Android: eraseText erases all of a field wherever the cursor | 2026-11-12 22:15 | 57.2 s ▲ +32% | 41.4 s | 3.09 s | 3.88 s | 6.99 s ▲ +21% | 9.91 s |
