@@ -6,6 +6,7 @@ The journey and the web flows as Speedrun's CI ran them after each push to `main
 
 | Commit | Date | Journey, Android | Journey, iOS | Speedrun's web flows, Chrome | Speedrun's web flows, Firefox | Real World App, Chrome | Real World App, Firefox |
 |---|---|---|---|---|---|---|---|
+| [`b2d2051`](https://github.com/hubastard/speedrun/commit/b2d2051bfa59a1d6884a5f65d4c68915a1e22f45) Bench: Compose Bench's README takes v0.4.16's numbers | 2026-11-28 03:53 | 40.5 s ▼ −23% | 33.5 s ▼ −19% | 3.06 s | 3.56 s | 5.21 s | 7.43 s |
 | [`d761c69`](https://github.com/hubastard/speedrun/commit/d761c690f977b3e545f6a15deaf502db7b9692e0) Bench: Compose Bench's Booking (issue #25), Speedrun Bench's | 2026-11-28 03:36 | 47.2 s | 40.3 s | 3.25 s | 3.82 s | 5.89 s | 8.32 s |
 | [`84bf362`](https://github.com/hubastard/speedrun/commit/84bf362156ad7f874595becc6b91a8f69972d10b) Bench: Compose Bench's README takes v0.4.15's numbers | 2026-11-27 19:10 | 52.6 s | 40.1 s | 3.07 s | 3.58 s | 4.84 s ▼ −26% | 6.82 s ▼ −28% |
 | [`38da57c`](https://github.com/hubastard/speedrun/commit/38da57c56e50bfe16ea379580b957d292efff44f) Bench: Compose Bench's Player swipes a card away over slow f | 2026-11-27 16:37 | 49.5 s | 51.1 s ▲ +17% | 3.08 s | 3.65 s | 5.50 s ▼ −16% | 7.54 s ▼ −21% |

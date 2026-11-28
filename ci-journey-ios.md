@@ -4,51 +4,26 @@
 
 Each step's time, the last 8 pushes, newest first (GitHub Actions macos-26 runner (3 vCPUs), iPhone 17 Pro simulator (iOS 26.5)). ▲/▼: at least 15% slower/faster than the push before.
 
-| Step | d761c69<br>11-28 03:44 | 84bf362<br>11-27 19:12 | 38da57c<br>11-27 16:39 | 19bcdb7<br>11-12 22:39 | 00c3b3e<br>11-12 22:17 | a171959<br>11-11 14:42 | 91c0d78<br>11-11 14:26 | d432e3a<br>11-11 13:45 |
+| Step | b2d2051<br>11-28 03:53 | d761c69<br>11-28 03:44 | 84bf362<br>11-27 19:12 | 38da57c<br>11-27 16:39 | 19bcdb7<br>11-12 22:39 | 00c3b3e<br>11-12 22:17 | a171959<br>11-11 14:42 | 91c0d78<br>11-11 14:26 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1. Launch app "dev.speedrun.bench" | 1.9 s | 1.9 s | – | – | – | – | – | – |
-| 2. Tap on id: onboarding-skip | 5.9 s | 5.2 s ▲ +25% | 4.1 s | 4.5 s ▲ +53% | 3.0 s ▼ −29% | 4.2 s | 3.6 s ▼ −24% | 4.7 s |
-| 3. Tap on id: phone-input | 2.6 s | 2.2 s | – | – | – | – | – | – |
-| 4. Input text 5550101234 | 1.1 s | 0.8 s | – | – | – | – | – | – |
-| 5. Tap on id: next | 0.5 s | 0.3 s | – | – | – | – | – | – |
-| 6. Tap on id: code-input | 1.4 s | 1.6 s | – | – | – | – | – | – |
-| 7. Input text 123456 | 0.7 s | 0.7 s | – | – | – | – | – | – |
-| 8. Tap on id: notify-later | 2.7 s ▼ −49% | 5.4 s | – | – | – | – | – | – |
-| 9. Assert that "Hi, Alex" is visible | 0.2 s | 0.2 s | – | – | – | – | – | – |
-| 10. Tap on id: tab-shop | 0.7 s | 0.9 s | – | – | – | – | – | – |
-| 11. Tap on id: search-input | 1.1 s | 1.0 s | – | – | – | – | – | – |
-| 12. Input text sneaker | 1.4 s | 1.3 s | – | – | – | – | – | – |
-| 13. Press Enter key | 0.4 s | 0.8 s | – | – | – | – | – | – |
-| 14. Assert that "6 products" is visible | 0.4 s | 0.0 s | – | – | – | – | – | – |
-| 15. Tap on "City Sneaker" | 0.5 s | 0.5 s | – | – | – | – | – | – |
-| 16. Tap on id: size-M | 0.5 s | 0.8 s | – | – | – | – | – | – |
-| 17. Tap on id: color-Blue | 0.6 s | 0.6 s | – | – | – | – | – | – |
-| 18. Tap on id: qty-plus | 0.5 s | 0.7 s | – | – | – | – | – | – |
-| 19. Assert that "Qty 2" is visible | 0.0 s | 0.0 s | – | – | – | – | – | – |
-| 20. Tap on id: qty-plus | 0.9 s | 0.5 s | – | – | – | – | – | – |
-| 21. Assert that "Qty 3" is visible | 0.0 s | 0.0 s | – | – | – | – | – | – |
-| 22. Tap on id: add-to-cart | 0.6 s | 0.7 s | – | – | – | – | – | – |
-| 23. Assert that "Cart \(3\)" is visible | 0.0 s | 0.0 s | – | – | – | – | – | – |
-| 24. Tap on id: go-to-cart | 0.4 s | 0.3 s | – | – | – | – | – | – |
-| 25. Assert that "Size M · Blue" is visible | 0.0 s | 0.0 s | – | – | – | – | – | – |
-| 26. Tap on id: header-back | 0.8 s | 0.4 s | – | – | – | – | – | – |
-| 27. Tap on id: header-back | 0.5 s | 0.4 s | – | – | – | – | – | – |
-| 28. Tap on id: tab-profile | 0.5 s | 0.3 s | – | – | – | – | – | – |
-| 29. Tap on id: security | 0.4 s | 0.3 s | – | – | – | – | – | – |
-| 30. Tap on id: key-1 | 1.6 s | 1.7 s | – | – | – | – | – | – |
-| 31. Tap on id: key-2 | 0.3 s | 0.3 s | – | – | – | – | – | – |
-| 32. Tap on id: key-3 | 0.4 s | 0.3 s | – | – | – | – | – | – |
-| 33. Tap on id: key-4 | 0.3 s | 0.4 s | – | – | – | – | – | – |
-| 34. Assert that "Confirm your PIN" is visible | 0.1 s | 0.0 s | – | – | – | – | – | – |
-| 35. Tap on id: key-1 | 0.3 s | 0.3 s | – | – | – | – | – | – |
-| 36. Tap on id: key-2 | 0.4 s | 0.3 s | – | – | – | – | – | – |
-| 37. Tap on id: key-3 | 0.4 s | 0.4 s | – | – | – | – | – | – |
-| 38. Tap on id: key-4 | 0.7 s | 0.3 s | – | – | – | – | – | – |
-| 39. Assert that "PIN set" is visible | 0.0 s | 0.3 s | – | – | – | – | – | – |
-| 40. Tap on id: tab-lab | 0.6 s | 0.6 s | – | – | – | – | – | – |
-| 41. Tap on id: lab-drag | 0.9 s | 0.6 s | – | – | – | – | – | – |
-| 42. Tap on id: open-long-list | 1.8 s | 1.6 s | – | – | – | – | – | – |
-| 43. Scrolling DOWN until "Row 60" is visible with speed 40, visibility percentage 100%, timeout 60000 ms, with centering disabled | 4.4 s | 4.4 s | – | – | – | – | – | – |
-| 44. Tap on "Row 60" | 0.8 s | 0.9 s | – | – | – | – | – | – |
-| 45. Assert that "Picked row 60" is visible | 0.0 s | 0.1 s | – | – | – | – | – | – |
-| **Total** | 40.3 s | 40.1 s ▼ −22% | 51.1 s ▲ +17% | 43.8 s | 41.4 s | 44.0 s | 42.9 s ▼ −15% | 50.6 s |
+| 1. Launch app "dev.speedrun.bench" with clear state and clear keychain | 2.4 s | – | – | 6.1 s ▲ +35% | 4.5 s ▼ −50% | 9.1 s ▲ +51% | 6.0 s | 6.2 s |
+| 2. Tap on id: onboarding-skip | 2.8 s ▼ −52% | 5.9 s | 5.2 s ▲ +25% | 4.1 s | 4.5 s ▲ +53% | 3.0 s ▼ −29% | 4.2 s | 3.6 s |
+| 3. Assert that id: next, disabled is visible | 0.0 s | – | – | 0.0 s | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
+| 4. Tap on id: phone-input | 0.5 s | – | – | 1.0 s | 0.9 s | 1.0 s | 0.9 s | 0.9 s |
+| 5. Input text 5550101234 | 0.7 s | – | – | 0.7 s | 0.9 s | 0.8 s | 0.7 s | 0.8 s |
+| 6. Assert that "\(555\) 010-1234" is visible | 0.0 s | – | – | 0.0 s | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
+| 7. Assert that id: next, enabled is visible | 0.0 s | – | – | 0.0 s | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
+| 8. Erase 4 characters | 0.3 s | – | – | 0.4 s | 0.4 s | 0.4 s | 0.4 s | 0.3 s |
+| 9. Assert that "\(555\) 010" is visible | 0.0 s | – | – | 0.0 s | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
+| 10. Input text 1234 | 0.5 s | – | – | 0.6 s | 0.6 s | 0.6 s | 0.6 s | 0.5 s |
+| 11. Tap on id: next | 0.3 s | – | – | 0.5 s | 0.4 s | 0.4 s | 0.4 s | 0.4 s |
+| 12. Assert that "Sent to \(555\) 010-1234" is visible | 0.9 s | – | – | 1.0 s | 1.0 s | 0.9 s | 1.3 s | 0.9 s |
+| 13. Tap on id: code-input | 0.3 s | – | – | 0.7 s | 0.7 s | 0.4 s | 0.5 s | 0.4 s |
+| 14. Input text 111111 | 0.6 s | – | – | 1.2 s | 0.8 s | 0.9 s | 0.9 s | 0.7 s |
+| 15. Assert that "Wrong code, try again" is visible | 0.7 s | – | – | 0.7 s | 0.8 s | 0.6 s | 0.9 s | 0.8 s |
+| 16. Tap on id: code-input | 0.4 s | – | – | 0.5 s | 0.6 s | 0.5 s | 0.6 s | 0.4 s |
+| 17. Input text 123456 | 0.7 s | – | – | 0.9 s | 0.8 s | 0.8 s | 0.9 s | 0.6 s |
+| 18. Assert that id: tab-home|notify-title is visible | 1.5 s | – | – | 1.6 s | 1.7 s | 1.4 s | 1.7 s | 1.6 s |
+| 19. Run flow when id: notify-title is visible | 8.0 s | – | – | 8.6 s | 8.3 s | 8.2 s | 8.2 s | 8.1 s |
+| 20. Assert that "Hi, Alex" is visible | 0.0 s | – | – | 0.0 s | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
+| **Total** | 33.5 s ▼ −17% | 40.3 s | 40.1 s ▼ −22% | 51.1 s ▲ +17% | 43.8 s | 41.4 s | 44.0 s | 42.9 s |
