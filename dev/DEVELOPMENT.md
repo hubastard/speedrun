@@ -741,6 +741,13 @@ Known differences in how, not what:
   (6.3 s). `centerElement` drags just as far as brings the element to the screen's center (at
   most a stride): a whole stride, once longer, carried a product on the grid's third row past
   the center and off screen, and the scroll went on to the list's end.
+- Up and down, a drag that moved nothing is placed again, from the screen's center, on the
+  screen as read then (issue #25). Android's display size is the device's (`wm size`, read
+  once a run), turned as the window roots are: the roots' extent, used before, came out as a
+  dialog's when a read had the dialog's window without the app's (a touch-modal window leaves
+  the windows under it out of the accessibility list), and a scroll made as the dialog closed
+  dragged from the middle of that, 963 px down on Api35's 2340 (Compose Bench's Booking, its
+  summary pinned above the list: nothing scrolled for 20 s).
 - Android scroll on a slow emulator (open): with CI's software rendering, a React Native list
   can read blank right after a drag, and some drags fling (rows 77 to 123 in one drag),
   carrying the row looked for out of sight. Tried, each run alternated with the current code

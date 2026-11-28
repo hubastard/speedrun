@@ -91,6 +91,7 @@ Runner :: struct {
 	screen_arena:         virtual.Arena, // strings of the latest hierarchy read
 	h:                    Hierarchy,
 	w, h_px:              i32, // display size (DeviceInfo.widthGrid/heightGrid)
+	display:              [2]i32, // Android: the display's short and long sides (`wm size`), read once; -1: unknown
 	env:                  [dynamic]map[string]string, // scopes, innermost last
 	last_interaction:     time.Tick,
 	regexes:              map[string]Rx,
@@ -2218,7 +2219,7 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 	sideways := dir == .Left || dir == .Right
 	lines: [8]Line
 	line, n_lines := 0, 0
-	placed := false // up and down: the drag's start placed in the list (below)
+	placed := false // up and down: the drag's start placed in the list (below), again after a drag that moved nothing
 	// Web: an element the page holds already (off screen, or in a list's hidden part) is
 	// scrolled into view at once; the drags below are for one the page has not made yet (a list
 	// that renders its rows as they come).
@@ -2327,6 +2328,11 @@ scroll_until :: proc(r: ^Runner, c: ^Cmd, d: Scroll_Until) -> Err {
 					}
 				}
 				stalled = {}
+				// Up and down, the start is placed again, from the screen's center, on the
+				// screen as it is now: placed on a dialog's window while it closed (the app's
+				// behind it left out of the read), every drag started there once it had gone,
+				// and nothing scrolled (issue #25).
+				if still && !sideways do cy, placed = r.h_px / 2, false
 				if !sideways && !placed do cy, placed = drag_start(r, cx, cy, dir)
 				// Shown under something drawn over it (a sticky footer or header), which would
 				// take a tap: drag it just clear.
@@ -3621,11 +3627,20 @@ read_screen_once :: proc(r: ^Runner) -> bool {
 	r.h.unsettled = flag && r.dev.platform != .Android
 	r.h.stalled = flag && r.dev.platform == .Android
 	// Display size: the extent of the window roots, in the current orientation (it changes
-	// with setOrientation).
+	// with setOrientation). Android: the display's own, turned as the roots are. A dialog's
+	// window ends above the screen's bottom, and the read leaves out the app's behind it (touches
+	// cannot reach it): the size came out as the dialog's, and a scroll made as it closed
+	// dragged from the middle of that, wherever that fell on the app's screen once it had gone
+	// (issue #25).
 	w, h: i32
 	for i in r.h.roots {
 		w = max(w, r.h.nodes[i].right)
 		h = max(h, r.h.nodes[i].bottom)
+	}
+	if r.dev.platform == .Android && w > 0 && h > 0 {
+		short, long := android_display(r)
+		if short > 0 && w > h do w, h = long, short
+		else if short > 0 do w, h = short, long
 	}
 	if w > 0 && h > 0 do r.w, r.h_px = w, h
 	if r.dev.platform == .IOS do adopt_list_content(r)
@@ -3883,6 +3898,23 @@ shell :: proc(r: ^Runner, format: string, args: ..any) -> string {
 	out, _ := op_shell(r.c, fmt.tprintf(format, ..args), r.alloc)
 	note(r, "shell %.0f ms: %s -> %d bytes", us(t) / 1000, fmt.tprintf(format, ..args), len(out))
 	return out
+}
+
+// Android: the display's short and long sides, from `wm size` (its override size, when one is
+// set), read once a run; 0, 0 when it cannot be read.
+android_display :: proc(r: ^Runner) -> (short, long: i32) {
+	if r.display == {} {
+		r.display = {-1, -1}
+		for l in strings.split_lines(shell(r, "wm size"), context.temp_allocator) {
+			_, _, size := strings.partition(l, "size: ")
+			ws, _, hs := strings.partition(strings.trim_space(size), "x")
+			a, aok := strconv.parse_int(ws)
+			b, bok := strconv.parse_int(hs)
+			if aok && bok && a > 0 && b > 0 do r.display = {i32(min(a, b)), i32(max(a, b))} // an override comes last
+		}
+	}
+	if r.display[0] <= 0 do return 0, 0
+	return r.display[0], r.display[1]
 }
 
 // LaunchAppCommand: the package's launcher activity (cached). With two launcher activities (a
