@@ -925,6 +925,15 @@ Known differences in how, not what:
 - iOS reads React Native's checkbox and radio state from the value it spells them into
   ("checkbox, checked"), and a text field's focus from XCTest's keyboard focus
   (`hasKeyboardFocus`; `hasFocus` is the focus engine's).
+- Android `hideKeyboard` presses BACK only while a keyboard is up (a window holding
+  `android:id/inputArea`, whatever the keyboard app): with a field focused and no keyboard
+  yet, it waits for one up to 1.5 s (Speedrun Bench's inputs flow on an emulator loaded with
+  busy loops: BACK went before Gboard had come, and took the app back to the Lab), and with
+  none it does nothing (BACK would leave the screen). A keyboard that goes after the
+  settle following BACK is settled again (`no_change_ms` 300): until React Native hears
+  `keyboardDidHide`, a `ScrollView` with the default `keyboardShouldPersistTaps` takes the
+  next tap to dismiss the keyboard (issue #26; Speedrun Bench's Keyboard taps screen, not
+  reproduced locally).
 - iOS `hideKeyboard` fails when the keyboard stays up, as Maestro's does ("Couldn't hide the
   keyboard"); the keyboard is found by its element (the number pad's delete key has another
   id). One that moves after a swipe is read again until it stops (the settle after a swipe

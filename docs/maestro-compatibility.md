@@ -115,6 +115,11 @@ Conditions (`runFlow`'s and `repeat`'s `when`/`while`): `visible`, `notVisible`,
   keyboard that the dialog's field brought up. Maestro taps the keyboard there. A tap whose
   element the keyboard has come over since the screen was read is not made, and the element
   is found again.
+- **Android `hideKeyboard` with no keyboard up does nothing.** Maestro presses Back anyway,
+  which takes the app back a screen. A keyboard still coming up for a field that has the
+  focus is waited for, up to 1.5 s, then put away. Once it has gone, Speedrun waits for the
+  app to take that in: until React Native has heard the keyboard go, a `ScrollView` takes the
+  next tap as the one that dismisses the keyboard, and the tap does nothing else.
 - **`eraseText` erases all of a field that holds no more characters than it erases**,
   wherever the cursor is. A tap puts the cursor where it lands, often inside the text, and
   Maestro erases only what is before the cursor: the rest stays, and the text typed next

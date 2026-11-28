@@ -36,7 +36,6 @@ SCREEN_OVER_WAIT_MS        :: 2_000 // tap (Android): another screen over the el
 STEADY_WAIT_MS             :: 1_500 // tap (web): the element still moving, at most
 LONG_PRESS_APP_MS          :: 500
 LONG_PRESS_MARGIN_MS       :: 700 // an app's own delay above the default: 800 ms seen, then the hold took it as a tap
-GBOARD_ID                  :: "com.google.android.inputmethod.latin:id" // the keyboard is up while these show
 MAX_RECONNECTS             :: 2 // per flow (run_list)
 IOS_AGENT_LOG_LINES        :: 400 // of the agent's log in a failed flow's debug output
 MAX_ERROR_DIALOGS          :: 3 // Android error dialogs answered per read (answer_error_dialog)
@@ -927,21 +926,56 @@ ios_flutter :: proc(r: ^Runner, app: string) -> bool {
 	return v
 }
 
-// Android hideKeyboard: BACK, then gone = false if (G)board ids are still on screen
-// KEYBOARD_GONE_MS after it: on a team's CI the settle after it ended 47 ms in, before the
-// keyboard had started to go, and the one read then still showed it.
+// Android hideKeyboard: BACK, then gone = false if the keyboard is still up KEYBOARD_GONE_MS
+// after it: on a team's CI the settle after it ended 47 ms in, before the keyboard had started
+// to go, and the one read then still showed it.
+// A keyboard that went after the settle is settled again: the app takes it in after (its
+// layout, then React Native's keyboardDidHide), and until then a React Native ScrollView took
+// the next tap as the one that dismisses the keyboard, and the tap was lost (issue #26).
+// No keyboard up: one coming to a focused field (tapped just before, the keyboard app slow to
+// start on a loaded emulator) is waited for, up to KEYBOARD_COME_MS; with none, there is
+// nothing to hide, and no BACK, which took the app back a screen.
 android_hide_keyboard :: proc(r: ^Runner) -> (gone: bool, err: Err) {
+	if !read_screen(r) do return false, AGENT_LOST
+	if !keyboard_up(r) {
+		t := time.tick_now()
+		for typing(r) && !keyboard_up(r) && time.tick_since(t) < KEYBOARD_COME_MS * time.Millisecond {
+			time.sleep(50 * time.Millisecond)
+			if !read_screen(r) do return false, AGENT_LOST
+		}
+		if !keyboard_up(r) {
+			note(r, "no keyboard up: nothing to hide")
+			return true, nil
+		}
+		note(r, "the keyboard came %.0f ms after the command started", us(t) / 1000)
+	}
 	if _, ok := op_key(r.c, KEYCODE_BACK); !ok do return false, AGENT_LOST
 	settle(r) or_return
 	t := time.tick_now()
+	outlasted := false
 	for {
 		if !read_screen(r) do return false, AGENT_LOST
-		shown := false
-		for &n in r.h.nodes do if n.kept && strings.contains(n.id, GBOARD_ID) do shown = true
-		if !shown do return true, nil
+		if !keyboard_up(r) {
+			if outlasted {
+				note(r, "the keyboard went %.0f ms after the settle: settling again", us(t) / 1000)
+				settle(r, no_change_ms = KEYBOARD_GONE_SETTLE_MS) or_return
+			}
+			return true, nil
+		}
+		outlasted = true
 		if time.duration_milliseconds(time.tick_since(t)) >= KEYBOARD_GONE_MS do return false, nil
 		time.sleep(50 * time.Millisecond)
 	}
+}
+
+// Android: a keyboard is up, its window in the last read (keyboard_window), whatever the
+// keyboard app.
+keyboard_up :: proc(r: ^Runner) -> bool {
+	for root, i in r.h.roots {
+		end := r.h.roots[i + 1] if i + 1 < len(r.h.roots) else len(r.h.nodes)
+		if keyboard_window(r, root, end) do return true
+	}
+	return false
 }
 
 // iOS hideKeyboard: how long a keyboard that moves is waited for, read every
@@ -3483,8 +3517,11 @@ script_value :: proc(r: ^Runner, script: string) -> (value: string, err: Err) {
 
 // ---- device ---------------------------------------------------------------------------
 
-// How long hideKeyboard waits for the keyboard to go after its BACK (Android).
+// How long hideKeyboard waits for the keyboard to go after its BACK (Android), and then for the
+// app to start taking it in; with none up, for one coming to a focused field.
 KEYBOARD_GONE_MS :: 1500
+KEYBOARD_GONE_SETTLE_MS :: 300
+KEYBOARD_COME_MS :: 1500
 
 // How long read_screen reads again a screen whose app does not answer (Android).
 STALLED_READ_MAX_MS :: 60_000
