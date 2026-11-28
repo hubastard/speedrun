@@ -142,6 +142,10 @@ deletes from that field too:
 ```
 
 `assertVisible` waits up to 17 s for the element to show, `assertNotVisible` for it to go.
+As in Maestro, the 17 s (or an `extendedWaitUntil`'s `timeout`) count from the end of the last
+step that touched the app (a tap, typing, a scroll): a check right after a long
+`extendedWaitUntil` has what is left of them, and `waitForAnimationToEnd` starts them again.
+A check or a tap that must find its element still looks for it for at least 1 s.
 
 ### Scrolling and swiping
 

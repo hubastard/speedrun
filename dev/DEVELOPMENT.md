@@ -621,7 +621,11 @@ small: the suite 585 s to 573 s, the journey 26.6 s to 25.5 s (2026-10-29).
 Known differences in how, not what:
 
 - Hierarchy reads take 6–40 ms instead of hundreds, so lookups poll far more often within
-  the same timeouts (17 s, 7 s optional, minus the time since the last interaction).
+  the same timeouts (17 s, 7 s optional, minus the time since the last interaction). A
+  lookup that must find its element (an assertion's or a tap's, not optional) looks for at
+  least 1 s (`LOOKUP_FLOOR_MS`, issue #27): with no time left, its one ~10 ms read caught a
+  screen drawing once more after its data came. It costs time only when the element is not
+  there.
 - Settle is the agent's (window switches, accessibility events, idle probe), not
   screenshot or hierarchy comparison; Maestro's extra settle before each tap is not repeated.
 - `launchApp` (and `setPermissions` with `all`) grants or revokes only the app's runtime

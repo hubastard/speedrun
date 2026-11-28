@@ -205,4 +205,9 @@ It works wherever a condition does (`runFlow` and `runScript`'s `when`, `repeat`
 and is counted the same way as the default wait.
 
 `assertVisible`, `extendedWaitUntil` and the lookups of `tapOn` and the like keep their own
-timeouts.
+timeouts (17 s, or the step's `timeout`), which `SPEEDRUN_CONDITION_TIMEOUT_MS` leaves alone.
+They count the same way, from the end of the last command that touched the app, as in
+Maestro: after a long `extendedWaitUntil`, the next lookup has what is left of its 17 s.
+One that must find its element (not `optional`) still looks for at least 1 s: Maestro's
+single look at the screen takes 0.5–2 s on a CI emulator, Speedrun's ~10 ms, and a screen
+that draws once more after loading was caught mid-way.

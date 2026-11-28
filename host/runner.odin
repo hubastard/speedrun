@@ -21,6 +21,11 @@ import "core:unicode/utf8"
 
 LOOKUP_TIMEOUT_MS          :: 17_000
 OPTIONAL_LOOKUP_TIMEOUT_MS :: 7_000
+// What a lookup that must find its element has at least, its wait used up by the commands
+// since the last that touched the app (issue #27: an assertVisible after an extendedWaitUntil
+// of 20 s read the screen once, ~10 ms, as it drew once more after its data came). A lookup
+// that finds its element returns at once.
+LOOKUP_FLOOR_MS            :: 1_000
 ANIMATION_TIMEOUT_MS       :: 15_000
 MAX_RETRIES_ALLOWED        :: 3
 // longPressOn holds past the app's long-press delay: 400 ms on Android (the device's
@@ -682,7 +687,7 @@ exec :: proc(r: ^Runner, c: ^Cmd) -> (mutating: bool, err: Err) {
 	case Assert:
 		timeout := i64(LOOKUP_TIMEOUT_MS)
 		if t, has := d.timeout.?; has do timeout = parse_timeout(r, t) or_return
-		met := condition_met(r, d.cond, c.optional, timeout) or_return
+		met := condition_met(r, d.cond, c.optional, timeout, 0 if c.optional else LOOKUP_FLOOR_MS) or_return
 		if !met do return false, fmt.aprintf("Assertion is false: %s\n%s", evaluated(r, condition_description(d.cond)), screen_summary(r), allocator = r.alloc)
 		return false, nil
 	case Input_Text:
@@ -2641,9 +2646,10 @@ condition_limit :: proc(r: ^Runner, cond: Condition) -> (i64, Err) {
 }
 
 // A condition (`when:`, runFlow/repeat). `timeout` < 0: the default for conditions (7 s, or
-// SPEEDRUN_CONDITION_TIMEOUT_MS), always shortened by the time since the last interaction.
+// SPEEDRUN_CONDITION_TIMEOUT_MS), always shortened by the time since the last interaction;
+// to no less than `floor` (an assertion's, LOOKUP_FLOOR_MS) for an element to show.
 @(private = "file")
-condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64) -> (met: bool, err: Err) {
+condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64, floor: i64 = 0) -> (met: bool, err: Err) {
 	if p, has := cond.platform.?; has && !strings.equal_fold(p, platform_name(r.dev.platform)) do return false, nil
 	if s, has := cond.script.?; has {
 		v := eval(r, s) or_return
@@ -2658,7 +2664,7 @@ condition_met :: proc(r: ^Runner, cond: Condition, optional: bool, timeout: i64)
 			_, found = try_find(r, cond.visible, 0) or_return
 		}
 		if !found {
-			_, found = try_find(r, cond.visible, adjusted(r, limit)) or_return
+			_, found = try_find(r, cond.visible, max(adjusted(r, limit), min(floor, limit))) or_return
 			if !found do return false, nil
 			// It appeared while the check waited (a popup presenting): let it come to rest, as
 			// find_element does, or the tap that follows lands mid-transition and is lost.
@@ -2714,9 +2720,11 @@ adjusted :: proc(r: ^Runner, ms: i64) -> i64 {
 }
 
 // Polls the hierarchy until the selector matches. `timeout` < 0:
-// the lookup default (17 s, optional 7 s) shortened by the time since the last interaction.
+// the lookup default (17 s, optional 7 s) shortened by the time since the last interaction,
+// to no less than LOOKUP_FLOOR_MS unless optional.
 find_element :: proc(r: ^Runner, sel: ^Selector, optional: bool, timeout: i64) -> (idx: int, err: Err) {
 	limit := timeout if timeout >= 0 else adjusted(r, OPTIONAL_LOOKUP_TIMEOUT_MS if optional else LOOKUP_TIMEOUT_MS)
+	if timeout < 0 && !optional do limit = max(limit, LOOKUP_FLOOR_MS)
 	i, found := try_find(r, sel, 0) or_return
 	// Found at once on a screen that changed after the last settle (a popup that came up just
 	// after it, still sliding in, takes no tap yet): settle, then find it again; unless the
